@@ -13,6 +13,11 @@
 | `.github/workflows/ci.yml` | CI: `go test -race`, vitest, `vite build`, сборка Docker-образов |
 | `.github/workflows/deploy.yml` | CD: по пушу в `main` или вручную — `ssh` на сервер и `deploy/deploy.sh` |
 | `Makefile` | Короткие команды: `make test`, `make cert`, `make deploy`, `make prod-logs` |
+| `deploy/remote.py` | Деплой по SSH с локальной машины или из песочницы агента: `check` / `bootstrap` / `update` / `status` / `logs` |
+| `deploy/AGENT_HANDOFF.md` | Инструкция для ИИ-агента-деплоера (переменные окружения, порядок, проверки, запреты) |
+
+> Деплоит ИИ-агент с доступом через переменные окружения? Ему достаточно [deploy/AGENT_HANDOFF.md](deploy/AGENT_HANDOFF.md):
+> `pip install paramiko && python3 deploy/remote.py check && python3 deploy/remote.py bootstrap`.
 
 ## Чек-лист
 
