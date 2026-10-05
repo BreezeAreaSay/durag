@@ -43,11 +43,14 @@ import sys
 import time
 import urllib.request
 
-try:
-    import paramiko
-except ImportError:  # pragma: no cover
-    sys.stderr.write("paramiko is missing: pip install paramiko\n")
-    sys.exit(2)
+
+def _paramiko():
+    try:
+        import paramiko  # noqa: PLC0415 - optional dependency, loaded lazily so --help works without it
+    except ImportError:  # pragma: no cover
+        sys.stderr.write("paramiko is missing: pip install paramiko\n")
+        sys.exit(2)
+    return paramiko
 
 REPO_DEFAULT = "https://github.com/BreezeAreaSay/durag.git"
 BRANCH_DEFAULT = "claude/ecstatic-maxwell-h3azwt"
@@ -71,6 +74,7 @@ def mask(secret: str) -> str:
 
 class Remote:
     def __init__(self) -> None:
+        paramiko = _paramiko()
         self.host = env("DEPLOY_HOST", required=True)
         self.user = env("DEPLOY_USER", "root")
         self.port = int(env("DEPLOY_PORT", "22"))
@@ -94,6 +98,7 @@ class Remote:
         self.client.connect(**kwargs)
 
     def _load_key(self):
+        paramiko = _paramiko()
         text = os.environ.get("DEPLOY_SSH_KEY", "")
         path = env("DEPLOY_SSH_KEY_PATH")
         if not text and path:
@@ -243,15 +248,18 @@ def cmd_bootstrap(remote: Remote) -> None:
 
     print("### 4/6 DNS")
     ip = public_ip(remote)
-    for attempt in range(1, 7):
-        ips = resolve(domain)
-        if ip and ip in ips:
-            print(f"  {domain} -> {ip}: ok")
-            break
-        print(f"  {domain} -> {', '.join(ips) or 'unresolved'}, server is {ip or 'unknown'}; waiting for DNS ({attempt}/6)")
-        time.sleep(20)
+    if not ip:
+        print(f"  could not determine the server's public IP; {domain} -> {', '.join(resolve(domain)) or 'unresolved'} (continuing, certbot will verify)")
     else:
-        raise SystemExit("DNS does not point at the server; fix the A record and re-run bootstrap")
+        for attempt in range(1, 7):
+            ips = resolve(domain)
+            if ip in ips:
+                print(f"  {domain} -> {ip}: ok")
+                break
+            print(f"  {domain} -> {', '.join(ips) or 'unresolved'}, server is {ip}; waiting for DNS ({attempt}/6)")
+            time.sleep(20)
+        else:
+            raise SystemExit("DNS does not point at the server; fix the A record and re-run bootstrap")
 
     print("### 5/6 certificate")
     code, _ = remote.run(f"test -f {shlex.quote(remote.path)}/deploy/certbot/conf/live/{shlex.quote(domain)}/fullchain.pem", check=False, quiet=True)
