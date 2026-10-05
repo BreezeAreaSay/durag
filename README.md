@@ -1,0 +1,297 @@
+# DURAG — серверная многопользовательская карточная игра (Telegram Mini App / PWA)
+
+Динамичная модификация «Дурака»: безлимитное подкидывание, скрытый козырь, два Джокера, Супер-карта и «пеньки».
+Сервер — единственный источник правды (authoritative server), клиент отправляет намерения (intents) и рендерит состояние.
+Визуальный стиль — Lo-Fi Brutalism / Brutalist Zine: процедурная графика, жёсткие тени, кислотно-жёлтые кнопки, шейдеры ризографа.
+
+> English: authoritative multiplayer Durak variant. Go + Redis + WebSockets backend, React/Vite/TypeScript + PixiJS client,
+> Telegram Mini App auth (HMAC-SHA256 of `initData`). See sections below for the protocol and deployment.
+
+## Содержание
+
+1. [Стек](#стек)
+2. [Быстрый старт](#быстрый-старт)
+3. [Переменные окружения](#переменные-окружения)
+4. [Правила и принятые трактовки](#правила-и-принятые-трактовки)
+5. [Архитектура](#архитектура)
+6. [Сетевой протокол (WebSocket)](#сетевой-протокол-websocket)
+7. [Защита от читов: санитайзинг состояния](#защита-от-читов-санитайзинг-состояния)
+8. [Telegram Mini App](#telegram-mini-app)
+9. [Дизайн и рендер](#дизайн-и-рендер)
+10. [Тесты](#тесты)
+11. [Деплой](#деплой)
+12. [Карта по фазам ТЗ](#карта-по-фазам-тз)
+
+## Стек
+
+| Слой | Технология |
+| --- | --- |
+| Backend | Go 1.22+ (`gorilla/websocket`), стейт-машина правил, HMAC-валидация Telegram |
+| Хранилище | Redis 7 (`go-redis/v9`): состояние комнат с TTL, блокировка на комнату, Pub/Sub между инстансами; in-memory режим для локальной разработки |
+| Frontend | React 19 + Vite 8 + TypeScript 5 |
+| Рендер стола | PixiJS 8 (WebGL): `Graphics`-карты, SVG-масти, кастомные GLSL-фильтры, стоп-моушн анимации |
+| Инфраструктура | docker-compose (dev и prod), Nginx + Certbot (Let's Encrypt), ngrok для тестов TMA |
+
+## Быстрый старт
+
+### Вариант 1 — docker-compose (redis + golang + node)
+
+```bash
+cp .env.example .env          # впишите TELEGRAM_BOT_TOKEN; для локальных тестов ALLOW_DEV_AUTH=true
+docker compose up
+```
+
+* Фронтенд: <http://localhost:5173> (Vite dev-сервер проксирует `/ws` и `/api` на бэкенд)
+* Бэкенд: <http://localhost:8080/healthz>
+
+### Вариант 2 — локально без Docker
+
+```bash
+# бэкенд (без Redis: in-memory хранилище)
+cd backend
+ALLOW_DEV_AUTH=true REDIS_ADDR= PORT=8080 go run ./cmd/server
+
+# фронтенд
+cd frontend
+npm install
+npm run dev
+```
+
+Откройте <http://localhost:5173> в двух вкладках/браузерах (в dev-режиме имя вводится вручную, Telegram не нужен),
+создайте стол в одной, введите код во второй, нажмите «Готов» в обеих.
+
+## Переменные окружения
+
+Файл `.env` (см. `.env.example`) читается бэкендом и docker-compose.
+
+| Переменная | Назначение |
+| --- | --- |
+| `TELEGRAM_BOT_TOKEN` | Токен бота из @BotFather. Нужен для проверки подписи `initData`. |
+| `ALLOW_DEV_AUTH` | `true` — разрешить вход без Telegram (`dev_user` в `JOIN_ROOM`). **Только для разработки.** |
+| `PORT` | Порт бэкенда (по умолчанию `8080`). |
+| `REDIS_ADDR` | `host:port` Redis. Пусто — in-memory хранилище (один инстанс, состояние теряется при рестарте). |
+| `REDIS_PASSWORD`, `REDIS_DB` | Доступ к Redis. |
+| `ALLOWED_ORIGINS` | Список Origin через запятую для WebSocket (`*` — любой). В проде ставится `https://$DOMAIN`. |
+| `ROOM_TTL` | Время жизни неактивной комнаты в Redis (`24h`). |
+| `TG_INITDATA_MAX_AGE` | Максимальный возраст `initData` (защита от replay), `0` — не проверять. |
+| `DOMAIN`, `CERTBOT_EMAIL` | Только прод: домен и почта для Let's Encrypt. |
+| `VITE_BOT_USERNAME`, `VITE_APP_SHORTNAME` | Фронтенд: для генерации deep-link `https://t.me/<bot>/<app>?startapp=<КОД>`. |
+| `VITE_WS_URL` | Фронтенд: явный адрес WebSocket (по умолчанию `ws(s)://<host>/ws`). |
+
+## Правила и принятые трактовки
+
+Реализованы требования раздела 1 ТЗ. Там, где ТЗ допускает несколько прочтений, выбрано и зафиксировано тестами следующее.
+
+**Колода — 55 карт.** 52 базовые (2…A четырёх мастей), Красный Джокер `RJ`, Чёрный Джокер `BJ`, Супер-карта `SC`.
+ID карт: `H_10`, `S_14` (туз пик), `RJ`, `BJ`, `SC`. Ранги: 2…14, Джокер — 15, Супер — 16.
+
+**Раздача.** Каждому по 6 карт в руку и 2 скрытые карты в «пенёк». Козырь выбирается случайно и кладётся под низ колоды
+рубашкой вверх; его масть никому не известна и **не действует**, пока не кончится основная колода.
+После каждого кона игроки добирают из колоды до 6 карт: сначала атакующий, затем остальные по кругу, защищающийся — последним.
+
+* *Трактовка:* козырь выбирается среди 52 базовых карт, чтобы козырная масть существовала всегда.
+* *Трактовка:* козырная карта вскрывается в момент, когда из основной колоды забирают последнюю карту; сама она добирается последней (как в классике).
+
+**Право первого хода:** 2♠ → 3♠ → 4♠ → 5♠ → 6♠ → 2♣ (у кого есть карта раньше по списку). Если ни у кого нет ни одной из них — случайный игрок.
+
+**Ход и отбой.**
+
+* Первую карту кона кладёт атакующий (любую). Дальше **любой игрок, кроме защищающегося**, может подкидывать карты,
+  достоинство которых уже есть на столе (среди атакующих или отбивающих карт). Лимита на число карт нет.
+* Подкидывать нельзя только если у защищающегося кончились карты в руке (и он не берёт).
+* Защищающийся бьёт карту: той же мастью старше, либо (после вскрытия козыря) козырем; или **переводит**, или **берёт**.
+* Взятие: защищающийся объявляет «беру», остальные могут докинуть карты того же достоинства, после чего он забирает **весь стол**.
+  Следующий ход — игрока после взявшего (взявший пропускает атаку).
+* «Бито»: когда все карты отбиты, подкидывающие говорят «бито» (`PASS`). Игрок, у которого нет ни одной карты, которую можно
+  подкинуть, считается сказавшим «бито» автоматически (константа `AutoPassWhenNoLegalThrowIn` в `validator.go`).
+  Успешно отбившийся атакует следующим.
+
+**Перевод.** Защищающийся кладёт карту того же достоинства, что и атакующие карты (пока ни одна не отбита), и защита
+переходит к следующему игроку. Разрешён с самого первого хода. Переводивший становится ведущим атаки.
+Джокером **можно** перевести Джокера (одинаковый ранг 15). Супер-картой переводить **нельзя**.
+
+**Спецкарты.**
+
+* Супер-карта бьёт абсолютно любую карту и не бьётся ничем. Ею можно и ходить — тогда защищающемуся остаётся только взять.
+* Красный Джокер бьёт любую красную карту (♥ ♦, включая красный козырь), Чёрный — любую чёрную. Джокеры не имеют козырной
+  масти: козырь Джокера не бьёт, Джокер не бьёт второго Джокера. Побить Джокера можно только Супер-картой.
+
+**Пеньки.** Когда у игрока нет карт в руке и основная колода (без козыря) пуста, он берёт свой пенёк в руку (проверяется в конце кона).
+Игрок без карт в руке и пеньке выходит из игры. Последний оставшийся с картами — Дурак; если двое вышли одновременно — ничья.
+
+**Лобби.** 2–6 игроков. Игра стартует автоматически, когда все нажали «Готов». Выход во время игры = сдача (карты в отбой,
+если остался один игрок — вышедший объявляется проигравшим). Разрыв соединения во время игры сохраняет место за игроком.
+
+## Архитектура
+
+```
+backend/
+  cmd/server/main.go          — HTTP/WS сервер, graceful shutdown
+  internal/game/              — ядро правил (чистый Go, без I/O)
+    card.go, deck.go          — модель карты, генератор 55 карт, сид-детерминированный shuffle
+    state.go                  — GameState/Player (модель ТЗ + расширения), хелперы
+    validator.go              — RuleError-коды и проверки всех интентов, CanBeat()
+    engine.go                 — Join/Disconnect/Leave/SetReady/Start, PlayCard/TransferTurn/TakeCards/Pass,
+                                конец кона: добор, пеньки, выбывание, финал
+    sanitize.go               — Sanitized(viewer) — вид состояния для конкретного игрока
+  internal/store/             — интерфейс Store; memory.go (dev/tests), redis.go (lock + TTL + Pub/Sub)
+  internal/ws/                — протокол, аутентификация, Client (read/write pump), Hub (комнаты, relay)
+  internal/telegram/          — валидация initData (HMAC-SHA256)
+  internal/config/            — .env и переменные окружения
+frontend/
+  src/state/GameContext.tsx   — React Context: WebSocket с реконнектом, интенты, ошибки
+  src/telegram/               — telegram-web-app.js: initData, ready/expand, haptic
+  src/components/             — Lobby, WaitingRoom, GameScreen, Hud, Toast, ResultOverlay, Sticker, Button
+  src/pixi/                   — TableScene (стол), CardView (карта), shaders (GLSL), tween (стоп-моушн), layout, suits
+  src/util/rules.ts           — зеркало правил для подсказок (авторитет всегда у сервера)
+deploy/                       — Nginx-шаблон, Certbot bootstrap
+```
+
+**Поток данных.** Клиент → `JOIN_ROOM`/`PLAY_CARD`/… → `Hub` → `Store.Update(roomID)` под блокировкой комнаты →
+`Engine` валидирует и мутирует `GameState` → состояние сохраняется в Redis и публикуется в канал `durag:events:<room>` →
+каждый инстанс бэкенда получает его и шлёт **каждому** своему клиенту `STATE_UPDATE` с `Sanitized(playerID)`.
+При ошибке клиент получает `ERROR` и сразу `STATE_UPDATE` с актуальным состоянием.
+
+## Сетевой протокол (WebSocket)
+
+Эндпоинт: `GET /ws` (upgrade). Формат: `{"type": "...", "payload": {...}}`.
+
+### Клиент → сервер (intents)
+
+| Тип | Payload | Описание |
+| --- | --- | --- |
+| `JOIN_ROOM` | `{"room_id":"AB12","tg_init_data":"...","create":true,"dev_user":{"id":"x","name":"Имя"}}` | Вход в комнату. `create` — создать, если нет. `dev_user` учитывается только при `ALLOW_DEV_AUTH=true` и пустом `tg_init_data`. |
+| `PLAY_CARD` | `{"card_id":"S_7","target_card_id":"S_6"}` | Без `target_card_id` — атака/подкидывание; с ним — отбой карты `target_card_id`. |
+| `TRANSFER_TURN` | `{"card_id":"H_7"}` | Перевод. |
+| `TAKE_CARDS` | — | «Беру». |
+| `PASS` *(расширение)* | — | «Бито» — больше не подкидываю. |
+| `READY` *(расширение)* | `{"ready":true}` | Готовность в лобби. В завершённой игре `ready:true` сбрасывает стол в лобби. |
+| `LEAVE_ROOM` *(расширение)* | — | Покинуть комнату (во время игры — сдача). |
+| `PING` *(расширение)* | — | Ответ `PONG`. |
+
+### Сервер → клиент
+
+| Тип | Payload |
+| --- | --- |
+| `STATE_UPDATE` | санитизированный `GameState` (см. ниже) + `viewer_id` |
+| `ERROR` | `{"message":"...","code":"CANNOT_BEAT","card_id":"H_7"}` — `card_id` указывает, какую карту вернуть в руку |
+| `PONG` | — |
+
+### GameState (как в ТЗ + расширения)
+
+```jsonc
+{
+  "room_id": "AB12",
+  "players": [{ "id": "279058397", "name": "Влад", "hand": [...], "stump": [], "is_ready": true,
+                "connected": true, "passed": false, "out": false, "hand_count": 6, "stump_count": 2 }],
+  "deck": [], "deck_count": 30,
+  "trump_card": null, "trump_revealed": false, "trump_suit": "",
+  "table_cards": { "H_7": [ { "id": "H_10", "suit": "Hearts", "rank": 10 } ], "S_7": [] },
+  "table_order": ["H_7", "S_7"],
+  "current_turn_player_id": "279058397",   // ведущий атакующий
+  "defender_id": "5551", "defender_taking": false,
+  "status": "playing",                     // waiting | playing | finished
+  "discard_count": 12, "bout_number": 4, "transfer_count": 0,
+  "host_id": "...", "max_players": 6, "loser_id": "", "finished_order": [],
+  "log": [{ "type": "defend", "player_id": "5551", "card_id": "H_10", "target_id": "H_7" }],
+  "version": 42, "viewer_id": "279058397"
+}
+```
+
+Коды ошибок (`code`): `NOT_PLAYING`, `NOT_WAITING`, `UNKNOWN_PLAYER`, `PLAYER_OUT`, `CARD_NOT_IN_HAND`, `NOT_YOUR_TURN`,
+`DEFENDER_CANNOT_ATTACK`, `RANK_MISMATCH`, `DEFENDER_HAS_NO_CARDS`, `NOT_DEFENDER`, `DEFENDER_TAKING`, `TARGET_NOT_ON_TABLE`,
+`TARGET_ALREADY_BEATEN`, `CANNOT_BEAT`, `TABLE_EMPTY`, `TRANSFER_AFTER_DEFENSE`, `SUPER_CANNOT_TRANSFER`, `TRANSFER_RANK`,
+`ALREADY_TAKING`, `DEFENDER_CANNOT_PASS`, `ALREADY_PASSED`, `GAME_IN_PROGRESS`, `ROOM_FULL`, `NOT_ENOUGH_PLAYERS`,
+а также транспортные: `UNAUTHORIZED`, `ROOM_NOT_FOUND`, `BAD_ROOM_ID`, `BAD_PAYLOAD`, `NOT_IN_ROOM`, `REPLACED`, `INTERNAL`.
+
+HTTP: `GET /healthz`, `GET /api/config` → `{"dev_auth":false,"max_players":6,"min_players":2}`.
+
+## Защита от читов: санитайзинг состояния
+
+`GameState.Sanitized(viewerID)` делает глубокую копию и:
+
+* заменяет `deck` на `deck_count`;
+* скрывает `trump_card` и `trump_suit`, пока основная колода не пуста;
+* **все** пеньки (включая собственный) заменяет на `stump_count`;
+* чужие `hand` заменяет на `hand_count`.
+
+Клиент никогда не получает карты колоды, пеньков и рук оппонентов (тест `TestSanitizedHidesPrivateInformation` проверяет,
+что их ID отсутствуют в JSON). Полное состояние ходит только между инстансами бэкенда через Redis.
+
+## Telegram Mini App
+
+1. В @BotFather создайте бота, затем `/newapp` (или `/setmenubutton`) и укажите URL приложения (HTTPS).
+   Короткое имя приложения и имя бота впишите в `VITE_APP_SHORTNAME` / `VITE_BOT_USERNAME` — из них строится deep-link на стол.
+2. Фронтенд подключает `https://telegram.org/js/telegram-web-app.js`, читает `Telegram.WebApp.initData`,
+   вызывает `ready()`, `expand()`, задаёт цвета шапки/фона, отключает вертикальные свайпы, использует haptic feedback.
+3. Бэкенд (`internal/telegram`) проверяет подпись: `secret = HMAC_SHA256("WebAppData", BOT_TOKEN)`,
+   `hash = HMAC_SHA256(secret, data_check_string)`, где `data_check_string` — пары `key=value` (кроме `hash`), отсортированные
+   по ключу и соединённые `\n`. Сравнение константное по времени; опционально проверяется `auth_date`.
+   Игрок входит с Telegram ID (`id`) и `first_name`.
+4. Deep-link: `https://t.me/<bot>/<app>?startapp=<КОД>` — приложение автоматически входит в стол из `start_param`.
+   Для браузера: `http://localhost:5173/?room=<КОД>`.
+
+**Тестирование TMA через ngrok** (Telegram открывает только HTTPS):
+
+```bash
+docker compose up            # или go run + npm run dev
+ngrok http 5173              # получите https://xxxx.ngrok-free.app
+```
+
+Укажите этот URL в BotFather как Web App URL, откройте приложение из Telegram. Vite настроен с `allowedHosts: true`, а `/ws`
+проксируется на бэкенд, поэтому одного туннеля достаточно. Для проверки реальной подписи поставьте `ALLOW_DEV_AUTH=false`.
+
+## Дизайн и рендер
+
+* **Фон и шум** — светло-серый холст `#f2f0ea` + невесомый CSS-паттерн шума (SVG `feTurbulence` data-URI, `mix-blend-mode: multiply`).
+* **Карты** — `PIXI.Graphics`: белая плашка с 3px обводкой, бруталистичная тень — чёрная копия карты, смещённая на 6–7px, без blur.
+* **Типографика** — web-шрифт Unbounded (woff2, OFL; широкий гротеск в духе Druk Wide) для индексов и UI, моноширинный для текста.
+  Масти — чистые SVG-контуры (`GraphicsPath`).
+* **Шейдеры** (`src/pixi/shaders.ts`, GLSL ES 3.0): `halftone` — растровые точки ризографа в средних тонах,
+  `chromatic` — хроматическая аберрация (RGB-сдвиг), `hologram` — математический RGB-градиент Супер-карты, зависящий от
+  координат указателя (`uPointer`) и времени. Если шейдер не компилируется на устройстве, эффекты отключаются автоматически
+  (`?fx=0` — отключить вручную).
+* **Физика** — стоп-моушн твинер (`tween.ts`): значения обновляются 12 раз в секунду, пружинящие easing'и
+  (`outBack` для ходов, `outElastic` для возврата карты по `ERROR`).
+* **UI** — аватарки как ч/б стикеры с белой обводкой и случайным наклоном, кнопки — жёсткие прямоугольники Acid Yellow `#e6ff00`.
+* **Drag-and-drop** — карту тащат на стол (атака/подкидывание), на атакующую карту (отбой) или в пустую зону стола будучи
+  защищающимся (перевод). Тап по карте — «умный ход» (отбить первую подходящую, иначе перевести, иначе подкинуть).
+  Ход отправляется оптимистично; по `ERROR` карта возвращается в руку резкой стоп-моушн анимацией.
+
+## Тесты
+
+```bash
+cd backend && go test -race ./...     # правила (TDD: validator_test.go, engine_test.go), сторы (miniredis), WS-хаб, Telegram
+cd frontend && npm test               # vitest: зеркало правил, раскладка, стоп-моушн твинер
+cd frontend && npm run build          # tsc --noEmit + vite build
+```
+
+Ядро дополнительно проверяется случайными партиями на 2–6 игроков (40 сидов): отсутствие дедлоков, сохранение всех 55 карт,
+корректный финал. Интеграционный тест хаба поднимает два WebSocket-клиента, проходит лобби → игру и проверяет
+санитайзинг и реакцию `ERROR` + `STATE_UPDATE` на невалидный ход.
+
+Опциональный сквозной smoke-тест в headless Chromium: `frontend/e2e/smoke.mjs` (см. комментарий в файле).
+
+## Деплой
+
+```bash
+cp .env.example .env                       # TELEGRAM_BOT_TOKEN, DOMAIN, CERTBOT_EMAIL, ALLOW_DEV_AUTH=false
+./deploy/init-letsencrypt.sh               # первый сертификат (STAGING=1 для тестового окружения LE)
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+`docker-compose.prod.yml`: Nginx (TLS, HTTP→HTTPS, статика SPA, проксирование `/ws` с `Upgrade`, `/api`), Certbot
+(автопродление каждые 12 ч, Nginx перечитывает сертификаты каждые 6 ч), бэкенд (`ALLOW_DEV_AUTH=false`,
+`ALLOWED_ORIGINS=https://$DOMAIN`), Redis с AOF. Можно запускать несколько реплик бэкенда — комнаты синхронизируются через Redis.
+
+## Карта по фазам ТЗ
+
+| Фаза | Где |
+| --- | --- |
+| 1. Инфраструктура | `docker-compose.yml`, `backend/Dockerfile`, `frontend/Dockerfile`, `backend/go.mod`, `frontend/package.json` |
+| 2. Игровое ядро | `backend/internal/game` (`deck.go`, `engine.go`, `validator.go` + тесты) |
+| 3. Сетевой слой | `backend/internal/store` (Redis, Pub/Sub), `backend/internal/ws` (Hub, санитайзинг) |
+| 4. Frontend UI | `frontend/src/state/GameContext.tsx` (Context + WebSocket), `components/`, `styles/global.css`, шрифты в `public/fonts` |
+| 5. PixiJS | `frontend/src/pixi/*` (Graphics-карты, SVG-масти, шейдеры Halftone/Hologram/Chromatic, стоп-моушн DnD) |
+| 6. Telegram TMA | `frontend/src/telegram/*`, `backend/internal/telegram` |
+| 7. Деплой | `docker-compose.prod.yml`, `deploy/nginx`, `deploy/init-letsencrypt.sh`, раздел про ngrok выше |

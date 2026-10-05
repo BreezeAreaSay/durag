@@ -1,0 +1,69 @@
+# Production stack: Nginx (TLS termination, static SPA, WebSocket proxy),
+# Certbot (Let's Encrypt), Go backend, Redis.
+#
+#   cp .env.example .env            # fill TELEGRAM_BOT_TOKEN, DOMAIN, CERTBOT_EMAIL
+#   ./deploy/init-letsencrypt.sh    # one-off: obtains the first certificate
+#   docker compose -f docker-compose.prod.yml up -d --build
+services:
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build: ./backend
+    env_file:
+      - .env
+    environment:
+      PORT: "8080"
+      REDIS_ADDR: redis:6379
+      ALLOW_DEV_AUTH: "false"
+      ALLOWED_ORIGINS: https://${DOMAIN}
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_BOT_USERNAME: ${VITE_BOT_USERNAME:-}
+        VITE_APP_SHORTNAME: ${VITE_APP_SHORTNAME:-}
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN}
+    volumes:
+      - ./deploy/nginx/templates:/etc/nginx/templates:ro
+      - ./deploy/certbot/conf:/etc/letsencrypt:ro
+      - ./deploy/certbot/www:/var/www/certbot:ro
+    depends_on:
+      - backend
+      - frontend
+    # reload every 6h so renewed certificates are picked up
+    command: ["/bin/sh", "-c", "while :; do sleep 6h & wait $${!}; nginx -s reload; done & exec nginx -g 'daemon off;'"]
+    restart: unless-stopped
+
+  certbot:
+    image: certbot/certbot
+    volumes:
+      - ./deploy/certbot/conf:/etc/letsencrypt
+      - ./deploy/certbot/www:/var/www/certbot
+    entrypoint: ["/bin/sh", "-c", "trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot --quiet; sleep 12h & wait $${!}; done"]
+    restart: unless-stopped
+
+volumes:
+  redis-data:

@@ -1,0 +1,13 @@
+{
+  "name": "DURAG",
+  "short_name": "DURAG",
+  "description": "Brutalist multiplayer Durak: hidden trump, Jokers, Super card, unlimited throw-ins.",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f2f0ea",
+  "theme_color": "#f2f0ea",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
