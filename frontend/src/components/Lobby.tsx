@@ -17,8 +17,16 @@ interface Props {
   prefillCode?: string;
 }
 
+function botLink(): string | null {
+  const bot = import.meta.env.VITE_BOT_USERNAME as string | undefined;
+  const app = import.meta.env.VITE_APP_SHORTNAME as string | undefined;
+  if (bot && app) return `https://t.me/${bot}/${app}`;
+  if (bot) return `https://t.me/${bot}`;
+  return null;
+}
+
 export function Lobby({ prefillCode }: Props) {
-  const { identity, setDevName, join, connection } = useGame();
+  const { identity, setDevName, join, connection, config } = useGame();
   const [name, setName] = useState(identity.name);
   const [code, setCode] = useState(prefillCode ?? '');
   useEffect(() => {
@@ -40,6 +48,31 @@ export function Lobby({ prefillCode }: Props) {
     join(code, true);
   };
   const disabled = connection !== 'open' || (needsName && !name.trim());
+  const telegramOnly = identity.kind === 'dev' && config !== null && !config.dev_auth;
+  const link = botLink();
+
+  if (telegramOnly) {
+    return (
+      <main className="screen lobby">
+        <header className="lobby__head">
+          <h1 className="zine-title">
+            DU
+            <br />
+            RAG
+          </h1>
+          <p className="tape">{t('tagline')}</p>
+        </header>
+        <p className="lobby__hello">
+          <span className="sticker-text">{t('lobby.telegramOnly')}</span>
+        </p>
+        {link ? (
+          <a className="btn btn--acid btn--big lobby__link" href={link}>
+            {t('lobby.openInTelegram')}
+          </a>
+        ) : null}
+      </main>
+    );
+  }
 
   return (
     <main className="screen lobby">

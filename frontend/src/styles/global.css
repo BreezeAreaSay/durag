@@ -237,6 +237,12 @@ body::before {
 .lobby__hello {
   margin: 0;
 }
+.lobby__link {
+  display: inline-block;
+  text-decoration: none;
+  text-align: center;
+  align-self: flex-start;
+}
 .sticker-text {
   display: inline-block;
   background: #fff;

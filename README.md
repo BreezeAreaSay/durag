@@ -274,15 +274,21 @@ cd frontend && npm run build          # tsc --noEmit + vite build
 
 ## Деплой
 
+Полная инструкция — в [DEPLOY.md](DEPLOY.md) (подготовка VPS, `.env`, Let's Encrypt, BotFather, обновление, CI/CD, диагностика).
+Кратко:
+
 ```bash
-cp .env.example .env                       # TELEGRAM_BOT_TOKEN, DOMAIN, CERTBOT_EMAIL, ALLOW_DEV_AUTH=false
+git clone https://github.com/BreezeAreaSay/durag.git /opt/durag && cd /opt/durag
+./deploy/server-setup.sh                   # Docker + compose plugin + ufw (один раз)
+cp .env.example .env                       # TELEGRAM_BOT_TOKEN, DOMAIN, CERTBOT_EMAIL, VITE_BOT_USERNAME, VITE_APP_SHORTNAME
 ./deploy/init-letsencrypt.sh               # первый сертификат (STAGING=1 для тестового окружения LE)
-docker compose -f docker-compose.prod.yml up -d --build
+./deploy/deploy.sh                         # сборка, запуск, health-check; это же — обновление
 ```
 
 `docker-compose.prod.yml`: Nginx (TLS, HTTP→HTTPS, статика SPA, проксирование `/ws` с `Upgrade`, `/api`), Certbot
 (автопродление каждые 12 ч, Nginx перечитывает сертификаты каждые 6 ч), бэкенд (`ALLOW_DEV_AUTH=false`,
-`ALLOWED_ORIGINS=https://$DOMAIN`), Redis с AOF. Можно запускать несколько реплик бэкенда — комнаты синхронизируются через Redis.
+`ALLOWED_ORIGINS=https://$DOMAIN`), Redis с AOF. Несколько реплик бэкенда: `--scale backend=N` — комнаты синхронизируются через Redis.
+GitHub Actions: `ci.yml` (тесты, сборка, Docker-образы) и `deploy.yml` (выкат по SSH).
 
 ## Карта по фазам ТЗ
 
@@ -294,4 +300,4 @@ docker compose -f docker-compose.prod.yml up -d --build
 | 4. Frontend UI | `frontend/src/state/GameContext.tsx` (Context + WebSocket), `components/`, `styles/global.css`, шрифты в `public/fonts` |
 | 5. PixiJS | `frontend/src/pixi/*` (Graphics-карты, SVG-масти, шейдеры Halftone/Hologram/Chromatic, стоп-моушн DnD) |
 | 6. Telegram TMA | `frontend/src/telegram/*`, `backend/internal/telegram` |
-| 7. Деплой | `docker-compose.prod.yml`, `deploy/nginx`, `deploy/init-letsencrypt.sh`, раздел про ngrok выше |
+| 7. Деплой | `docker-compose.prod.yml`, `deploy/*`, `.github/workflows/*`, [DEPLOY.md](DEPLOY.md) (в т.ч. ngrok) |

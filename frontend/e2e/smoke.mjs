@@ -27,7 +27,8 @@ async function open(name) {
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, locale: 'ru-RU' });
   const p = await ctx.newPage();
   p.on('console', (m) => {
-    if (m.type() === 'error' && !m.text().includes('telegram.org')) problems.push(`[${name}] ${m.text()}`);
+    // telegram-web-app.js is unreachable outside Telegram / in sandboxes: not a defect of the app
+    if (m.type() === 'error' && !m.location()?.url?.includes('telegram.org')) problems.push(`[${name}] ${m.text()}`);
   });
   p.on('pageerror', (e) => problems.push(`[${name}] ${e.message}`));
   await p.goto(BASE);
@@ -83,10 +84,12 @@ try {
   await defender.screenshot({ path: join(here, 'shot-defender.png') });
 
   // Transfer with an arbitrary card is (almost always) illegal -> ERROR toast + card returns.
+  // When the ranks happen to match the transfer is legal: the defender becomes
+  // the lead attacker ("throw in or pass") and the other player must defend.
   await drag(defender, handX(0), handY, 195, 300);
   const outcome = await Promise.race([
     defender.locator('.toast').waitFor({ timeout: 4000 }).then(() => 'toast'),
-    defender.waitForFunction(() => document.querySelector('.status')?.textContent?.includes('ХОД:'), null, { timeout: 4000 }).then(() => 'transferred'),
+    defender.waitForFunction(() => document.querySelector('.status')?.textContent?.includes('ПОДКИНЬ'), null, { timeout: 4000 }).then(() => 'transferred'),
   ]).catch(() => 'nothing');
   log('transfer attempt ->', outcome, outcome === 'toast' ? await defender.locator('.toast').textContent() : '');
   if (outcome === 'nothing') problems.push('neither ERROR nor transfer after dropping a card');

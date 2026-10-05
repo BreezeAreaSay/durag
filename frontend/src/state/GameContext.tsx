@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { ClientMessage, GameState, ServerMessage } from '../types/protocol';
+import type { ClientConfig, ClientMessage, GameState, ServerMessage } from '../types/protocol';
 import { useTelegram } from '../telegram/useTelegram';
 import { setLang } from '../i18n';
 
@@ -22,6 +22,7 @@ export interface Identity {
 
 export interface GameContextValue {
   connection: Connection;
+  config: ClientConfig | null;
   state: GameState | null;
   selfId: string | null;
   roomId: string | null;
@@ -49,6 +50,21 @@ function wsUrl(): string {
   if (configured) return configured;
   const proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
   return proto + location.host + '/ws';
+}
+
+/** HTTP API lives next to the WebSocket endpoint (same origin by default). */
+function apiUrl(path: string): string {
+  const configured = import.meta.env.VITE_WS_URL as string | undefined;
+  if (!configured) return path;
+  try {
+    const u = new URL(configured);
+    u.protocol = u.protocol === 'wss:' ? 'https:' : 'http:';
+    u.pathname = path;
+    u.search = '';
+    return u.toString();
+  } catch {
+    return path;
+  }
 }
 
 function randomId(len = 8): string {
@@ -83,6 +99,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
   const tg = useTelegram();
   const [devUser, setDevUser] = useState(loadDev);
   const [connection, setConnection] = useState<Connection>('connecting');
+  const [config, setConfig] = useState<ClientConfig | null>(null);
   const [state, setState] = useState<GameState | null>(null);
   const [roomId, setRoomId] = useState<string | null>(() => sessionStorage.getItem(ROOM_KEY));
   const [lastError, setLastError] = useState<GameError | null>(null);
@@ -97,6 +114,22 @@ export function GameProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     setLang(tg.languageCode ?? navigator.language);
   }, [tg.languageCode]);
+
+  // Public server configuration (is dev login allowed, table sizes).
+  useEffect(() => {
+    let cancelled = false;
+    fetch(apiUrl('/api/config'))
+      .then((r) => (r.ok ? (r.json() as Promise<ClientConfig>) : null))
+      .then((cfg) => {
+        if (!cancelled && cfg) setConfig(cfg);
+      })
+      .catch(() => {
+        // the backend may still be starting; the socket reconnect loop will tell
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const identity = useMemo<Identity>(
     () =>
@@ -227,6 +260,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
   const value = useMemo<GameContextValue>(
     () => ({
       connection,
+      config,
       state,
       selfId: state?.viewer_id ?? null,
       roomId,
@@ -243,7 +277,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
       setDevName,
       clearError: () => setLastError(null),
     }),
-    [connection, state, roomId, identity, lastError, replaced, join, leave, send, setDevName],
+    [connection, config, state, roomId, identity, lastError, replaced, join, leave, send, setDevName],
   );
 
   return <GameContext.Provider value={value}>{children}</GameContext.Provider>;

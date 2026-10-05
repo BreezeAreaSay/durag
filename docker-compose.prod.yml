@@ -30,6 +30,9 @@ services:
       redis:
         condition: service_healthy
     restart: unless-stopped
+    # Horizontal scaling works out of the box (rooms are synchronised through
+    # Redis Pub/Sub, nginx resolves `backend` per request):
+    #   docker compose -f docker-compose.prod.yml up -d --scale backend=2
 
   frontend:
     build:
@@ -48,13 +51,13 @@ services:
       DOMAIN: ${DOMAIN}
     volumes:
       - ./deploy/nginx/templates:/etc/nginx/templates:ro
+      # periodic `nginx -s reload` so renewed certificates are picked up
+      - ./deploy/nginx/entrypoint.d/90-reload-loop.sh:/docker-entrypoint.d/90-reload-loop.sh:ro
       - ./deploy/certbot/conf:/etc/letsencrypt:ro
       - ./deploy/certbot/www:/var/www/certbot:ro
     depends_on:
       - backend
       - frontend
-    # reload every 6h so renewed certificates are picked up
-    command: ["/bin/sh", "-c", "while :; do sleep 6h & wait $${!}; nginx -s reload; done & exec nginx -g 'daemon off;'"]
     restart: unless-stopped
 
   certbot:
