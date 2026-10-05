@@ -1,0 +1,56 @@
+# Development stack: Redis + Go backend (go run) + Vite dev server.
+#   cp .env.example .env && docker compose up
+# Frontend: http://localhost:5173  (proxies /ws and /api to the backend)
+# Backend:  http://localhost:8080/healthz
+services:
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    image: golang:1.24-alpine
+    working_dir: /src
+    command: ["go", "run", "./cmd/server"]
+    env_file:
+      - .env
+    environment:
+      REDIS_ADDR: redis:6379
+      PORT: "8080"
+      GOFLAGS: -buildvcs=false
+    volumes:
+      - ./backend:/src
+      - go-mod-cache:/go/pkg/mod
+      - go-build-cache:/root/.cache/go-build
+    ports:
+      - "8080:8080"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  frontend:
+    image: node:22-alpine
+    working_dir: /app
+    command: ["sh", "-c", "npm install --no-audit --no-fund && npm run dev"]
+    environment:
+      VITE_BACKEND_URL: http://backend:8080
+      VITE_BOT_USERNAME: ${VITE_BOT_USERNAME:-}
+      VITE_APP_SHORTNAME: ${VITE_APP_SHORTNAME:-}
+    volumes:
+      - ./frontend:/app
+      - frontend-node-modules:/app/node_modules
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+
+volumes:
+  go-mod-cache:
+  go-build-cache:
+  frontend-node-modules:
