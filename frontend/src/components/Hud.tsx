@@ -1,14 +1,35 @@
 import { Button } from './Button';
 import { Sticker } from './Sticker';
 import { useGame } from '../state/GameContext';
-import { t } from '../i18n';
+import { t, type Key } from '../i18n';
 import { SUIT_SYMBOL } from '../util/cards';
 import { roleOf, tablePairs } from '../util/rules';
 import { lastMove } from '../util/moves';
-import type { GameState } from '../types/protocol';
+import type { GameState, Player } from '../types/protocol';
 
 interface Props {
   state: GameState;
+  fx: boolean;
+  onToggleFx(): void;
+}
+
+type RoleKey = 'attack' | 'throw' | 'defend' | 'take' | 'pass' | 'wait' | 'out' | 'offline';
+const HOT_ROLES: RoleKey[] = ['attack', 'defend', 'take', 'throw'];
+
+/** What a player is doing right now, for the tag next to their avatar. */
+function roleKey(state: GameState, p: Player): RoleKey {
+  if (p.out) return 'out';
+  if (!p.connected) return 'offline';
+  if (state.status !== 'playing') return 'wait';
+  const tableEmpty = state.table_order.length === 0;
+  if (p.id === state.defender_id) return state.defender_taking ? 'take' : 'defend';
+  if (p.id === state.current_turn_player_id) return p.passed && !tableEmpty ? 'pass' : 'attack';
+  if (tableEmpty) return 'wait';
+  return p.passed ? 'pass' : 'throw';
+}
+
+function roleLabel(key: RoleKey, self: boolean): string {
+  return t(`${self ? 'role.me.' : 'role.'}${key}` as Key);
 }
 
 function statusLine(state: GameState, selfId: string): string {
@@ -38,7 +59,7 @@ function statusLine(state: GameState, selfId: string): string {
   }
 }
 
-export function Hud({ state }: Props) {
+export function Hud({ state, fx, onToggleFx }: Props) {
   const { selfId, take, pass, leave, connection } = useGame();
   const me = state.players.find((p) => p.id === selfId);
   const role = selfId ? roleOf(state, selfId) : 'spectator';
@@ -62,25 +83,28 @@ export function Hud({ state }: Props) {
           <span className="chip chip--ghost">
             {t('game.bout')} {state.bout_number}
           </span>
+          <button className="chip chip--toggle" onClick={onToggleFx} title="halftone / chromatic / hologram shaders">
+            {fx ? t('hud.fxOn') : t('hud.fxOff')}
+          </button>
           <button className="chip chip--link" onClick={leave}>
             {t('game.leave')}
           </button>
         </div>
         <ul className="opponents">
           {opponents.map((p) => {
-            const isDef = p.id === state.defender_id;
-            const isAtt = p.id === state.current_turn_player_id;
-            const badge = p.out ? '✓' : isDef ? '🛡' : isAtt ? '⚔' : p.passed ? '·' : undefined;
-            const tag = p.out ? t('game.out') : !p.connected ? t('game.offline') : isDef && state.defender_taking ? t('game.taking') : isDef ? t('game.defender') : isAtt ? t('game.attacker') : p.passed ? t('game.passed') : '';
+            const key = roleKey(state, p);
+            const hot = HOT_ROLES.includes(key) && !resolving;
             return (
-              <li key={p.id} className={`opponent ${isDef ? 'opponent--defender' : ''} ${isAtt ? 'opponent--attacker' : ''} ${p.out ? 'opponent--out' : ''}`}>
-                <Sticker name={p.name} avatarUrl={p.avatar_url} seed={p.id} size={40} muted={!p.connected || p.out} badge={badge} />
-                <span className="opponent__name">{p.name}</span>
-                <span className="opponent__cards">
-                  {p.hand_count}
-                  {p.stump_count ? <small> +{p.stump_count}</small> : null}
-                </span>
-                {tag ? <span className="opponent__tag">{tag}</span> : null}
+              <li key={p.id} className={`opponent ${p.out ? 'opponent--out' : ''}`}>
+                <Sticker name={p.name} avatarUrl={p.avatar_url} seed={p.id} size={40} muted={!p.connected || p.out} />
+                <div className="opponent__info">
+                  <span className="opponent__name">{p.name}</span>
+                  <span className="opponent__cards">
+                    {p.hand_count}
+                    {p.stump_count ? <small> +{p.stump_count}</small> : null}
+                  </span>
+                  <span className={`roletag ${hot ? 'roletag--hot' : ''}`}>{roleLabel(key, false)}</span>
+                </div>
               </li>
             );
           })}
@@ -106,6 +130,9 @@ export function Hud({ state }: Props) {
         {me ? (
           <div className="me">
             <Sticker name={me.name} avatarUrl={me.avatar_url} seed={me.id} size={34} />
+            <span className={`roletag roletag--me ${HOT_ROLES.includes(roleKey(state, me)) && !resolving ? 'roletag--hot' : ''}`}>
+              {roleLabel(roleKey(state, me), true)}
+            </span>
             <span className="me__meta">
               {me.name} · {me.hand_count}
               {me.stump_count ? ` · ${t('game.stump')} ${me.stump_count}` : ''}

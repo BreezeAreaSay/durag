@@ -93,7 +93,7 @@ func FromEnv() (Config, error) {
 	if c.InitDataMaxAge, err = time.ParseDuration(getenv("TG_INITDATA_MAX_AGE", "24h")); err != nil {
 		return c, fmt.Errorf("config: TG_INITDATA_MAX_AGE: %w", err)
 	}
-	if c.BoutResolveDelay, err = time.ParseDuration(getenv("BOUT_RESOLVE_DELAY", "2500ms")); err != nil {
+	if c.BoutResolveDelay, err = time.ParseDuration(getenv("BOUT_RESOLVE_DELAY", "3500ms")); err != nil {
 		return c, fmt.Errorf("config: BOUT_RESOLVE_DELAY: %w", err)
 	}
 	if c.BotToken == "" && !c.AllowDevAuth {

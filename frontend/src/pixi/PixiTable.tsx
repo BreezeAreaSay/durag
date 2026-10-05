@@ -5,24 +5,19 @@ import type { SceneModel } from './model';
 interface Props {
   model: SceneModel;
   reject: { cardId: string; nonce: number } | null;
+  fx: boolean;
   onPlay(cardId: string, targetId?: string): void;
   onTransfer(cardId: string): void;
 }
 
-function fxEnabled(): boolean {
-  const params = new URLSearchParams(location.search);
-  if (params.get('fx') === '0') return false;
-  if (params.get('fx') === '1') return true;
-  // Very weak devices: skip the full-screen shader passes.
-  return (navigator.hardwareConcurrency ?? 4) >= 3;
-}
-
 /** Mounts the PixiJS table once and streams model updates into it. */
-export function PixiTable({ model, reject, onPlay, onTransfer }: Props) {
+export function PixiTable({ model, reject, fx, onPlay, onTransfer }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<TableScene | null>(null);
   const modelRef = useRef(model);
   modelRef.current = model;
+  const fxRef = useRef(fx);
+  fxRef.current = fx;
   const handlersRef = useRef({ onPlay, onTransfer });
   handlersRef.current = { onPlay, onTransfer };
 
@@ -35,7 +30,7 @@ export function PixiTable({ model, reject, onPlay, onTransfer }: Props) {
         onPlay: (id, target) => handlersRef.current.onPlay(id, target),
         onTransfer: (id) => handlersRef.current.onTransfer(id),
       },
-      { fx: fxEnabled() },
+      { fx: fxRef.current },
     );
     scene
       .init(host)
@@ -45,6 +40,7 @@ export function PixiTable({ model, reject, onPlay, onTransfer }: Props) {
           return;
         }
         sceneRef.current = scene;
+        scene.setFx(fxRef.current);
         scene.update(modelRef.current);
       })
       .catch((err: unknown) => {
@@ -64,6 +60,10 @@ export function PixiTable({ model, reject, onPlay, onTransfer }: Props) {
   useEffect(() => {
     if (reject) sceneRef.current?.rejectCard(reject.cardId);
   }, [reject]);
+
+  useEffect(() => {
+    sceneRef.current?.setFx(fx);
+  }, [fx]);
 
   return <div ref={hostRef} className="pixi-host" />;
 }

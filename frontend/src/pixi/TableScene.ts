@@ -21,6 +21,7 @@ import {
 import { createChromaticFilter, createHalftoneFilter, createHologramFilter, filterCompiles, type HologramFilter } from './shaders';
 import { canBeat } from '../util/rules';
 import { SUIT_SYMBOL, isSuper } from '../util/cards';
+import type { Filter } from 'pixi.js';
 import type { Card } from '../types/protocol';
 import type { SceneModel } from './model';
 
@@ -66,7 +67,8 @@ export class TableScene {
   readonly app = new Application();
 
   private readonly handlers: SceneHandlers;
-  private readonly fx: boolean;
+  private fx: boolean;
+  private fxActive = false;
   private readonly tweener: StopMotionTweener;
 
   private world = new Container();
@@ -135,17 +137,7 @@ export class TableScene {
     stage.on('pointerup', this.onPointerUp);
     stage.on('pointerupoutside', this.onPointerUp);
 
-    if (this.fx) {
-      const quality = { resolution: this.app.renderer.resolution };
-      const halftone = createHalftoneFilter({ dotSize: 4, strength: 0.42, ...quality });
-      const chromatic = createChromaticFilter(0.8, quality);
-      const hologram = createHologramFilter(0.65, quality);
-      const ok = [halftone, chromatic, hologram].every((f) => filterCompiles(this.app.renderer, f));
-      if (ok) {
-        this.hologram = hologram;
-        this.world.filters = [halftone, chromatic];
-      }
-    }
+    if (this.fx) this.enableFx();
 
     this.app.renderer.on('resize', this.onResize);
     this.app.ticker.add((ticker) => {
@@ -165,6 +157,43 @@ export class TableScene {
     this.model = model;
     if (model.resolving && model.resolveOutcome) this.lastOutcome = model.resolveOutcome;
     if (this.ready) this.sync(false);
+  }
+
+  /** Turns the shader effects on or off at runtime (HUD toggle). */
+  setFx(on: boolean): void {
+    this.fx = on;
+    if (!this.ready) return;
+    if (on && !this.fxActive) this.enableFx();
+    else if (!on && this.fxActive) this.disableFx();
+  }
+
+  // Deliberately gentle: a faint riso screen in the mid-tones and a sub-pixel
+  // RGB misregistration. Anything stronger reads as a compression artefact on
+  // small screens, and the cards must stay razor sharp.
+  private enableFx(): void {
+    const quality = { resolution: this.app.renderer.resolution };
+    const halftone = createHalftoneFilter({ dotSize: 3, strength: 0.28, ...quality });
+    const chromatic = createChromaticFilter(0.4, quality);
+    const hologram = createHologramFilter(0.6, quality);
+    if (![halftone, chromatic, hologram].every((f) => filterCompiles(this.app.renderer, f))) return;
+    this.hologram = hologram;
+    this.world.filters = [halftone, chromatic];
+    this.fxActive = true;
+    this.applyHologram(hologram);
+  }
+
+  private disableFx(): void {
+    const old = this.world.filters;
+    this.world.filters = null;
+    if (Array.isArray(old)) old.forEach((f) => f.destroy());
+    this.applyHologram(null);
+    this.hologram?.destroy();
+    this.hologram = null;
+    this.fxActive = false;
+  }
+
+  private applyHologram(filter: Filter | null): void {
+    for (const view of this.views.values()) view.setHologram(filter);
   }
 
   /** The server rejected a card: snap it back into the hand. */

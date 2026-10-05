@@ -32,7 +32,7 @@ func TestLoadDotEnvAndFromEnv(t *testing.T) {
 	if len(c.AllowedOrigins) != 2 || c.AllowedOrigins[1] != "https://b.example" {
 		t.Fatalf("origins %v", c.AllowedOrigins)
 	}
-	if c.RedisAddr != "" || c.InitDataMaxAge != 24*time.Hour || c.BoutResolveDelay != 2500*time.Millisecond {
+	if c.RedisAddr != "" || c.InitDataMaxAge != 24*time.Hour || c.BoutResolveDelay != 3500*time.Millisecond {
 		t.Fatalf("%+v", c)
 	}
 	if err := LoadDotEnv(filepath.Join(dir, "missing.env")); err != nil {

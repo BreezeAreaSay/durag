@@ -58,6 +58,12 @@ export class CardView {
     this.root.alpha = on ? 0.82 : 1;
   }
 
+  /** Attaches or removes the pointer-driven hologram (Super card only). */
+  setHologram(filter: Filter | null): void {
+    if (!isSuper(this.card)) return;
+    this.face.filters = filter ? [filter] : null;
+  }
+
   setLifted(on: boolean): void {
     if (this.lifted === on) return;
     this.lifted = on;

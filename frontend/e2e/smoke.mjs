@@ -73,6 +73,18 @@ try {
   await a.waitForTimeout(1500);
   await a.screenshot({ path: join(here, 'shot-table.png') });
 
+  // The FX toggle must switch the shader passes off and on without errors.
+  const fxChip = a.locator('.chip--toggle');
+  const before = (await fxChip.textContent())?.trim();
+  await fxChip.click();
+  await a.waitForTimeout(300);
+  const after = (await fxChip.textContent())?.trim();
+  if (before === after) problems.push('FX toggle did not change its label');
+  await a.screenshot({ path: join(here, 'shot-table-nofx.png') });
+  await fxChip.click();
+  await a.waitForTimeout(300);
+  log('fx toggle:', before, '->', after, '->', (await fxChip.textContent())?.trim());
+
   const attacker = (await status(a)).includes('АТАКУЙ') ? a : b;
   const defender = attacker === a ? b : a;
 

@@ -1,10 +1,11 @@
-import { useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Hud } from './Hud';
 import { ResultOverlay } from './ResultOverlay';
 import { PixiTable } from '../pixi/PixiTable';
 import { toSceneModel } from '../pixi/model';
 import { useGame } from '../state/GameContext';
 import { closingConfirmation, haptic } from '../telegram/useTelegram';
+import { getFxSetting, setFxSetting } from '../state/settings';
 import { t } from '../i18n';
 import type { GameState } from '../types/protocol';
 
@@ -14,6 +15,13 @@ interface Props {
 
 export function GameScreen({ state }: Props) {
   const { selfId, playCard, transfer, lastError } = useGame();
+  const [fx, setFx] = useState(getFxSetting);
+  const toggleFx = useCallback(() => {
+    setFx((v) => {
+      setFxSetting(!v);
+      return !v;
+    });
+  }, []);
   const model = useMemo(() => (selfId ? toSceneModel(state, selfId) : null), [state, selfId]);
   const reject = useMemo(() => (lastError?.cardId ? { cardId: lastError.cardId, nonce: lastError.nonce } : null), [lastError]);
 
@@ -38,6 +46,7 @@ export function GameScreen({ state }: Props) {
         <PixiTable
           model={model}
           reject={reject}
+          fx={fx}
           onPlay={(cardId, targetId) => {
             haptic('light');
             playCard(cardId, targetId);
@@ -48,7 +57,7 @@ export function GameScreen({ state }: Props) {
           }}
         />
       ) : null}
-      <Hud state={state} />
+      <Hud state={state} fx={fx} onToggleFx={toggleFx} />
       {resolving ? (
         <div className={`stamp ${state.resolve_outcome === 'took' ? 'stamp--took' : ''}`} key={`${state.bout_number}-${state.resolve_outcome}`}>
           {state.resolve_outcome === 'took' ? t('game.takesStamp', { name: defenderName }) : t('game.bitoStamp')}

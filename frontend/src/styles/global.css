@@ -436,16 +436,16 @@ body::before {
   pointer-events: auto;
 }
 .opponent {
-  display: grid;
-  grid-template-columns: auto auto;
-  grid-template-rows: auto auto;
-  column-gap: 12px;
+  display: flex;
+  gap: 14px;
   align-items: center;
-  padding: 6px 8px 6px 4px;
+  padding: 6px 8px 6px 6px;
   flex: none;
 }
-.opponent .sticker {
-  grid-row: 1 / span 2;
+.opponent__info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
 }
 .opponent__name {
   font-weight: 700;
@@ -464,22 +464,39 @@ body::before {
   color: var(--grey);
   font-size: 10px;
 }
-.opponent__tag {
-  grid-column: 2;
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--grey);
-}
-.opponent--defender .opponent__tag,
-.opponent--attacker .opponent__tag {
-  color: var(--ink);
-  background: var(--acid);
-  padding: 0 4px;
-  width: max-content;
-}
 .opponent--out {
   opacity: 0.5;
+}
+
+/* what each player is doing right now: БЬЮСЬ / БЕРУ / ХОЖУ ... */
+.roletag {
+  font-family: var(--display);
+  font-weight: 800;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--grey);
+  background: #fff;
+  border: 2px solid var(--grey);
+  padding: 2px 6px;
+  width: max-content;
+}
+.roletag--hot {
+  color: var(--ink);
+  background: var(--acid);
+  border-color: var(--ink);
+}
+.roletag--me {
+  font-size: 13px;
+  padding: 5px 10px;
+  box-shadow: 3px 3px 0 var(--ink);
+  border-color: var(--ink);
+  color: var(--ink);
+  transform: rotate(-2deg);
+}
+.chip--toggle {
+  cursor: pointer;
+  font-family: var(--display);
 }
 
 .status {
@@ -531,6 +548,7 @@ body::before {
   pointer-events: none;
   font-size: 11px;
   color: var(--grey);
+  padding-left: 6px;
 }
 .me__meta {
   background: #fff;
