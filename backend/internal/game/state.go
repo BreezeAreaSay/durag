@@ -9,6 +9,20 @@ const (
 	StatusFinished = "finished" // the game ended; a loser (or a draw) is known
 )
 
+// Bout phases. The empty string is normal play; after the last card of a
+// bout is beaten (or the defender finished taking) the table stays visible
+// in the resolving phase until ResolveAt, so everybody can see what beat what.
+const (
+	PhaseBout      = ""
+	PhaseResolving = "resolving"
+)
+
+// Bout outcomes (GameState.ResolveOutcome and the "bout_end" log entry).
+const (
+	OutcomeBito = "bito"
+	OutcomeTook = "took"
+)
+
 // Table constants.
 const (
 	HandSize   = 6 // cards dealt to every hand and refilled to after each bout
@@ -75,6 +89,9 @@ type GameState struct {
 	ViewerID       string     `json:"viewer_id,omitempty"` // filled by Sanitized(): who this view belongs to
 	TransferCount  int        `json:"transfer_count"`      // transfers in the current bout (informational)
 	BoutNumber     int        `json:"bout_number"`
+	Phase          string     `json:"phase"`           // "" or PhaseResolving
+	ResolveAt      int64      `json:"resolve_at"`      // unix milliseconds; when the resolving phase ends
+	ResolveOutcome string     `json:"resolve_outcome"` // OutcomeBito / OutcomeTook while resolving
 }
 
 // NewGameState creates an empty waiting room.

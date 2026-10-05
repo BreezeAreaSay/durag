@@ -80,6 +80,8 @@ export class TableScene {
   private time = 0;
   private ready = false;
   private destroyed = false;
+  private lastOutcome: '' | 'bito' | 'took' = '';
+  private flashTimers = new Set<number>();
 
   // piles
   private deckPile = new Container();
@@ -100,7 +102,9 @@ export class TableScene {
       resizeTo: host,
       backgroundAlpha: 0,
       antialias: true,
-      resolution: Math.min(window.devicePixelRatio || 1, 2),
+      // Native pixel density: filters and text are rendered at this resolution
+      // too, which keeps the vector cards razor sharp on Retina screens.
+      resolution: Math.min(window.devicePixelRatio || 1, 3),
       autoDensity: true,
       preference: 'webgl',
     });
@@ -132,9 +136,10 @@ export class TableScene {
     stage.on('pointerupoutside', this.onPointerUp);
 
     if (this.fx) {
-      const halftone = createHalftoneFilter({ dotSize: 5, strength: 0.5 });
-      const chromatic = createChromaticFilter(1.1);
-      const hologram = createHologramFilter();
+      const quality = { resolution: this.app.renderer.resolution };
+      const halftone = createHalftoneFilter({ dotSize: 4, strength: 0.42, ...quality });
+      const chromatic = createChromaticFilter(0.8, quality);
+      const hologram = createHologramFilter(0.65, quality);
       const ok = [halftone, chromatic, hologram].every((f) => filterCompiles(this.app.renderer, f));
       if (ok) {
         this.hologram = hologram;
@@ -158,6 +163,7 @@ export class TableScene {
 
   update(model: SceneModel): void {
     this.model = model;
+    if (model.resolving && model.resolveOutcome) this.lastOutcome = model.resolveOutcome;
     if (this.ready) this.sync(false);
   }
 
@@ -174,6 +180,8 @@ export class TableScene {
     if (this.destroyed) return;
     this.destroyed = true;
     this.tweener.clear();
+    for (const id of this.flashTimers) window.clearTimeout(id);
+    this.flashTimers.clear();
     if (this.ready) {
       this.app.renderer.off('resize', this.onResize);
       this.app.destroy(true, { children: true });
@@ -216,7 +224,8 @@ export class TableScene {
       if (this.pending.has(id)) continue; // still waiting for the server's verdict
       this.views.delete(id);
       const wasOnTable = view.root.parent === this.layers.table;
-      const exit = wasOnTable && m.lastEvent === 'bito' ? discardSlot(metrics) : exitSlot(metrics);
+      const outcome = m.lastOutcome || this.lastOutcome;
+      const exit = wasOnTable && outcome !== 'took' ? discardSlot(metrics) : exitSlot(metrics);
       view.root.eventMode = 'none';
       this.reparent(view, this.layers.table);
       void this.tweener.to(view.root, { x: exit.x, y: exit.y, rotation: exit.rotation, scale: exit.scale, alpha: 0.9 }, { duration: 360, ease: easings.outQuad }).then(() => view.destroy());
@@ -234,11 +243,12 @@ export class TableScene {
         view.root.position.set(from.x, from.y);
         view.root.rotation = from.rotation;
         view.root.scale.set(from.scale);
-        if (p.kind === 'hand' && m.lastEvent === 'took') {
+        if (p.kind === 'hand' && (m.lastOutcome || this.lastOutcome) === 'took') {
           // cards the viewer just took come from the table centre, not the deck
           const c = nextAttackSlot(0, metrics);
           view.root.position.set(c.x, c.y);
         }
+        if (p.kind === 'attack' || p.kind === 'defense') this.flash(view);
       }
       if (this.pending.has(id)) {
         if (p.kind === 'attack' || p.kind === 'defense') {
@@ -257,7 +267,18 @@ export class TableScene {
       this.moveTo(view, p.slot, immediate && !spawned);
     }
 
+    if (m.table.length === 0 && !m.resolving) this.lastOutcome = '';
     this.updatePiles();
+  }
+
+  /** Briefly outlines a card another player just put on the table. */
+  private flash(view: CardView): void {
+    view.setHighlight(true);
+    const id = window.setTimeout(() => {
+      this.flashTimers.delete(id);
+      if (!this.destroyed) view.setHighlight(false);
+    }, 900);
+    this.flashTimers.add(id);
   }
 
   private createView(card: Card, m: Metrics): CardView {

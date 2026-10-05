@@ -60,6 +60,9 @@ function state(partial: Partial<GameState>): GameState {
     viewer_id: 'A',
     transfer_count: 0,
     bout_number: 1,
+    phase: '',
+    resolve_at: 0,
+    resolve_outcome: '',
     ...partial,
   };
 }

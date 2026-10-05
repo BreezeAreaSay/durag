@@ -3,12 +3,22 @@ package game
 import (
 	"fmt"
 	"math/rand/v2"
+	"time"
 )
 
 // Engine mutates GameState according to the rules. It is stateless apart
 // from its random source, so one Engine can serve any number of rooms.
 type Engine struct {
 	rng *rand.Rand
+
+	// ResolveDelay keeps a finished bout on the table (PhaseResolving) for
+	// this long before the cards are cleared, so players can see what beat
+	// what. 0 resolves immediately. The transport layer is responsible for
+	// calling ResolveBout / ResolveIfDue once the delay has passed.
+	ResolveDelay time.Duration
+
+	// Now returns the current time (overridable in tests).
+	Now func() time.Time
 }
 
 // NewEngine creates an engine with the given random source (nil = random seed).
@@ -16,7 +26,14 @@ func NewEngine(rng *rand.Rand) *Engine {
 	if rng == nil {
 		rng = rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64()))
 	}
-	return &Engine{rng: rng}
+	return &Engine{rng: rng, Now: time.Now}
+}
+
+func (e *Engine) now() time.Time {
+	if e.Now == nil {
+		return time.Now()
+	}
+	return e.Now()
 }
 
 // firstMoveOrder lists the cards that decide who opens the game, in priority
@@ -259,6 +276,7 @@ func (e *Engine) PlayCard(s *GameState, playerID, cardID, targetID string) error
 		s.addLog(LogEntry{Type: kind, PlayerID: playerID, CardID: cardID})
 	}
 	s.resetPasses()
+	s.settleHands()
 	e.checkBoutEnd(s)
 	s.touch()
 	return nil
@@ -282,6 +300,7 @@ func (e *Engine) TransferTurn(s *GameState, playerID, cardID string) error {
 	s.TransferCount++
 	s.resetPasses()
 	s.addLog(LogEntry{Type: "transfer", PlayerID: playerID, CardID: cardID, TargetID: s.DefenderID})
+	s.settleHands()
 	e.checkBoutEnd(s)
 	s.touch()
 	return nil
@@ -341,12 +360,12 @@ func (s *GameState) attackersDone() bool {
 }
 
 func (e *Engine) checkBoutEnd(s *GameState) {
-	if s.TableEmpty() {
+	if s.TableEmpty() || s.Phase == PhaseResolving {
 		return
 	}
 	if s.DefenderTaking {
 		if s.attackersDone() {
-			e.endBout(s, true)
+			e.finishBout(s, true)
 		}
 		return
 	}
@@ -355,8 +374,49 @@ func (e *Engine) checkBoutEnd(s *GameState) {
 	}
 	d := s.Defender()
 	if d == nil || len(d.Hand) == 0 || s.attackersDone() {
-		e.endBout(s, false)
+		e.finishBout(s, false)
 	}
+}
+
+// finishBout either clears the table right away or parks the bout in the
+// resolving phase for ResolveDelay.
+func (e *Engine) finishBout(s *GameState, took bool) {
+	if e.ResolveDelay <= 0 {
+		e.endBout(s, took)
+		return
+	}
+	outcome := OutcomeBito
+	if took {
+		outcome = OutcomeTook
+	}
+	s.Phase = PhaseResolving
+	s.ResolveOutcome = outcome
+	s.ResolveAt = e.now().Add(e.ResolveDelay).UnixMilli()
+	s.resetPasses()
+	s.addLog(LogEntry{Type: "bout_end", PlayerID: s.DefenderID, Text: outcome})
+}
+
+// ResolveBout finalises a bout that is waiting in the resolving phase.
+func (e *Engine) ResolveBout(s *GameState) error {
+	if s.Status != StatusPlaying || s.Phase != PhaseResolving {
+		return ErrNotResolving
+	}
+	took := s.ResolveOutcome == OutcomeTook
+	s.Phase = PhaseBout
+	s.ResolveAt = 0
+	s.ResolveOutcome = ""
+	e.endBout(s, took)
+	s.touch()
+	return nil
+}
+
+// ResolveIfDue resolves the bout when its deadline has passed and reports
+// whether it did.
+func (e *Engine) ResolveIfDue(s *GameState, now time.Time) bool {
+	if s.Status != StatusPlaying || s.Phase != PhaseResolving || now.UnixMilli() < s.ResolveAt {
+		return false
+	}
+	return e.ResolveBout(s) == nil
 }
 
 func (s *GameState) tableCards() []Card {
@@ -375,7 +435,39 @@ func (s *GameState) clearTable() {
 	s.TableOrder = []string{}
 	s.DefenderTaking = false
 	s.TransferCount = 0
+	s.Phase = PhaseBout
+	s.ResolveAt = 0
+	s.ResolveOutcome = ""
 	s.resetPasses()
+}
+
+// settleHands applies the end-game rules the moment a hand becomes empty
+// while the main deck is exhausted: the player immediately picks up their
+// stump and plays on with it; with nothing left anywhere they leave the game
+// as a winner right away. The defender is the exception: whether they are out
+// is decided when the bout ends (an undefended attack still forces a take).
+func (s *GameState) settleHands() {
+	if len(s.Deck) > 0 {
+		return
+	}
+	for i := range s.Players {
+		p := &s.Players[i]
+		if p.Out || len(p.Hand) > 0 {
+			continue
+		}
+		if len(p.Stump) > 0 {
+			p.Hand = append(p.Hand, p.Stump...)
+			p.Stump = []Card{}
+			s.addLog(LogEntry{Type: "stump", PlayerID: p.ID})
+			continue
+		}
+		if s.TrumpCard != nil || p.ID == s.DefenderID {
+			continue
+		}
+		p.Out = true
+		s.FinishedOrder = append(s.FinishedOrder, p.ID)
+		s.addLog(LogEntry{Type: "out", PlayerID: p.ID})
+	}
 }
 
 // endBout finishes the current bout: the defender either takes everything or
@@ -450,20 +542,26 @@ func (s *GameState) revealTrump() {
 // refill tops hands up to HandSize: lead attacker first, then the other
 // attackers clockwise, the defender last.
 func (s *GameState) refill(attackerID, defenderID string) {
-	order := []string{attackerID}
-	cur := attackerID
-	for i := 0; i < len(s.Players); i++ {
-		cur = s.NextActive(cur)
-		if cur == "" || cur == attackerID {
-			break
+	order := make([]string, 0, len(s.Players))
+	seen := map[string]bool{}
+	add := func(id string) {
+		p := s.Player(id)
+		if p == nil || p.Out || seen[id] {
+			return
 		}
-		if cur != defenderID {
-			order = append(order, cur)
+		seen[id] = true
+		order = append(order, id)
+	}
+	add(attackerID)
+	n := len(s.Players)
+	start := s.PlayerIndex(attackerID)
+	for step := 1; step <= n; step++ {
+		p := &s.Players[(start+step+n)%n]
+		if p.ID != defenderID {
+			add(p.ID)
 		}
 	}
-	if defenderID != attackerID {
-		order = append(order, defenderID)
-	}
+	add(defenderID)
 	for _, id := range order {
 		p := s.Player(id)
 		if p == nil || p.Out {

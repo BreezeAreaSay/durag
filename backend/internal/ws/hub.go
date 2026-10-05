@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 
@@ -186,7 +187,7 @@ func (h *Hub) join(c *Client, raw json.RawMessage) {
 		old.sendError("REPLACED", "you connected from another device", "")
 		old.close()
 	}
-	h.publish(roomID, state)
+	h.afterUpdate(roomID, state)
 }
 
 func (h *Hub) intent(c *Client, env Envelope) {
@@ -195,6 +196,9 @@ func (h *Hub) intent(c *Client, env Envelope) {
 		c.sendError("NOT_IN_ROOM", "join a room first", "")
 		return
 	}
+	// A bout whose resolving delay has passed is finalised first (safety net
+	// in case the timer that scheduled it lived on an instance that is gone).
+	h.resolveDue(roomID)
 	var cardID string
 	apply := func(s *game.GameState) error {
 		switch env.Type {
@@ -246,10 +250,52 @@ func (h *Hub) intent(c *Client, env Envelope) {
 			return
 		}
 	}
-	h.publish(roomID, state)
+	h.afterUpdate(roomID, state)
 }
 
-var errBadPayload = errors.New("malformed payload")
+var (
+	errBadPayload = errors.New("malformed payload")
+	errNotDue     = errors.New("bout not due for resolution")
+)
+
+// afterUpdate broadcasts the new state and, when a bout just finished,
+// schedules its resolution (clearing the table) after the engine's delay.
+func (h *Hub) afterUpdate(roomID string, state *game.GameState) {
+	h.publish(roomID, state)
+	if state.Phase != game.PhaseResolving {
+		return
+	}
+	delay := time.Until(time.UnixMilli(state.ResolveAt)) + 20*time.Millisecond
+	if delay < 0 {
+		delay = 0
+	}
+	time.AfterFunc(delay, func() {
+		select {
+		case <-h.ctx.Done():
+			return
+		default:
+		}
+		h.resolveDue(roomID)
+	})
+}
+
+// resolveDue finalises the room's bout if its resolving deadline has passed.
+// It is idempotent: other instances' timers and incoming intents may race.
+func (h *Hub) resolveDue(roomID string) {
+	state, err := h.store.Update(h.ctx, roomID, false, func(s *game.GameState) error {
+		if !h.engine.ResolveIfDue(s, time.Now()) {
+			return errNotDue
+		}
+		return nil
+	})
+	if err != nil {
+		if !errors.Is(err, errNotDue) && !errors.Is(err, store.ErrNotFound) {
+			h.log.Error("ws: resolve bout", "room", roomID, "err", err)
+		}
+		return
+	}
+	h.publish(roomID, state)
+}
 
 func (h *Hub) sendFailure(c *Client, err error, cardID string) {
 	var rule *game.RuleError

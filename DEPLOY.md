@@ -53,6 +53,7 @@ VITE_BOT_USERNAME=MyDuragBot            # username бота без @
 VITE_APP_SHORTNAME=durag                # короткое имя Mini App из /newapp
 ROOM_TTL=24h
 TG_INITDATA_MAX_AGE=24h
+BOUT_RESOLVE_DELAY=2500ms               # пауза после кона, чтобы все увидели отбой
 ```
 
 `PORT`, `REDIS_ADDR`, `ALLOWED_ORIGINS` в проде задаёт `docker-compose.prod.yml` (`ALLOWED_ORIGINS=https://$DOMAIN`).

@@ -57,7 +57,12 @@ export interface GameState {
   viewer_id: string;
   transfer_count: number;
   bout_number: number;
+  phase: '' | 'resolving'; // "resolving": the finished bout stays on the table until resolve_at
+  resolve_at: number; // unix ms
+  resolve_outcome: '' | 'bito' | 'took';
 }
+
+export type Outcome = GameState['resolve_outcome'];
 
 export interface ErrorPayload {
   message: string;

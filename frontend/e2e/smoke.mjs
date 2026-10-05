@@ -97,7 +97,23 @@ try {
   const take = defender.locator('button:has-text("БЕРУ")');
   if (await take.count()) {
     await take.click();
-    await defender.waitForTimeout(1200);
+    // If the attacker still holds a matching rank the bout waits for them:
+    // they say "pass"; otherwise the bout ends at once and the stamp shows.
+    const stamp = defender.locator('.stamp');
+    const shown = await stamp.waitFor({ timeout: 1500 }).then(() => true).catch(() => false);
+    if (!shown) {
+      const pass = attacker.locator('button:has-text("БИТО")');
+      if (await pass.count()) {
+        log('attacker could still throw in -> passes');
+        await pass.click();
+      }
+      await stamp.waitFor({ timeout: 4000 });
+    }
+    // The finished bout stays on the table (BOUT_RESOLVE_DELAY) with a stamp.
+    log('resolving stamp:', (await stamp.textContent())?.trim());
+    await defender.waitForTimeout(400); // let the slam-in animation finish
+    await defender.screenshot({ path: join(here, 'shot-resolving.png') });
+    await defender.waitForTimeout(3500);
     log('after take:', await status(a), '|', await status(b));
   }
 

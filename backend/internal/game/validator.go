@@ -37,6 +37,9 @@ var (
 	ErrGameInProgress       = ruleErr("GAME_IN_PROGRESS", "the game has already started")
 	ErrRoomFull             = ruleErr("ROOM_FULL", "the room is full")
 	ErrNotEnoughPlayers     = ruleErr("NOT_ENOUGH_PLAYERS", "at least two players are needed")
+	ErrResolving            = ruleErr("RESOLVING", "the bout is over, wait for the next one")
+	ErrNotResolving         = ruleErr("NOT_RESOLVING", "no bout is waiting to be resolved")
+	ErrTransferTooFewCards  = ruleErr("TRANSFER_TOO_FEW_CARDS", "the next player has too few cards to take over the defence")
 )
 
 // AutoPassWhenNoLegalThrowIn makes the engine treat an attacker who holds no
@@ -91,6 +94,9 @@ func (s *GameState) seated(playerID string) (*Player, error) {
 	}
 	if p.Out {
 		return nil, ErrPlayerOut
+	}
+	if s.Phase == PhaseResolving {
+		return nil, ErrResolving
 	}
 	return p, nil
 }
@@ -218,6 +224,13 @@ func (s *GameState) ValidateTransfer(playerID, cardID string) (Card, error) {
 		if a.Rank != card.Rank {
 			return Card{}, ErrTransferRank
 		}
+	}
+	// Classic rule: the next player must be able to answer every attack card,
+	// i.e. hold at least as many cards as the table will have after the
+	// transfer (this also forbids transferring to an empty hand).
+	next := s.Player(s.NextActive(p.ID))
+	if next == nil || len(next.Hand) < len(attacks)+1 {
+		return Card{}, ErrTransferTooFewCards
 	}
 	return card, nil
 }

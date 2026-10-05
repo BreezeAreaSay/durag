@@ -4,6 +4,7 @@ import { useGame } from '../state/GameContext';
 import { t } from '../i18n';
 import { SUIT_SYMBOL } from '../util/cards';
 import { roleOf, tablePairs } from '../util/rules';
+import { lastMove } from '../util/moves';
 import type { GameState } from '../types/protocol';
 
 interface Props {
@@ -16,6 +17,9 @@ function statusLine(state: GameState, selfId: string): string {
   const defender = state.players.find((p) => p.id === state.defender_id);
   const attacker = state.players.find((p) => p.id === state.current_turn_player_id);
   const tableEmpty = state.table_order.length === 0;
+  if (state.phase === 'resolving') {
+    return state.resolve_outcome === 'took' ? t('game.takesStamp', { name: defender?.name ?? '?' }) : t('game.resolvingBito');
+  }
   if (me?.out) return t('game.youOut');
   switch (role) {
     case 'attacker':
@@ -39,8 +43,10 @@ export function Hud({ state }: Props) {
   const me = state.players.find((p) => p.id === selfId);
   const role = selfId ? roleOf(state, selfId) : 'spectator';
   const tableEmpty = state.table_order.length === 0;
-  const canTake = role === 'defender' && !tableEmpty && !state.defender_taking;
-  const canPass = (role === 'attacker' || role === 'thrower') && !tableEmpty && !me?.passed && (me?.hand_count ?? 0) > 0;
+  const resolving = state.phase === 'resolving';
+  const canTake = role === 'defender' && !tableEmpty && !state.defender_taking && !resolving;
+  const canPass = (role === 'attacker' || role === 'thrower') && !tableEmpty && !me?.passed && (me?.hand_count ?? 0) > 0 && !resolving;
+  const last = lastMove(state);
   const trump = state.trump_revealed && state.trump_suit ? `${t('game.trump')} ${SUIT_SYMBOL[state.trump_suit]}` : t('game.trumpHidden');
   const opponents = state.players.filter((p) => p.id !== selfId);
 
@@ -79,7 +85,8 @@ export function Hud({ state }: Props) {
             );
           })}
         </ul>
-        <p className={`status ${role === 'attacker' || role === 'defender' ? 'status--hot' : ''}`}>{selfId ? statusLine(state, selfId) : ''}</p>
+        <p className={`status ${(role === 'attacker' || role === 'defender') && !resolving ? 'status--hot' : ''}`}>{selfId ? statusLine(state, selfId) : ''}</p>
+        {last ? <p className="lastmove">{last}</p> : null}
         {connection !== 'open' ? <p className="status status--warn">{t('conn.reconnecting')}</p> : null}
       </header>
 

@@ -53,7 +53,7 @@ void main(void) {
   vec2 cell = mod(rot, uDotSize) - uDotSize * 0.5;
   float radius = (1.0 - lum) * uDotSize * 0.55;
   float d = length(cell);
-  float dotMask = 1.0 - smoothstep(radius - 0.8, radius + 0.2, d);
+  float dotMask = 1.0 - smoothstep(radius - 0.5, radius + 0.15, d);
   // only mid-tones and shadows get the screen; paper stays clean
   float tone = smoothstep(0.98, 0.6, lum);
   vec3 ink = vec3(0.06, 0.05, 0.05);
@@ -113,20 +113,27 @@ void main(void) {
 }
 `;
 
-export function createHalftoneFilter(opts: { dotSize?: number; angle?: number; strength?: number } = {}): Filter {
+export interface FilterQuality {
+  /** Render resolution of the filter pass; pass the renderer's resolution so
+   *  the effects do not soften the picture on high-DPI screens. */
+  resolution?: number;
+}
+
+export function createHalftoneFilter(opts: { dotSize?: number; angle?: number; strength?: number } & FilterQuality = {}): Filter {
   return new Filter({
     glProgram: GlProgram.from({ vertex: VERTEX, fragment: HALFTONE_FRAG, name: 'durag-halftone' }),
     resources: {
       halftoneUniforms: {
-        uDotSize: { value: opts.dotSize ?? 5, type: 'f32' },
+        uDotSize: { value: opts.dotSize ?? 4, type: 'f32' },
         uAngle: { value: opts.angle ?? 0.45, type: 'f32' },
-        uStrength: { value: opts.strength ?? 0.55, type: 'f32' },
+        uStrength: { value: opts.strength ?? 0.42, type: 'f32' },
       },
     },
+    ...(opts.resolution ? { resolution: opts.resolution } : {}),
   });
 }
 
-export function createChromaticFilter(offset = 1.2): Filter {
+export function createChromaticFilter(offset = 0.8, quality: FilterQuality = {}): Filter {
   return new Filter({
     glProgram: GlProgram.from({ vertex: VERTEX, fragment: CHROMATIC_FRAG, name: 'durag-chromatic' }),
     resources: {
@@ -135,6 +142,7 @@ export function createChromaticFilter(offset = 1.2): Filter {
       },
     },
     padding: 4,
+    ...(quality.resolution ? { resolution: quality.resolution } : {}),
   });
 }
 
@@ -143,7 +151,7 @@ export interface HologramFilter extends Filter {
   setTime(seconds: number): void;
 }
 
-export function createHologramFilter(strength = 0.65): HologramFilter {
+export function createHologramFilter(strength = 0.65, quality: FilterQuality = {}): HologramFilter {
   const filter = new Filter({
     glProgram: GlProgram.from({ vertex: VERTEX, fragment: HOLOGRAM_FRAG, name: 'durag-hologram' }),
     resources: {
@@ -153,6 +161,7 @@ export function createHologramFilter(strength = 0.65): HologramFilter {
         uStrength: { value: strength, type: 'f32' },
       },
     },
+    ...(quality.resolution ? { resolution: quality.resolution } : {}),
   }) as HologramFilter;
   const uniforms = (filter.resources as { hologramUniforms: { uniforms: { uPointer: Float32Array; uTime: number } } }).hologramUniforms.uniforms;
   filter.setPointer = (x, y) => {

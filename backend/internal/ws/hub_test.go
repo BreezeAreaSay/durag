@@ -1,6 +1,7 @@
 package ws
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -23,8 +24,13 @@ const testToken = "7000000000:AAFakeTokenForUnitTests_1234567890abc"
 
 func newTestServer(t *testing.T, allowDev bool) (*httptest.Server, *Hub) {
 	t.Helper()
+	srv, h, _ := newTestServerWithEngine(t, allowDev, game.NewEngine(game.NewRand(3, 4)))
+	return srv, h
+}
+
+func newTestServerWithEngine(t *testing.T, allowDev bool, eng *game.Engine) (*httptest.Server, *Hub, *store.Memory) {
+	t.Helper()
 	st := store.NewMemory()
-	eng := game.NewEngine(game.NewRand(3, 4))
 	auth := TelegramAuth{BotToken: testToken, MaxAge: 0, AllowDev: allowDev}
 	h := NewHub(st, eng, auth, Options{Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	srv := httptest.NewServer(h)
@@ -32,7 +38,7 @@ func newTestServer(t *testing.T, allowDev bool) (*httptest.Server, *Hub) {
 		h.Close()
 		srv.Close()
 	})
-	return srv, h
+	return srv, h, st
 }
 
 type testClient struct {
@@ -295,5 +301,97 @@ func TestOriginChecker(t *testing.T) {
 	}
 	if !strict(req("https://api.durag.example", "api.durag.example")) || !strict(req("", "x")) {
 		t.Fatal("same host and missing origin must pass")
+	}
+}
+
+// craftBout gives the attacker 7♥ (nothing else of rank 7 or 10 anywhere) and
+// the defender 10♥, so one defence ends the bout.
+func craftBout(t *testing.T, st *store.Memory, room, attacker, defender string) {
+	t.Helper()
+	hands := map[string][]string{
+		attacker: {"H_7", "S_9", "D_9", "C_11", "H_2", "C_3"},
+		defender: {"H_10", "S_8", "D_4", "C_5", "H_6", "D_12"},
+	}
+	_, err := st.Update(context.Background(), room, false, func(s *game.GameState) error {
+		used := map[string]bool{}
+		for i := range s.Players {
+			p := &s.Players[i]
+			p.Hand = nil
+			for _, id := range hands[p.ID] {
+				c, _ := game.CardByID(id)
+				p.Hand = append(p.Hand, c)
+				used[id] = true
+			}
+			for _, c := range p.Stump {
+				used[c.ID] = true
+			}
+		}
+		trump, _ := game.CardByID("S_5")
+		used[trump.ID] = true
+		s.TrumpCard = &trump
+		s.TrumpSuit = trump.Suit
+		s.TrumpRevealed = false
+		s.Deck = nil
+		for _, c := range game.NewDeck() {
+			if !used[c.ID] {
+				s.Deck = append(s.Deck, c)
+			}
+		}
+		s.CurrentTurn = attacker
+		s.DefenderID = defender
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBoutStaysOnTableThenResolves(t *testing.T) {
+	eng := game.NewEngine(game.NewRand(5, 6))
+	eng.ResolveDelay = 300 * time.Millisecond
+	srv, _, st := newTestServerWithEngine(t, true, eng)
+	a := dial(t, srv)
+	a.send(TypeJoinRoom, devJoin("R", true, "A", "Alice"))
+	a.state()
+	b := dial(t, srv)
+	b.send(TypeJoinRoom, devJoin("R", false, "B", "Bob"))
+	b.state()
+	a.state()
+	a.send(TypeReady, ReadyPayload{Ready: true})
+	a.state()
+	b.state()
+	b.send(TypeReady, ReadyPayload{Ready: true})
+	a.state()
+	b.state()
+	craftBout(t, st, "R", "dev:A", "dev:B")
+
+	a.send(TypePlayCard, PlayCardPayload{CardID: "H_7"})
+	a.state()
+	b.state()
+	b.send(TypePlayCard, PlayCardPayload{CardID: "H_10", TargetCardID: "H_7"})
+	resolving := b.state()
+	a.state()
+	if resolving.Phase != game.PhaseResolving || resolving.ResolveOutcome != game.OutcomeBito {
+		t.Fatalf("expected resolving phase, got %q/%q", resolving.Phase, resolving.ResolveOutcome)
+	}
+	if len(resolving.TableOrder) != 1 || len(resolving.TableCards["H_7"]) != 1 {
+		t.Fatalf("table must still show the bout: %v", resolving.TableOrder)
+	}
+	// moves are refused meanwhile
+	a.send(TypePlayCard, PlayCardPayload{CardID: "S_9"})
+	if e := a.errorPayload(); e.Code != "RESOLVING" {
+		t.Fatalf("got %+v", e)
+	}
+	a.state()
+	// ...and the hub clears the table by itself once the delay has passed
+	final := b.state()
+	if final.Phase != game.PhaseBout || len(final.TableOrder) != 0 || final.BoutNumber != 2 || final.DiscardCount != 2 {
+		t.Fatalf("bout not resolved: phase %q table %v bout %d discard %d", final.Phase, final.TableOrder, final.BoutNumber, final.DiscardCount)
+	}
+	if final.CurrentTurn != "dev:B" || final.DefenderID != "dev:A" {
+		t.Fatalf("roles %s / %s", final.CurrentTurn, final.DefenderID)
+	}
+	if a.state().Phase != game.PhaseBout {
+		t.Fatal("A must get the resolved state too")
 	}
 }
