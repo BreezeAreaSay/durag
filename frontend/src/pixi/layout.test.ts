@@ -17,6 +17,15 @@ describe('metrics', () => {
   });
 });
 
+describe('top inset', () => {
+  it('pushes the table below a tall HTML panel', () => {
+    const tall = computeMetrics(390, 844, 240);
+    expect(tall.tableTop).toBeGreaterThanOrEqual(246);
+    expect(tall.tableTop).toBeLessThan(tall.tableBottom);
+    expect(computeMetrics(390, 844, 0).topZone).toBe(169);
+  });
+});
+
 describe('hand', () => {
   it('centres the fan and never leaves the screen', () => {
     for (const n of [1, 2, 6, 12, 20]) {

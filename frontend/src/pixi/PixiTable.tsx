@@ -1,23 +1,30 @@
 import { useEffect, useRef } from 'react';
-import { TableScene } from './TableScene';
+import { TableScene, type SceneLabels } from './TableScene';
 import type { SceneModel } from './model';
 
 interface Props {
   model: SceneModel;
   reject: { cardId: string; nonce: number } | null;
   fx: boolean;
+  /** Height of the HTML panel at the top; the table keeps clear of it. */
+  topInset: number;
+  labels: SceneLabels;
   onPlay(cardId: string, targetId?: string): void;
   onTransfer(cardId: string): void;
 }
 
 /** Mounts the PixiJS table once and streams model updates into it. */
-export function PixiTable({ model, reject, fx, onPlay, onTransfer }: Props) {
+export function PixiTable({ model, reject, fx, topInset, labels, onPlay, onTransfer }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<TableScene | null>(null);
   const modelRef = useRef(model);
   modelRef.current = model;
   const fxRef = useRef(fx);
   fxRef.current = fx;
+  const topRef = useRef(topInset);
+  topRef.current = topInset;
+  const labelsRef = useRef(labels);
+  labelsRef.current = labels;
   const handlersRef = useRef({ onPlay, onTransfer });
   handlersRef.current = { onPlay, onTransfer };
 
@@ -30,7 +37,7 @@ export function PixiTable({ model, reject, fx, onPlay, onTransfer }: Props) {
         onPlay: (id, target) => handlersRef.current.onPlay(id, target),
         onTransfer: (id) => handlersRef.current.onTransfer(id),
       },
-      { fx: fxRef.current },
+      { fx: fxRef.current, topInset: topRef.current, labels: labelsRef.current },
     );
     scene
       .init(host)
@@ -64,6 +71,10 @@ export function PixiTable({ model, reject, fx, onPlay, onTransfer }: Props) {
   useEffect(() => {
     sceneRef.current?.setFx(fx);
   }, [fx]);
+
+  useEffect(() => {
+    sceneRef.current?.setTopInset(topInset);
+  }, [topInset]);
 
   return <div ref={hostRef} className="pixi-host" />;
 }

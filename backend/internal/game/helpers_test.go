@@ -93,7 +93,7 @@ func countCards(t *testing.T, s *GameState) int {
 	for _, c := range s.Deck {
 		add(c)
 	}
-	if s.TrumpCard != nil {
+	if s.TrumpInDeck() { // once drawn the trump card is counted in a hand
 		add(*s.TrumpCard)
 	}
 	for _, id := range s.TableOrder {
@@ -132,7 +132,7 @@ func rebuildDeck(t *testing.T, s *GameState) {
 			used[c.ID] = true
 		}
 	}
-	if s.TrumpCard != nil {
+	if s.TrumpInDeck() {
 		used[s.TrumpCard.ID] = true
 	}
 	for _, id := range s.TableOrder {

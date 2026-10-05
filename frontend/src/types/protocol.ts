@@ -43,7 +43,8 @@ export interface GameState {
   table_order: string[];
   defender_id: string;
   defender_taking: boolean;
-  trump_revealed: boolean;
+  trump_revealed: boolean; // true once somebody drew the trump card (suit active from then on)
+  trump_drawn_by: string; // who drew it (public)
   trump_suit: Suit | '';
   deck_count: number;
   discard_count: number;
@@ -70,9 +71,16 @@ export interface ErrorPayload {
   card_id?: string;
 }
 
+export interface ReactionPayload {
+  player_id: string;
+  emoji: string;
+  ts: number;
+}
+
 export type ServerMessage =
   | { type: 'STATE_UPDATE'; payload: GameState }
   | { type: 'ERROR'; payload: ErrorPayload }
+  | { type: 'REACTION'; payload: ReactionPayload }
   | { type: 'PONG' };
 
 export interface DevUser {
@@ -96,6 +104,7 @@ export type ClientMessage =
   | { type: 'PASS' }
   | { type: 'READY'; payload: { ready: boolean } }
   | { type: 'LEAVE_ROOM' }
+  | { type: 'REACT'; payload: { emoji: string } }
   | { type: 'PING' };
 
 export interface ClientConfig {

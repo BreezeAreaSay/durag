@@ -21,6 +21,7 @@ const (
 	TypeReady        = "READY"      // extension: lobby readiness toggle
 	TypeLeaveRoom    = "LEAVE_ROOM" // extension
 	TypePing         = "PING"       // extension: application level keep-alive
+	TypeReact        = "REACT"      // extension: emoji reaction shown next to the sender's avatar
 )
 
 // Server -> client messages.
@@ -28,6 +29,7 @@ const (
 	TypeStateUpdate = "STATE_UPDATE"
 	TypeError       = "ERROR"
 	TypePong        = "PONG"
+	TypeReaction    = "REACTION"
 )
 
 // JoinPayload is the payload of JOIN_ROOM.
@@ -60,6 +62,29 @@ type TransferPayload struct {
 type ReadyPayload struct {
 	Ready bool `json:"ready"`
 }
+
+// ReactPayload is the payload of REACT.
+type ReactPayload struct {
+	Emoji string `json:"emoji"`
+}
+
+// ReactionPayload is the payload of REACTION (server -> every client in the room).
+type ReactionPayload struct {
+	PlayerID string `json:"player_id"`
+	Emoji    string `json:"emoji"`
+	TS       int64  `json:"ts"` // unix milliseconds
+}
+
+// AllowedEmoji is the whitelist of reactions; the client renders the same set.
+var AllowedEmoji = []string{"👍", "👎", "😂", "😡", "😎", "🤔", "🔥", "💀", "🤡", "❤️", "👏", "🙏"}
+
+var allowedEmojiSet = func() map[string]bool {
+	m := make(map[string]bool, len(AllowedEmoji))
+	for _, e := range AllowedEmoji {
+		m[e] = true
+	}
+	return m
+}()
 
 // ErrorPayload is the payload of ERROR. CardID, when present, tells the client
 // which card to animate back into the hand.

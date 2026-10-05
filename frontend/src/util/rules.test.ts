@@ -48,6 +48,7 @@ function state(partial: Partial<GameState>): GameState {
     defender_id: 'B',
     defender_taking: false,
     trump_revealed: false,
+    trump_drawn_by: '',
     trump_suit: '',
     deck_count: 30,
     discard_count: 0,

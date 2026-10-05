@@ -2,7 +2,7 @@
 // turned into a SceneModel and `sync()` moves cards to where the state says
 // they are. Drag-and-drop sends intents optimistically; an ERROR from the
 // server snaps the card back into the hand with a stop-motion rubber band.
-import { Application, Container, Text, type FederatedPointerEvent } from 'pixi.js';
+import { Application, Container, Graphics, Text, type FederatedPointerEvent, type Filter } from 'pixi.js';
 import { CardView } from './CardView';
 import { StopMotionTweener, easings } from './tween';
 import {
@@ -19,10 +19,10 @@ import {
   type Slot,
 } from './layout';
 import { createChromaticFilter, createHalftoneFilter, createHologramFilter, filterCompiles, type HologramFilter } from './shaders';
+import { drawSuit } from './suits';
 import { canBeat } from '../util/rules';
-import { SUIT_SYMBOL, isSuper } from '../util/cards';
-import type { Filter } from 'pixi.js';
-import type { Card } from '../types/protocol';
+import { isSuper } from '../util/cards';
+import type { Card, Suit } from '../types/protocol';
 import type { SceneModel } from './model';
 
 export interface SceneHandlers {
@@ -30,9 +30,15 @@ export interface SceneHandlers {
   onTransfer(cardId: string): void;
 }
 
+export interface SceneLabels {
+  trump: string;
+}
+
 export interface SceneOptions {
   fx?: boolean;
   fps?: number;
+  topInset?: number;
+  labels?: SceneLabels;
 }
 
 interface Placement {
@@ -41,7 +47,7 @@ interface Placement {
   slot: Slot;
   faceUp: boolean;
   z: number;
-  kind: 'hand' | 'attack' | 'defense' | 'trump';
+  kind: 'hand' | 'attack' | 'defense';
 }
 
 interface DragState {
@@ -62,6 +68,9 @@ interface Pending {
 
 const FONT = 'Unbounded, "Arial Black", Impact, sans-serif';
 const PENDING_TTL = 2500;
+const INK = 0x111111;
+const ACID = 0xe6ff00;
+const RED = 0xff2a1a;
 
 export class TableScene {
   readonly app = new Application();
@@ -69,6 +78,8 @@ export class TableScene {
   private readonly handlers: SceneHandlers;
   private fx: boolean;
   private fxActive = false;
+  private topInset: number;
+  private labels: SceneLabels;
   private readonly tweener: StopMotionTweener;
 
   private world = new Container();
@@ -83,19 +94,27 @@ export class TableScene {
   private ready = false;
   private destroyed = false;
   private lastOutcome: '' | 'bito' | 'took' = '';
-  private flashTimers = new Set<number>();
+  private timers = new Set<number>();
 
   // piles
   private deckPile = new Container();
   private deckLabel!: Text;
   private hiddenTrump: CardView | null = null;
-  private trumpBadge!: Text;
+  private trumpPlate = new Container();
+  private trumpPlateSuit: Suit | '' = '';
   private discardPile = new Container();
   private discardLabel!: Text;
+
+  // trump reveal animation
+  private prevRevealed: boolean | null = null;
+  private revealTemp: CardView | null = null;
+  private revealHidden: string | null = null;
 
   constructor(handlers: SceneHandlers, opts: SceneOptions = {}) {
     this.handlers = handlers;
     this.fx = opts.fx ?? true;
+    this.topInset = opts.topInset ?? 0;
+    this.labels = opts.labels ?? { trump: 'TRUMP' };
     this.tweener = new StopMotionTweener(opts.fps ?? 12);
   }
 
@@ -131,6 +150,7 @@ export class TableScene {
     this.world.addChild(this.layers.piles, this.layers.table, this.layers.hand, this.layers.drag);
     this.layers.hand.sortableChildren = true;
     this.layers.table.sortableChildren = true;
+    this.layers.drag.sortableChildren = true;
     stage.eventMode = 'static';
     stage.hitArea = this.app.screen;
     stage.on('pointermove', this.onPointerMove);
@@ -147,15 +167,20 @@ export class TableScene {
       this.expirePending();
     });
 
-    this.metrics = computeMetrics(this.app.screen.width, this.app.screen.height);
+    this.metrics = computeMetrics(this.app.screen.width, this.app.screen.height, this.topInset);
     this.buildPiles();
     this.ready = true;
     if (this.model) this.sync(true);
   }
 
   update(model: SceneModel): void {
+    const first = this.model === null;
     this.model = model;
     if (model.resolving && model.resolveOutcome) this.lastOutcome = model.resolveOutcome;
+    if (!first && this.prevRevealed === false && model.trumpRevealed && model.trumpCard) {
+      this.playTrumpReveal(model.trumpCard, model.hand.some((c) => c.id === model.trumpCard!.id));
+    }
+    this.prevRevealed = model.trumpRevealed;
     if (this.ready) this.sync(false);
   }
 
@@ -166,6 +191,40 @@ export class TableScene {
     if (on && !this.fxActive) this.enableFx();
     else if (!on && this.fxActive) this.disableFx();
   }
+
+  /** The HTML panel at the top changed its height: keep the piles below it. */
+  setTopInset(px: number): void {
+    if (Math.abs(px - this.topInset) < 1) return;
+    this.topInset = px;
+    if (!this.ready) return;
+    this.metrics = computeMetrics(this.app.screen.width, this.app.screen.height, this.topInset);
+    this.rebuildPiles();
+    this.sync(true);
+  }
+
+  /** The server rejected a card: snap it back into the hand. */
+  rejectCard(cardId: string): void {
+    this.pending.delete(cardId);
+    const view = this.views.get(cardId);
+    if (!view) return;
+    view.setPending(false);
+    this.returnHome(view, easings.outElastic, 520);
+  }
+
+  destroy(): void {
+    if (this.destroyed) return;
+    this.destroyed = true;
+    this.tweener.clear();
+    for (const id of this.timers) window.clearTimeout(id);
+    this.timers.clear();
+    if (this.ready) {
+      this.app.renderer.off('resize', this.onResize);
+      this.app.destroy(true, { children: true });
+    }
+    this.views.clear();
+  }
+
+  // --- effects ---------------------------------------------------------------
 
   // Deliberately gentle: a faint riso screen in the mid-tones and a sub-pixel
   // RGB misregistration. Anything stronger reads as a compression artefact on
@@ -196,32 +255,10 @@ export class TableScene {
     for (const view of this.views.values()) view.setHologram(filter);
   }
 
-  /** The server rejected a card: snap it back into the hand. */
-  rejectCard(cardId: string): void {
-    this.pending.delete(cardId);
-    const view = this.views.get(cardId);
-    if (!view) return;
-    view.setPending(false);
-    this.returnHome(view, easings.outElastic, 520);
-  }
-
-  destroy(): void {
-    if (this.destroyed) return;
-    this.destroyed = true;
-    this.tweener.clear();
-    for (const id of this.flashTimers) window.clearTimeout(id);
-    this.flashTimers.clear();
-    if (this.ready) {
-      this.app.renderer.off('resize', this.onResize);
-      this.app.destroy(true, { children: true });
-    }
-    this.views.clear();
-  }
-
   // --- layout & sync -------------------------------------------------------
 
   private onResize = (): void => {
-    this.metrics = computeMetrics(this.app.screen.width, this.app.screen.height);
+    this.metrics = computeMetrics(this.app.screen.width, this.app.screen.height, this.topInset);
     this.rebuildPiles();
     this.sync(true);
   };
@@ -243,9 +280,6 @@ export class TableScene {
         wanted.set(pair.defense.id, { card: pair.defense, layer: this.layers.table, slot: ts[i]!.defense, faceUp: true, z: i * 2 + 1, kind: 'defense' });
       }
     });
-    if (m.trumpRevealed && m.trumpCard) {
-      wanted.set(m.trumpCard.id, { card: m.trumpCard, layer: this.layers.piles, slot: trumpSlot(metrics), faceUp: true, z: 0, kind: 'trump' });
-    }
 
     // Cards that left the visible state fly away and are removed.
     for (const [id, view] of this.views) {
@@ -256,6 +290,7 @@ export class TableScene {
       const outcome = m.lastOutcome || this.lastOutcome;
       const exit = wasOnTable && outcome !== 'took' ? discardSlot(metrics) : exitSlot(metrics);
       view.root.eventMode = 'none';
+      view.root.visible = true;
       this.reparent(view, this.layers.table);
       void this.tweener.to(view.root, { x: exit.x, y: exit.y, rotation: exit.rotation, scale: exit.scale, alpha: 0.9 }, { duration: 360, ease: easings.outQuad }).then(() => view.destroy());
     }
@@ -291,6 +326,8 @@ export class TableScene {
       if (view.root.parent !== p.layer) this.reparent(view, p.layer);
       view.root.zIndex = p.z;
       view.setFaceUp(p.faceUp);
+      // the freshly drawn trump card is shown by the reveal animation instead
+      view.root.visible = this.revealHidden !== id;
       view.root.eventMode = p.kind === 'hand' && m.interactive ? 'static' : 'none';
       view.root.cursor = p.kind === 'hand' && m.interactive ? 'grab' : 'default';
       this.moveTo(view, p.slot, immediate && !spawned);
@@ -303,11 +340,15 @@ export class TableScene {
   /** Briefly outlines a card another player just put on the table. */
   private flash(view: CardView): void {
     view.setHighlight(true);
+    this.later(900, () => view.setHighlight(false));
+  }
+
+  private later(ms: number, fn: () => void): void {
     const id = window.setTimeout(() => {
-      this.flashTimers.delete(id);
-      if (!this.destroyed) view.setHighlight(false);
-    }, 900);
-    this.flashTimers.add(id);
+      this.timers.delete(id);
+      if (!this.destroyed) fn();
+    }, ms);
+    this.timers.add(id);
   }
 
   private createView(card: Card, m: Metrics): CardView {
@@ -351,16 +392,69 @@ export class TableScene {
     if (changed) this.sync(false);
   }
 
+  private handSlotFor(cardId: string): Slot {
+    const m = this.model;
+    const idx = m ? m.hand.findIndex((c) => c.id === cardId) : -1;
+    if (m && idx >= 0) return handSlots(m.hand.length, this.metrics)[idx]!;
+    return { x: this.metrics.width / 2, y: this.metrics.height - this.metrics.cardH / 2 - 58, rotation: 0, scale: 1 };
+  }
+
+  // --- trump reveal --------------------------------------------------------------
+
+  /**
+   * The face-down trump card at the bottom of the deck was just drawn: show it
+   * to everybody in the middle of the table, then send it to its new owner.
+   */
+  private playTrumpReveal(card: Card, mine: boolean): void {
+    if (!this.ready) return;
+    const m = this.metrics;
+    const temp = new CardView(card, m.cardW, m.cardH, true, isSuper(card) && this.hologram ? this.hologram : undefined);
+    const from = trumpSlot(m);
+    temp.root.position.set(from.x, from.y);
+    temp.root.rotation = from.rotation;
+    temp.root.scale.set(from.scale);
+    temp.root.zIndex = 3000;
+    temp.setLifted(true);
+    this.layers.drag.addChild(temp.root);
+    this.revealTemp?.destroy();
+    this.revealTemp = temp;
+    if (mine) {
+      this.revealHidden = card.id;
+      this.views.get(card.id)?.root && (this.views.get(card.id)!.root.visible = false);
+    }
+    const centre = nextAttackSlot(0, m);
+    void this.tweener.to(temp.root, { x: centre.x, y: centre.y - m.cardH * 0.12, rotation: -0.06, scale: 1.3 }, { duration: 480, ease: easings.outBack });
+    this.later(1600, () => {
+      const dest = mine ? this.handSlotFor(card.id) : exitSlot(this.metrics);
+      temp.setLifted(false);
+      void this.tweener.to(temp.root, { x: dest.x, y: dest.y, rotation: dest.rotation, scale: dest.scale }, { duration: 460, ease: easings.outQuad }).then(() => {
+        if (this.destroyed) return;
+        temp.destroy();
+        if (this.revealTemp === temp) this.revealTemp = null;
+        if (this.revealHidden === card.id) {
+          this.revealHidden = null;
+          const view = this.views.get(card.id);
+          if (view) {
+            const slot = this.handSlotFor(card.id);
+            view.root.visible = true;
+            view.root.position.set(slot.x, slot.y);
+            view.root.rotation = slot.rotation;
+            view.root.scale.set(slot.scale);
+          }
+        }
+        this.updatePiles();
+      });
+    });
+  }
+
   // --- piles -----------------------------------------------------------------
 
   private buildPiles(): void {
-    this.deckLabel = new Text({ text: '', style: { fontFamily: FONT, fontWeight: '900', fontSize: 16, fill: 0x111111 } });
+    this.deckLabel = new Text({ text: '', style: { fontFamily: FONT, fontWeight: '900', fontSize: 16, fill: INK } });
     this.deckLabel.anchor.set(0.5);
     this.discardLabel = new Text({ text: '', style: { fontFamily: FONT, fontWeight: '900', fontSize: 14, fill: 0x8a8780 } });
     this.discardLabel.anchor.set(0.5);
-    this.trumpBadge = new Text({ text: '', style: { fontFamily: FONT, fontWeight: '900', fontSize: 28, fill: 0x111111 } });
-    this.trumpBadge.anchor.set(0.5);
-    this.layers.piles.addChild(this.deckPile, this.discardPile, this.deckLabel, this.discardLabel, this.trumpBadge);
+    this.layers.piles.addChild(this.deckPile, this.discardPile, this.trumpPlate, this.deckLabel, this.discardLabel);
     this.rebuildPiles();
   }
 
@@ -387,6 +481,8 @@ export class TableScene {
     this.hiddenTrump = hidden;
     this.layers.piles.addChildAt(hidden.root, 0);
 
+    this.buildTrumpPlate(m, t);
+
     const ds = discardSlot(m);
     for (let i = 2; i >= 0; i--) {
       const back = new CardView({ id: `discard-${i}`, suit: 'None', rank: 0 }, m.cardW, m.cardH, false);
@@ -397,8 +493,26 @@ export class TableScene {
     }
     this.deckLabel.position.set(d.x, d.y + (m.cardH * d.scale) / 2 + 14);
     this.discardLabel.position.set(ds.x, ds.y + (m.cardH * ds.scale) / 2 + 14);
-    this.trumpBadge.position.set(t.x, t.y);
     this.updatePiles();
+  }
+
+  /** A loud acid plate with a huge suit glyph: the trump, once it is known. */
+  private buildTrumpPlate(m: Metrics, slot: Slot): void {
+    this.trumpPlate.removeChildren().forEach((c) => c.destroy({ children: true }));
+    const w = m.cardW * 0.82;
+    const h = m.cardH * 0.82;
+    const shadow = new Graphics().rect(-w / 2 + 5, -h / 2 + 6, w, h).fill({ color: INK });
+    const plate = new Graphics().rect(-w / 2, -h / 2, w, h).fill({ color: ACID }).stroke({ width: 3, color: INK, alignment: 1 });
+    const label = new Text({ text: this.labels.trump.toUpperCase(), style: { fontFamily: FONT, fontWeight: '900', fontSize: Math.max(9, Math.round(w * 0.16)), fill: INK, letterSpacing: 1 } });
+    label.anchor.set(0.5, 0);
+    label.position.set(0, -h / 2 + 6);
+    const glyph = drawSuit(new Graphics(), 'None', w * 0.62, INK);
+    glyph.label = 'glyph';
+    glyph.position.set(0, h * 0.1);
+    this.trumpPlate.addChild(shadow, plate, label, glyph);
+    this.trumpPlate.position.set(slot.x + m.cardW * 0.12, slot.y + m.cardH * 0.04);
+    this.trumpPlate.rotation = 0.08;
+    this.trumpPlateSuit = '';
   }
 
   private updatePiles(): void {
@@ -409,10 +523,17 @@ export class TableScene {
     this.deckPile.children.forEach((c, i) => {
       c.visible = m.deckCount > (2 - i) * 6;
     });
+    // the face-down trump lies under the deck until somebody draws it
     if (this.hiddenTrump) this.hiddenTrump.root.visible = !m.trumpRevealed;
-    const drawn = m.trumpRevealed && !m.trumpCard;
-    this.trumpBadge.text = drawn && m.trumpSuit ? SUIT_SYMBOL[m.trumpSuit] : '';
-    this.trumpBadge.style.fill = m.trumpSuit === 'Hearts' || m.trumpSuit === 'Diamonds' ? 0xff2a1a : 0x111111;
+    this.trumpPlate.visible = m.trumpRevealed && this.revealTemp === null;
+    if (m.trumpRevealed && m.trumpSuit && m.trumpSuit !== this.trumpPlateSuit) {
+      const glyph = this.trumpPlate.getChildByLabel('glyph') as Graphics | null;
+      if (glyph) {
+        const red = m.trumpSuit === 'Hearts' || m.trumpSuit === 'Diamonds';
+        drawSuit(glyph, m.trumpSuit, this.metrics.cardW * 0.82 * 0.62, red ? RED : INK);
+      }
+      this.trumpPlateSuit = m.trumpSuit;
+    }
     this.discardPile.visible = m.discardCount > 0;
     this.discardLabel.text = m.discardCount > 0 ? String(m.discardCount) : '';
     this.discardPile.children.forEach((c, i) => {

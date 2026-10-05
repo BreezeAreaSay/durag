@@ -46,6 +46,16 @@ type roomSub struct {
 	cancel  context.CancelFunc
 }
 
+// pubMessage is what travels through the store's Pub/Sub channel between
+// backend instances: either a full (private) state or a transient event.
+type pubMessage struct {
+	Kind     string           `json:"kind"` // "state" | "reaction"
+	State    *game.GameState  `json:"state,omitempty"`
+	Reaction *ReactionPayload `json:"reaction,omitempty"`
+}
+
+const reactMinInterval = 1200 * time.Millisecond
+
 var roomIDPattern = regexp.MustCompile(`^[A-Z0-9_-]{1,32}$`)
 
 // NewHub creates a hub.
@@ -135,6 +145,8 @@ func (h *Hub) handle(c *Client, env Envelope) {
 		h.join(c, env.Payload)
 	case TypePing:
 		c.enqueue(encode(TypePong, nil))
+	case TypeReact:
+		h.react(c, env.Payload)
 	case TypePlayCard, TypeTransferTurn, TypeTakeCards, TypePass, TypeReady, TypeLeaveRoom:
 		h.intent(c, env)
 	default:
@@ -258,6 +270,32 @@ var (
 	errNotDue     = errors.New("bout not due for resolution")
 )
 
+// react broadcasts an emoji reaction to the room. Reactions are not part of
+// the game state: they are transient and never persisted.
+func (h *Hub) react(c *Client, raw json.RawMessage) {
+	roomID, playerID := c.room()
+	if roomID == "" {
+		c.sendError("NOT_IN_ROOM", "join a room first", "")
+		return
+	}
+	var p ReactPayload
+	if err := json.Unmarshal(raw, &p); err != nil || !allowedEmojiSet[p.Emoji] {
+		c.sendError("BAD_EMOJI", "unknown reaction", "")
+		return
+	}
+	now := time.Now()
+	if !c.allowReact(now, reactMinInterval) {
+		return // silently dropped: spam protection
+	}
+	raw2, err := json.Marshal(pubMessage{Kind: "reaction", Reaction: &ReactionPayload{PlayerID: playerID, Emoji: p.Emoji, TS: now.UnixMilli()}})
+	if err != nil {
+		return
+	}
+	if err := h.store.Publish(h.ctx, roomID, raw2); err != nil {
+		h.log.Error("ws: publish reaction", "err", err)
+	}
+}
+
 // afterUpdate broadcasts the new state and, when a bout just finished,
 // schedules its resolution (clearing the table) after the engine's delay.
 func (h *Hub) afterUpdate(roomID string, state *game.GameState) {
@@ -323,7 +361,7 @@ func (h *Hub) resendState(c *Client, roomID, playerID string) {
 // publish broadcasts the (private) state through the store so every backend
 // instance delivers a sanitized view to its own clients.
 func (h *Hub) publish(roomID string, state *game.GameState) {
-	raw, err := json.Marshal(state)
+	raw, err := json.Marshal(pubMessage{Kind: "state", State: state})
 	if err != nil {
 		h.log.Error("ws: marshal state", "err", err)
 		return
@@ -381,12 +419,13 @@ func (h *Hub) removeFromRoom(c *Client) {
 	}
 }
 
-// relay delivers every published state of a room to the local clients.
+// relay delivers every published message of a room to the local clients:
+// states are sanitized per viewer, reactions go out verbatim.
 func (h *Hub) relay(roomID string, ch <-chan []byte) {
 	for raw := range ch {
-		var state game.GameState
-		if err := json.Unmarshal(raw, &state); err != nil {
-			h.log.Error("ws: bad published state", "room", roomID, "err", err)
+		var msg pubMessage
+		if err := json.Unmarshal(raw, &msg); err != nil {
+			h.log.Error("ws: bad published message", "room", roomID, "err", err)
 			continue
 		}
 		h.mu.Lock()
@@ -398,9 +437,17 @@ func (h *Hub) relay(roomID string, ch <-chan []byte) {
 			}
 		}
 		h.mu.Unlock()
-		for _, c := range targets {
-			_, playerID := c.room()
-			c.enqueue(encode(TypeStateUpdate, state.Sanitized(playerID)))
+		switch {
+		case msg.Kind == "state" && msg.State != nil:
+			for _, c := range targets {
+				_, playerID := c.room()
+				c.enqueue(encode(TypeStateUpdate, msg.State.Sanitized(playerID)))
+			}
+		case msg.Kind == "reaction" && msg.Reaction != nil:
+			frame := encode(TypeReaction, msg.Reaction)
+			for _, c := range targets {
+				c.enqueue(frame)
+			}
 		}
 	}
 }

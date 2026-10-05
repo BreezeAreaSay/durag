@@ -395,3 +395,41 @@ func TestBoutStaysOnTableThenResolves(t *testing.T) {
 		t.Fatal("A must get the resolved state too")
 	}
 }
+
+func TestReactionsAreBroadcastAndRateLimited(t *testing.T) {
+	srv, _ := newTestServer(t, true)
+	a := dial(t, srv)
+	a.send(TypeJoinRoom, devJoin("E", true, "A", "Alice"))
+	a.state()
+	b := dial(t, srv)
+	b.send(TypeJoinRoom, devJoin("E", false, "B", "Bob"))
+	b.state()
+	a.state()
+
+	a.send(TypeReact, ReactPayload{Emoji: "🔥"})
+	for _, c := range []*testClient{a, b} {
+		env := c.expect(TypeReaction)
+		var r ReactionPayload
+		if err := json.Unmarshal(env.Payload, &r); err != nil {
+			t.Fatal(err)
+		}
+		if r.PlayerID != "dev:A" || r.Emoji != "🔥" || r.TS == 0 {
+			t.Fatalf("reaction %+v", r)
+		}
+	}
+	// unknown emoji -> error, nothing broadcast
+	a.send(TypeReact, ReactPayload{Emoji: "<script>"})
+	if e := a.errorPayload(); e.Code != "BAD_EMOJI" {
+		t.Fatalf("got %+v", e)
+	}
+	// a second reaction right away is dropped silently; a PONG proves nothing else arrived
+	a.send(TypeReact, ReactPayload{Emoji: "👍"})
+	b.send(TypePing, nil)
+	b.expect(TypePong)
+	// not in a room
+	z := dial(t, srv)
+	z.send(TypeReact, ReactPayload{Emoji: "👍"})
+	if e := z.errorPayload(); e.Code != "NOT_IN_ROOM" {
+		t.Fatalf("got %+v", e)
+	}
+}

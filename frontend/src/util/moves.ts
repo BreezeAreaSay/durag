@@ -33,6 +33,8 @@ export function describeMove(state: GameState, entry: LogEntry | undefined): str
       return t('move.bito', { n: entry.text ?? '' });
     case 'stump':
       return t('move.stump', { name: who });
+    case 'stump_grow':
+      return t('move.stump_grow', { name: who, n: entry.text ?? '' });
     case 'out':
       return t('move.out', { name: who });
     case 'trump_revealed': {

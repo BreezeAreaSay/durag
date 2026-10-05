@@ -66,7 +66,7 @@ type GameState struct {
 	RoomID      string            `json:"room_id"`
 	Players     []Player          `json:"players"`
 	Deck        []Card            `json:"deck"`
-	TrumpCard   *Card             `json:"trump_card"`             // hidden until the main deck is empty, nil once drawn
+	TrumpCard   *Card             `json:"trump_card"`             // the trump card; secret until somebody draws it, public afterwards
 	TableCards  map[string][]Card `json:"table_cards"`            // attack card ID -> defending card (0 or 1 element)
 	CurrentTurn string            `json:"current_turn_player_id"` // the lead attacker of the current bout
 	Status      string            `json:"status"`
@@ -75,9 +75,10 @@ type GameState struct {
 	TableOrder     []string   `json:"table_order"` // attack card IDs in the order they were played
 	DefenderID     string     `json:"defender_id"`
 	DefenderTaking bool       `json:"defender_taking"` // defender announced "I take"; attackers may still throw in
-	TrumpRevealed  bool       `json:"trump_revealed"`
-	TrumpSuit      string     `json:"trump_suit"` // sanitized away until revealed
-	DeckCount      int        `json:"deck_count"` // filled by Sanitized()
+	TrumpRevealed  bool       `json:"trump_revealed"`  // true once the trump card left the deck (and the suit became active)
+	TrumpDrawnBy   string     `json:"trump_drawn_by"`  // who drew the trump card
+	TrumpSuit      string     `json:"trump_suit"`      // sanitized away until revealed
+	DeckCount      int        `json:"deck_count"`      // filled by Sanitized()
 	DiscardCount   int        `json:"discard_count"`
 	HostID         string     `json:"host_id"`
 	MaxPlayers     int        `json:"max_players"`
@@ -213,12 +214,19 @@ func (s *GameState) UndefendedCount() int {
 }
 
 // ActiveTrump returns the trump suit if it is already revealed, "" otherwise.
-// Until the main deck is empty nobody — not even the rules — honours trumps.
+// Until somebody has drawn the trump card nobody — not even the rules —
+// honours trumps.
 func (s *GameState) ActiveTrump() string {
 	if s.TrumpRevealed {
 		return s.TrumpSuit
 	}
 	return ""
+}
+
+// TrumpInDeck reports whether the face-down trump card still lies at the
+// bottom of the deck (i.e. there is one more card to draw).
+func (s *GameState) TrumpInDeck() bool {
+	return s.TrumpCard != nil && !s.TrumpRevealed
 }
 
 // TableAttackCards returns the attack cards on the table in play order.

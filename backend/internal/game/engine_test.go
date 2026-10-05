@@ -326,13 +326,29 @@ func TestDeckExhaustionRevealsTrumpThenStumpsThenOut(t *testing.T) {
 	if err := e.PlayCard(s, "B", "H_10", "H_7"); err != nil {
 		t.Fatal(err)
 	}
-	// bout over: A (attacker) draws S_9 -> deck empty -> trump revealed and
-	// drawn next by A as well; B gets nothing and picks up the stump.
-	if !s.TrumpRevealed {
-		t.Fatal("trump must be revealed once the main deck is empty")
+	// bout over: A (attacker) draws S_9 -> deck empty -> A still needs cards
+	// and draws the trump itself, which reveals it to everybody; B gets
+	// nothing and picks up the stump.
+	if !s.TrumpRevealed || s.TrumpDrawnBy != "A" {
+		t.Fatalf("trump must be revealed by the player who drew it: revealed=%v by %q", s.TrumpRevealed, s.TrumpDrawnBy)
 	}
-	if s.TrumpCard != nil {
-		t.Fatal("trump card should have been drawn as the last card")
+	if s.TrumpCard == nil || s.TrumpCard.ID != "S_5" || s.TrumpInDeck() {
+		t.Fatalf("trump card stays public after the draw: %+v inDeck=%v", s.TrumpCard, s.TrumpInDeck())
+	}
+	if _, ok := s.Player("A").HandCard("S_5"); !ok {
+		t.Fatal("A must hold the trump card")
+	}
+	if last := s.Log[len(s.Log)-2]; last.Type != "trump_revealed" && s.Log[len(s.Log)-1].Type != "trump_revealed" {
+		// the reveal is logged (position depends on the stump pickup that follows)
+		found := false
+		for _, e := range s.Log {
+			if e.Type == "trump_revealed" && e.PlayerID == "A" && e.CardID == "S_5" {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("missing trump_revealed log entry: %+v", s.Log)
+		}
 	}
 	a, b := s.Player("A"), s.Player("B")
 	if len(a.Hand) != 2 || len(a.Stump) != 2 {

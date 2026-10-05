@@ -85,6 +85,15 @@ try {
   await a.waitForTimeout(300);
   log('fx toggle:', before, '->', after, '->', (await fxChip.textContent())?.trim());
 
+  // Tapping the own avatar opens the reaction panel; the reaction reaches everybody.
+  await a.locator('.me .avatar-btn').click();
+  await a.locator('.emoji-panel').waitFor({ timeout: 3000 });
+  await a.locator('.emoji-panel__btn', { hasText: '🔥' }).click();
+  await a.locator('.reaction--me').waitFor({ timeout: 3000 });
+  await b.locator('.opponent .reaction').waitFor({ timeout: 3000 });
+  log('reaction delivered:', (await b.locator('.opponent .reaction').textContent())?.trim());
+  await b.screenshot({ path: join(here, 'shot-reaction.png') });
+
   const attacker = (await status(a)).includes('АТАКУЙ') ? a : b;
   const defender = attacker === a ? b : a;
 

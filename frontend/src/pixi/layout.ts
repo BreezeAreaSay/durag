@@ -24,10 +24,14 @@ function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
 }
 
-export function computeMetrics(width: number, height: number): Metrics {
+/**
+ * @param topInset rendered height of the HTML panel at the top (opponents,
+ *                 chips); the piles and the table start below it.
+ */
+export function computeMetrics(width: number, height: number, topInset = 0): Metrics {
   const cardW = clamp(Math.floor(Math.min(width / 6.2, height / 9.5)), 44, 112);
   const cardH = Math.round(cardW * 1.45);
-  const topZone = clamp(Math.round(height * 0.2), 120, 170);
+  const topZone = clamp(Math.max(Math.round(height * 0.2), Math.round(topInset) + 6), 120, Math.round(height * 0.5));
   const handTop = height - cardH - 66; // leaves room for the bottom HUD strip
   return {
     width,
@@ -37,7 +41,7 @@ export function computeMetrics(width: number, height: number): Metrics {
     topZone,
     handTop,
     tableTop: topZone + 8,
-    tableBottom: handTop - 64,
+    tableBottom: handTop - 100, // the action band (status + buttons) sits in between
   };
 }
 

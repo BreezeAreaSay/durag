@@ -428,19 +428,22 @@ body::before {
 
 .opponents {
   list-style: none;
-  margin: 2px 0 0;
-  padding: 2px 0 0 4px;
+  /* the top padding keeps reaction bubbles inside the scroll container */
+  margin: -30px 0 0;
+  padding: 36px 0 0 4px;
   display: flex;
   gap: 14px;
   overflow-x: auto;
-  pointer-events: auto;
+  pointer-events: none; /* only the player cards below take taps */
 }
 .opponent {
+  position: relative;
   display: flex;
   gap: 14px;
   align-items: center;
   padding: 6px 8px 6px 6px;
   flex: none;
+  pointer-events: auto;
 }
 .opponent__info {
   display: flex;
@@ -529,19 +532,37 @@ body::before {
   bottom: 0;
   padding: 0 12px calc(8px + var(--safe-bottom));
   pointer-events: none;
+}
+
+/* status + last move on the left, TAKE / PASS on the right, right above the hand */
+.actionband {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  height: 90px;
+  z-index: 3;
+  pointer-events: none;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 10px;
+}
+.actionband__text {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  min-width: 0;
+  flex: 1 1 auto;
 }
-.hud-bottom__row {
+.actionband__buttons {
   display: flex;
-  gap: 12px;
-  justify-content: flex-end;
+  gap: 10px;
+  flex: none;
   pointer-events: auto;
-  min-height: 0;
-  transform: translateY(-24vh);
 }
+
 .me {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 14px;
@@ -549,6 +570,115 @@ body::before {
   font-size: 11px;
   color: var(--grey);
   padding-left: 6px;
+}
+.avatar-btn {
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  pointer-events: auto;
+  line-height: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* emoji reaction bubble next to a sticker */
+.reaction {
+  position: absolute;
+  top: -38px;
+  left: 20px;
+  z-index: 4;
+  font-size: 26px;
+  line-height: 1;
+  background: #fff;
+  border: 2px solid var(--ink);
+  padding: 3px 7px;
+  box-shadow: 3px 3px 0 var(--ink);
+  transform: rotate(-6deg);
+  pointer-events: none;
+  animation: reaction-pop 220ms steps(3) both, reaction-fade 500ms 2600ms both;
+}
+.reaction--me {
+  top: -48px;
+  left: 0;
+  font-size: 30px;
+}
+@keyframes reaction-pop {
+  from {
+    transform: rotate(-6deg) scale(0.3);
+    opacity: 0;
+  }
+  to {
+    transform: rotate(-6deg) scale(1);
+    opacity: 1;
+  }
+}
+@keyframes reaction-fade {
+  to {
+    opacity: 0;
+    transform: rotate(-6deg) translateY(-10px);
+  }
+}
+
+/* reaction picker */
+.emoji-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+}
+.emoji-panel {
+  position: absolute;
+  left: 12px;
+  bottom: calc(78px + var(--safe-bottom));
+  display: grid;
+  grid-template-columns: repeat(6, 46px);
+  gap: 6px;
+  padding: 8px;
+  background: #fff;
+  border: 3px solid var(--ink);
+  box-shadow: var(--shadow);
+  transform: rotate(-1deg);
+  animation: panel-slam 150ms steps(3) both;
+}
+@keyframes panel-slam {
+  from {
+    transform: rotate(-1deg) scale(1.4);
+    opacity: 0;
+  }
+  to {
+    transform: rotate(-1deg) scale(1);
+    opacity: 1;
+  }
+}
+.emoji-panel__btn {
+  width: 46px;
+  height: 46px;
+  font-size: 26px;
+  line-height: 1;
+  background: var(--paper);
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  cursor: pointer;
+  padding: 0;
+}
+.emoji-panel__btn:active {
+  background: var(--acid);
+  transform: translate(2px, 2px);
+}
+
+/* trump chip with a big suit glyph */
+.chip--trump {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.chip__suit {
+  font-size: 20px;
+  line-height: 1;
+  font-weight: 900;
+}
+.chip__suit--red {
+  color: var(--red);
 }
 .me__meta {
   background: #fff;
@@ -670,7 +800,8 @@ body::before {
 }
 
 @media (min-width: 720px) {
-  .hud-bottom__row {
-    transform: translateY(-28vh);
+  .actionband {
+    left: 16px;
+    right: 16px;
   }
 }

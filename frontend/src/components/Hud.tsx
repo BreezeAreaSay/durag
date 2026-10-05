@@ -1,6 +1,7 @@
+import { useEffect, useRef } from 'react';
 import { Button } from './Button';
 import { Sticker } from './Sticker';
-import { useGame } from '../state/GameContext';
+import { useGame, type Reaction } from '../state/GameContext';
 import { t, type Key } from '../i18n';
 import { SUIT_SYMBOL } from '../util/cards';
 import { roleOf, tablePairs } from '../util/rules';
@@ -11,6 +12,12 @@ interface Props {
   state: GameState;
   fx: boolean;
   onToggleFx(): void;
+  /** y (CSS px) where the hand starts; the action band sits right above it. */
+  handTop: number;
+  reactions: Record<string, Reaction>;
+  onAvatarClick(playerId: string): void;
+  /** Reports the rendered height of the top panel so the table can avoid it. */
+  onTopHeight(height: number): void;
 }
 
 type RoleKey = 'attack' | 'throw' | 'defend' | 'take' | 'pass' | 'wait' | 'out' | 'offline';
@@ -59,8 +66,20 @@ function statusLine(state: GameState, selfId: string): string {
   }
 }
 
-export function Hud({ state, fx, onToggleFx }: Props) {
+export function Hud({ state, fx, onToggleFx, handTop, reactions, onAvatarClick, onTopHeight }: Props) {
   const { selfId, take, pass, leave, connection } = useGame();
+  const topRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    const el = topRef.current;
+    if (!el) return;
+    const report = () => onTopHeight(el.getBoundingClientRect().height);
+    report();
+    const observer = new ResizeObserver(report);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [onTopHeight]);
+
   const me = state.players.find((p) => p.id === selfId);
   const role = selfId ? roleOf(state, selfId) : 'spectator';
   const tableEmpty = state.table_order.length === 0;
@@ -68,15 +87,19 @@ export function Hud({ state, fx, onToggleFx }: Props) {
   const canTake = role === 'defender' && !tableEmpty && !state.defender_taking && !resolving;
   const canPass = (role === 'attacker' || role === 'thrower') && !tableEmpty && !me?.passed && (me?.hand_count ?? 0) > 0 && !resolving;
   const last = lastMove(state);
-  const trump = state.trump_revealed && state.trump_suit ? `${t('game.trump')} ${SUIT_SYMBOL[state.trump_suit]}` : t('game.trumpHidden');
+  const trumpKnown = state.trump_revealed && state.trump_suit !== '';
+  const trumpRed = state.trump_suit === 'Hearts' || state.trump_suit === 'Diamonds';
   const opponents = state.players.filter((p) => p.id !== selfId);
+  const myRole = me ? roleKey(state, me) : 'wait';
 
   return (
     <>
-      <header className="hud-top">
+      <header className="hud-top" ref={topRef}>
         <div className="hud-top__row">
           <span className="chip chip--ink">{state.room_id}</span>
-          <span className={`chip ${state.trump_revealed ? 'chip--acid' : ''}`}>{trump}</span>
+          <span className={`chip chip--trump ${trumpKnown ? 'chip--acid' : 'chip--ghost'}`} title={state.trump_suit || undefined}>
+            {t('game.trump')} <b className={`chip__suit ${trumpRed ? 'chip__suit--red' : ''}`}>{trumpKnown ? SUIT_SYMBOL[state.trump_suit as Exclude<typeof state.trump_suit, ''>] : '?'}</b>
+          </span>
           <span className="chip">
             {t('game.deck')} {state.deck_count}
           </span>
@@ -94,9 +117,17 @@ export function Hud({ state, fx, onToggleFx }: Props) {
           {opponents.map((p) => {
             const key = roleKey(state, p);
             const hot = HOT_ROLES.includes(key) && !resolving;
+            const reaction = reactions[p.id];
             return (
               <li key={p.id} className={`opponent ${p.out ? 'opponent--out' : ''}`}>
-                <Sticker name={p.name} avatarUrl={p.avatar_url} seed={p.id} size={40} muted={!p.connected || p.out} />
+                <button type="button" className="avatar-btn" onClick={() => onAvatarClick(p.id)} aria-label={p.name}>
+                  <Sticker name={p.name} avatarUrl={p.avatar_url} seed={p.id} size={40} muted={!p.connected || p.out} />
+                </button>
+                {reaction ? (
+                  <span className="reaction" key={reaction.nonce}>
+                    {reaction.emoji}
+                  </span>
+                ) : null}
                 <div className="opponent__info">
                   <span className="opponent__name">{p.name}</span>
                   <span className="opponent__cards">
@@ -109,13 +140,16 @@ export function Hud({ state, fx, onToggleFx }: Props) {
             );
           })}
         </ul>
-        <p className={`status ${(role === 'attacker' || role === 'defender') && !resolving ? 'status--hot' : ''}`}>{selfId ? statusLine(state, selfId) : ''}</p>
-        {last ? <p className="lastmove">{last}</p> : null}
-        {connection !== 'open' ? <p className="status status--warn">{t('conn.reconnecting')}</p> : null}
       </header>
 
-      <footer className="hud-bottom">
-        <div className="hud-bottom__row">
+      {/* Status, last move and the action buttons live right above the hand. */}
+      <div className="actionband" style={{ top: Math.max(0, handTop - 96) }}>
+        <div className="actionband__text">
+          <p className={`status ${(role === 'attacker' || role === 'defender') && !resolving ? 'status--hot' : ''}`}>{selfId ? statusLine(state, selfId) : ''}</p>
+          {last ? <p className="lastmove">{last}</p> : null}
+          {connection !== 'open' ? <p className="status status--warn">{t('conn.reconnecting')}</p> : null}
+        </div>
+        <div className="actionband__buttons">
           {canTake ? (
             <Button big onClick={take}>
               {t('game.take')}
@@ -127,12 +161,20 @@ export function Hud({ state, fx, onToggleFx }: Props) {
             </Button>
           ) : null}
         </div>
+      </div>
+
+      <footer className="hud-bottom">
         {me ? (
           <div className="me">
-            <Sticker name={me.name} avatarUrl={me.avatar_url} seed={me.id} size={34} />
-            <span className={`roletag roletag--me ${HOT_ROLES.includes(roleKey(state, me)) && !resolving ? 'roletag--hot' : ''}`}>
-              {roleLabel(roleKey(state, me), true)}
-            </span>
+            <button type="button" className="avatar-btn" onClick={() => onAvatarClick(me.id)} aria-label={me.name}>
+              <Sticker name={me.name} avatarUrl={me.avatar_url} seed={me.id} size={34} />
+            </button>
+            {reactions[me.id] ? (
+              <span className="reaction reaction--me" key={reactions[me.id]!.nonce}>
+                {reactions[me.id]!.emoji}
+              </span>
+            ) : null}
+            <span className={`roletag roletag--me ${HOT_ROLES.includes(myRole) && !resolving ? 'roletag--hot' : ''}`}>{roleLabel(myRole, true)}</span>
             <span className="me__meta">
               {me.name} · {me.hand_count}
               {me.stump_count ? ` · ${t('game.stump')} ${me.stump_count}` : ''}

@@ -368,3 +368,150 @@ func TestRandomPlayoutsWithResolvingPhase(t *testing.T) {
 		}
 	}
 }
+
+func TestTrumpStaysSecretUntilSomebodyDrawsIt(t *testing.T) {
+	// The main deck runs dry while every hand is full: the trump card stays
+	// face down at the bottom and the trump suit is NOT active yet.
+	e, s := newPlaying(t, "A", "B")
+	setRoles(s, "A", "B")
+	setHand(t, s, "A", "H_7", "S_9", "D_9", "C_11", "H_2", "C_3")
+	setHand(t, s, "B", "H_10", "S_8", "D_4", "C_5", "H_6", "D_12")
+	setTrump(t, s, "S_5", false)
+	rebuildDeck(t, s)
+	s.Deck = s.Deck[:2] // exactly what the two players draw back
+	s.DiscardCount = DeckSize - countCards(t, s)
+	_ = e.PlayCard(s, "A", "H_7", "")
+	// a spade does not beat a heart while the trump is unknown
+	if _, err := s.ValidatePlay("B", "S_8", "H_7"); err != ErrCannotBeat {
+		t.Fatalf("hidden trump must not count: %v", err)
+	}
+	if err := e.PlayCard(s, "B", "H_10", "H_7"); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Deck) != 0 || !s.TrumpInDeck() || s.TrumpRevealed {
+		t.Fatalf("deck %d inDeck %v revealed %v", len(s.Deck), s.TrumpInDeck(), s.TrumpRevealed)
+	}
+	if s.ActiveTrump() != "" {
+		t.Fatal("trump suit must stay inactive until the card is drawn")
+	}
+	// next bout: B leads, A beats, both draw -> B (attacker) gets the trump
+	setRoles(s, "B", "A")
+	_ = e.PlayCard(s, "B", "S_8", "")
+	if err := e.PlayCard(s, "A", "S_9", "S_8"); err != nil {
+		t.Fatal(err)
+	}
+	if !s.TrumpRevealed || s.TrumpDrawnBy != "B" {
+		t.Fatalf("revealed=%v by %q", s.TrumpRevealed, s.TrumpDrawnBy)
+	}
+	if _, ok := s.Player("B").HandCard("S_5"); !ok {
+		t.Fatal("B must hold the trump card")
+	}
+	if s.ActiveTrump() != SuitSpades {
+		t.Fatalf("active trump %q", s.ActiveTrump())
+	}
+	view := s.Sanitized("A")
+	if view.TrumpCard == nil || view.TrumpCard.ID != "S_5" || view.TrumpDrawnBy != "B" || view.TrumpSuit != SuitSpades {
+		t.Fatalf("the drawn trump is public knowledge: %+v", view)
+	}
+	if n := countCards(t, s); n != DeckSize {
+		t.Fatalf("cards %d", n)
+	}
+}
+
+func TestHiddenTrumpIsSanitized(t *testing.T) {
+	_, s := newPlaying(t, "A", "B")
+	s.Deck = []Card{} // main deck empty, trump still face down
+	view := s.Sanitized("A")
+	if view.TrumpCard != nil || view.TrumpSuit != "" || view.TrumpDrawnBy != "" {
+		t.Fatalf("hidden trump leaked: %+v", view)
+	}
+}
+
+func TestUnreachedStumpCarriesOverAndGrows(t *testing.T) {
+	e, s := newPlaying(t, "A", "B")
+	setRoles(s, "A", "B")
+	setHand(t, s, "A", "H_7", "D_9")
+	setHand(t, s, "B", "H_10")
+	setStump(t, s, "A", "C_2", "C_3")
+	setStump(t, s, "B")
+	setTrump(t, s, "S_5", true)
+	s.TrumpDrawnBy = "B"
+	s.Deck = []Card{}
+	s.DiscardCount = DeckSize - countCards(t, s)
+	_ = e.PlayCard(s, "A", "H_7", "")
+	if err := e.PlayCard(s, "B", "H_10", "H_7"); err != nil {
+		t.Fatal(err)
+	}
+	if s.Status != StatusFinished || s.LoserID != "A" {
+		t.Fatalf("status %s loser %q", s.Status, s.LoserID)
+	}
+	if len(s.Player("A").Stump) != 2 {
+		t.Fatal("A never reached the stump")
+	}
+	// next game
+	if err := e.SetReady(s, "A", true); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Player("A").Stump) != 2 || len(s.Player("B").Stump) != 0 {
+		t.Fatalf("lobby must keep the unreached stump: A %d B %d", len(s.Player("A").Stump), len(s.Player("B").Stump))
+	}
+	if err := e.SetReady(s, "B", true); err != nil {
+		t.Fatal(err)
+	}
+	if s.Status != StatusPlaying {
+		t.Fatalf("status %s", s.Status)
+	}
+	a, b := s.Player("A"), s.Player("B")
+	if len(a.Stump) != 3 || len(b.Stump) != StumpSize {
+		t.Fatalf("A stump %d (want 3), B stump %d (want 2)", len(a.Stump), len(b.Stump))
+	}
+	ids := map[string]bool{}
+	for _, c := range a.Stump {
+		ids[c.ID] = true
+	}
+	if !ids["C_2"] || !ids["C_3"] {
+		t.Fatalf("the old stump cards must stay: %v", a.Stump)
+	}
+	if len(a.Hand) != HandSize || len(b.Hand) != HandSize {
+		t.Fatal("hands dealt")
+	}
+	if want := DeckSize - 1 - 2*HandSize - 3 - StumpSize; len(s.Deck) != want {
+		t.Fatalf("deck %d, want %d", len(s.Deck), want)
+	}
+	if n := countCards(t, s); n != DeckSize {
+		t.Fatalf("cards %d", n)
+	}
+	found := false
+	for _, entry := range s.Log {
+		if entry.Type == "stump_grow" && entry.PlayerID == "A" && entry.Text == "3" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("missing stump_grow log: %+v", s.Log)
+	}
+}
+
+func TestCarriedStumpsDissolveWhenCardsRunShort(t *testing.T) {
+	e := NewEngine(NewRand(9, 9))
+	s := NewGameState("r")
+	for i := 0; i < MaxPlayers; i++ {
+		_ = e.Join(s, string(rune('A'+i)), "", "")
+	}
+	// six players with 4-card stumps would need 1 + 36 + 6*5 = 67 cards
+	deck := NewDeck()
+	for i := range s.Players {
+		s.Players[i].Stump = append([]Card{}, deck[i*4:i*4+4]...)
+	}
+	if err := e.Start(s); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range s.Players {
+		if len(p.Stump) != StumpSize || len(p.Hand) != HandSize {
+			t.Fatalf("%s: hand %d stump %d", p.ID, len(p.Hand), len(p.Stump))
+		}
+	}
+	if n := countCards(t, s); n != DeckSize {
+		t.Fatalf("cards %d", n)
+	}
+}

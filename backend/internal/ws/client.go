@@ -22,9 +22,10 @@ type Client struct {
 	conn *websocket.Conn
 	send chan []byte
 
-	mu       sync.Mutex
-	roomID   string
-	playerID string
+	mu        sync.Mutex
+	roomID    string
+	playerID  string
+	lastReact time.Time
 
 	closeOnce sync.Once
 	done      chan struct{}
@@ -44,6 +45,17 @@ func (c *Client) setRoom(roomID, playerID string) {
 	c.mu.Lock()
 	c.roomID, c.playerID = roomID, playerID
 	c.mu.Unlock()
+}
+
+// allowReact enforces a minimum interval between reactions of one connection.
+func (c *Client) allowReact(now time.Time, minInterval time.Duration) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if now.Sub(c.lastReact) < minInterval {
+		return false
+	}
+	c.lastReact = now
+	return true
 }
 
 // enqueue pushes a frame to the connection; a client that cannot keep up is

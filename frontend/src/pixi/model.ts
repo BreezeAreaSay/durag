@@ -8,6 +8,7 @@ export interface SceneModel {
   deckCount: number;
   trumpCard: Card | null;
   trumpRevealed: boolean;
+  trumpDrawnBy: string;
   trumpSuit: Suit | '';
   discardCount: number;
   role: Role;
@@ -39,6 +40,7 @@ export function toSceneModel(state: GameState, selfId: string): SceneModel {
     deckCount: state.deck_count,
     trumpCard: state.trump_card,
     trumpRevealed: state.trump_revealed,
+    trumpDrawnBy: state.trump_drawn_by,
     trumpSuit: state.trump_suit,
     discardCount: state.discard_count,
     role,

@@ -12,6 +12,11 @@ export interface GameError {
   nonce: number;
 }
 
+export interface Reaction {
+  emoji: string;
+  nonce: number;
+}
+
 export interface Identity {
   kind: 'telegram' | 'dev';
   initData: string;
@@ -29,6 +34,9 @@ export interface GameContextValue {
   identity: Identity;
   lastError: GameError | null;
   replaced: boolean;
+  /** Live emoji reactions by player id (cleared automatically). */
+  reactions: Record<string, Reaction>;
+  react(emoji: string): void;
   join(roomId: string, create: boolean): void;
   leave(): void;
   setReady(ready: boolean): void;
@@ -104,6 +112,8 @@ export function GameProvider({ children }: { children: ReactNode }) {
   const [roomId, setRoomId] = useState<string | null>(() => sessionStorage.getItem(ROOM_KEY));
   const [lastError, setLastError] = useState<GameError | null>(null);
   const [replaced, setReplaced] = useState(false);
+  const [reactions, setReactions] = useState<Record<string, Reaction>>({});
+  const reactionTimers = useRef(new Map<string, number>());
 
   const socketRef = useRef<WebSocket | null>(null);
   const roomRef = useRef<{ roomId: string; create: boolean } | null>(roomId ? { roomId, create: false } : null);
@@ -188,6 +198,25 @@ export function GameProvider({ children }: { children: ReactNode }) {
           setRoomId(msg.payload.room_id);
           roomRef.current = { roomId: msg.payload.room_id, create: false };
           sessionStorage.setItem(ROOM_KEY, msg.payload.room_id);
+        } else if (msg.type === 'REACTION') {
+          const { player_id: playerId, emoji } = msg.payload;
+          nonceRef.current += 1;
+          const nonce = nonceRef.current;
+          setReactions((prev) => ({ ...prev, [playerId]: { emoji, nonce } }));
+          const previous = reactionTimers.current.get(playerId);
+          if (previous) window.clearTimeout(previous);
+          reactionTimers.current.set(
+            playerId,
+            window.setTimeout(() => {
+              reactionTimers.current.delete(playerId);
+              setReactions((prev) => {
+                if (prev[playerId]?.nonce !== nonce) return prev;
+                const next = { ...prev };
+                delete next[playerId];
+                return next;
+              });
+            }, 3200),
+          );
         } else if (msg.type === 'ERROR') {
           nonceRef.current += 1;
           const err: GameError = { message: msg.payload.message, code: msg.payload.code, cardId: msg.payload.card_id, nonce: nonceRef.current };
@@ -225,6 +254,14 @@ export function GameProvider({ children }: { children: ReactNode }) {
       socketRef.current = null;
     };
   }, [sendJoin]);
+
+  useEffect(() => {
+    const timers = reactionTimers.current;
+    return () => {
+      for (const id of timers.values()) window.clearTimeout(id);
+      timers.clear();
+    };
+  }, []);
 
   const join = useCallback(
     (id: string, create: boolean) => {
@@ -267,6 +304,8 @@ export function GameProvider({ children }: { children: ReactNode }) {
       identity,
       lastError,
       replaced,
+      reactions,
+      react: (emoji) => send({ type: 'REACT', payload: { emoji } }),
       join,
       leave,
       setReady: (ready) => send({ type: 'READY', payload: { ready } }),
@@ -277,7 +316,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
       setDevName,
       clearError: () => setLastError(null),
     }),
-    [connection, config, state, roomId, identity, lastError, replaced, join, leave, send, setDevName],
+    [connection, config, state, roomId, identity, lastError, replaced, reactions, join, leave, send, setDevName],
   );
 
   return <GameContext.Provider value={value}>{children}</GameContext.Provider>;

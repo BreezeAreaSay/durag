@@ -187,7 +187,34 @@ func (e *Engine) Start(s *GameState) error {
 	if len(s.Players) < MinPlayers {
 		return ErrNotEnoughPlayers
 	}
-	deck := NewDeck()
+	// House rule: a stump its owner never reached in the previous game stays
+	// with them (those cards are not shuffled back) and grows by one card.
+	// If the table is so crowded that the cards would not suffice, every
+	// stump is dissolved and dealt afresh.
+	carried := map[string]bool{}
+	need := 1 + HandSize*len(s.Players)
+	for i := range s.Players {
+		if n := len(s.Players[i].Stump); n > 0 {
+			need += n + 1
+			for _, c := range s.Players[i].Stump {
+				carried[c.ID] = true
+			}
+		} else {
+			need += StumpSize
+		}
+	}
+	if need > DeckSize {
+		carried = map[string]bool{}
+		for i := range s.Players {
+			s.Players[i].Stump = []Card{}
+		}
+	}
+	deck := make([]Card, 0, DeckSize)
+	for _, c := range NewDeck() {
+		if !carried[c.ID] {
+			deck = append(deck, c)
+		}
+	}
 	Shuffle(deck, e.rng)
 
 	// The trump is a random *base* card so that a trump suit always exists.
@@ -204,7 +231,9 @@ func (e *Engine) Start(s *GameState) error {
 	for i := range s.Players {
 		p := &s.Players[i]
 		p.Hand = []Card{}
-		p.Stump = []Card{}
+		if p.Stump == nil {
+			p.Stump = []Card{}
+		}
 		p.Out = false
 		p.Passed = false
 	}
@@ -214,9 +243,16 @@ func (e *Engine) Start(s *GameState) error {
 			deck = deck[1:]
 		}
 	}
-	for r := 0; r < StumpSize; r++ {
-		for i := range s.Players {
-			s.Players[i].Stump = append(s.Players[i].Stump, deck[0])
+	grown := []int{}
+	for i := range s.Players {
+		p := &s.Players[i]
+		want := StumpSize
+		if len(p.Stump) > 0 {
+			want = len(p.Stump) + 1 // the carried stump gets one more card
+			grown = append(grown, i)
+		}
+		for len(p.Stump) < want && len(deck) > 0 {
+			p.Stump = append(p.Stump, deck[0])
 			deck = deck[1:]
 		}
 	}
@@ -224,6 +260,7 @@ func (e *Engine) Start(s *GameState) error {
 	s.TrumpCard = &trump
 	s.TrumpSuit = trump.Suit
 	s.TrumpRevealed = false
+	s.TrumpDrawnBy = ""
 	s.TableCards = map[string][]Card{}
 	s.TableOrder = []string{}
 	s.DefenderTaking = false
@@ -237,6 +274,9 @@ func (e *Engine) Start(s *GameState) error {
 	s.CurrentTurn = e.firstAttacker(s)
 	s.DefenderID = s.NextActive(s.CurrentTurn)
 	s.addLog(LogEntry{Type: "start", PlayerID: s.CurrentTurn})
+	for _, i := range grown {
+		s.addLog(LogEntry{Type: "stump_grow", PlayerID: s.Players[i].ID, Text: fmt.Sprint(len(s.Players[i].Stump))})
+	}
 	s.touch()
 	return nil
 }
@@ -461,7 +501,7 @@ func (s *GameState) settleHands() {
 			s.addLog(LogEntry{Type: "stump", PlayerID: p.ID})
 			continue
 		}
-		if s.TrumpCard != nil || p.ID == s.DefenderID {
+		if s.TrumpInDeck() || p.ID == s.DefenderID {
 			continue
 		}
 		p.Out = true
@@ -508,35 +548,22 @@ func (e *Engine) endBout(s *GameState, took bool) {
 	s.BoutNumber++
 }
 
-// draw takes the top card of the deck. When the main deck runs out the trump
-// is revealed; the trump card itself is the very last card to be drawn.
-func (s *GameState) draw() (Card, bool) {
+// draw takes the top card of the deck for the given player. The face-down
+// trump card at the bottom is the very last card; the moment somebody draws
+// it, it is revealed to everyone and the trump suit becomes active.
+func (s *GameState) draw(playerID string) (Card, bool) {
 	if len(s.Deck) > 0 {
 		c := s.Deck[0]
 		s.Deck = s.Deck[1:]
-		if len(s.Deck) == 0 {
-			s.revealTrump()
-		}
 		return c, true
 	}
-	if s.TrumpCard != nil {
-		c := *s.TrumpCard
-		s.TrumpCard = nil
-		return c, true
+	if s.TrumpInDeck() {
+		s.TrumpRevealed = true
+		s.TrumpDrawnBy = playerID
+		s.addLog(LogEntry{Type: "trump_revealed", PlayerID: playerID, CardID: s.TrumpCard.ID, Text: s.TrumpSuit})
+		return *s.TrumpCard, true
 	}
 	return Card{}, false
-}
-
-func (s *GameState) revealTrump() {
-	if s.TrumpRevealed {
-		return
-	}
-	s.TrumpRevealed = true
-	cardID := ""
-	if s.TrumpCard != nil {
-		cardID = s.TrumpCard.ID
-	}
-	s.addLog(LogEntry{Type: "trump_revealed", CardID: cardID, Text: s.TrumpSuit})
 }
 
 // refill tops hands up to HandSize: lead attacker first, then the other
@@ -568,7 +595,7 @@ func (s *GameState) refill(attackerID, defenderID string) {
 			continue
 		}
 		for len(p.Hand) < HandSize {
-			c, ok := s.draw()
+			c, ok := s.draw(p.ID)
 			if !ok {
 				return
 			}
@@ -597,7 +624,7 @@ func (s *GameState) pickupStumps() {
 // markOuts removes players who have no cards anywhere once nothing is left
 // to draw. They finish the game as winners (in order).
 func (s *GameState) markOuts() {
-	if len(s.Deck) > 0 || s.TrumpCard != nil {
+	if len(s.Deck) > 0 || s.TrumpInDeck() {
 		return
 	}
 	for i := range s.Players {
@@ -654,6 +681,7 @@ func (e *Engine) removePlayer(s *GameState, id string) {
 }
 
 // resetToLobby throws away the finished game and keeps the connected players.
+// Unreached stumps are kept on purpose: they carry over to the next game.
 func (e *Engine) resetToLobby(s *GameState) {
 	kept := s.Players[:0]
 	for _, p := range s.Players {
@@ -661,7 +689,6 @@ func (e *Engine) resetToLobby(s *GameState) {
 			continue
 		}
 		p.Hand = []Card{}
-		p.Stump = []Card{}
 		p.Out = false
 		p.Passed = false
 		p.IsReady = false
@@ -678,6 +705,7 @@ func (e *Engine) resetToLobby(s *GameState) {
 	s.TrumpCard = nil
 	s.TrumpSuit = ""
 	s.TrumpRevealed = false
+	s.TrumpDrawnBy = ""
 	s.clearTable()
 	s.CurrentTurn = ""
 	s.DefenderID = ""
