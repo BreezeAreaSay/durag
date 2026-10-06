@@ -17,11 +17,14 @@ const (
 	TypePlayCard     = "PLAY_CARD"
 	TypeTransferTurn = "TRANSFER_TURN"
 	TypeTakeCards    = "TAKE_CARDS"
-	TypePass         = "PASS"       // extension: "I have nothing more to throw in"
-	TypeReady        = "READY"      // extension: lobby readiness toggle
-	TypeLeaveRoom    = "LEAVE_ROOM" // extension
-	TypePing         = "PING"       // extension: application level keep-alive
-	TypeReact        = "REACT"      // extension: emoji reaction shown next to the sender's avatar
+	TypePass         = "PASS"         // extension: "I have nothing more to throw in"
+	TypeReady        = "READY"        // extension: lobby readiness toggle
+	TypeLeaveRoom    = "LEAVE_ROOM"   // extension
+	TypePing         = "PING"         // extension: application level keep-alive
+	TypeReact        = "REACT"        // emoji reaction (alias of SEND_EMOJI)
+	TypeSendEmoji    = "SEND_EMOJI"   // v10 name of REACT
+	TypeTakeStump    = "TAKE_STUMP"   // v10: pick up the stump between bouts
+	TypeResolveBout  = "RESOLVE_BOUT" // v10 name of PASS: "nothing more to throw in, resolve the bout"
 )
 
 // Server -> client messages.

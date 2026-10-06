@@ -145,9 +145,9 @@ func (h *Hub) handle(c *Client, env Envelope) {
 		h.join(c, env.Payload)
 	case TypePing:
 		c.enqueue(encode(TypePong, nil))
-	case TypeReact:
+	case TypeReact, TypeSendEmoji:
 		h.react(c, env.Payload)
-	case TypePlayCard, TypeTransferTurn, TypeTakeCards, TypePass, TypeReady, TypeLeaveRoom:
+	case TypePlayCard, TypeTransferTurn, TypeTakeCards, TypePass, TypeResolveBout, TypeTakeStump, TypeReady, TypeLeaveRoom:
 		h.intent(c, env)
 	default:
 		c.sendError("UNKNOWN_TYPE", "unknown message type: "+env.Type, "")
@@ -208,9 +208,9 @@ func (h *Hub) intent(c *Client, env Envelope) {
 		c.sendError("NOT_IN_ROOM", "join a room first", "")
 		return
 	}
-	// A bout whose resolving delay has passed is finalised first (safety net
-	// in case the timer that scheduled it lived on an instance that is gone).
-	h.resolveDue(roomID)
+	// Overdue timers (bout resolution, stump auto-take, turn timeout) fire
+	// first: a safety net in case the instance that scheduled them is gone.
+	h.tickDue(roomID)
 	var cardID string
 	apply := func(s *game.GameState) error {
 		switch env.Type {
@@ -230,8 +230,10 @@ func (h *Hub) intent(c *Client, env Envelope) {
 			return h.engine.TransferTurn(s, playerID, p.CardID)
 		case TypeTakeCards:
 			return h.engine.TakeCards(s, playerID)
-		case TypePass:
+		case TypePass, TypeResolveBout:
 			return h.engine.Pass(s, playerID)
+		case TypeTakeStump:
+			return h.engine.TakeStump(s, playerID)
 		case TypeReady:
 			p := ReadyPayload{Ready: true}
 			if len(env.Payload) > 0 {
@@ -296,14 +298,38 @@ func (h *Hub) react(c *Client, raw json.RawMessage) {
 	}
 }
 
-// afterUpdate broadcasts the new state and, when a bout just finished,
-// schedules its resolution (clearing the table) after the engine's delay.
+// afterUpdate broadcasts the new state and schedules the next server-side
+// deadline of the room: the end of the resolving pause, the automatic stump
+// pickup or the turn timer, whichever comes first.
 func (h *Hub) afterUpdate(roomID string, state *game.GameState) {
 	h.publish(roomID, state)
-	if state.Phase != game.PhaseResolving {
+	h.scheduleTick(roomID, state)
+}
+
+// nextDeadline returns the earliest pending server deadline of a state (unix ms) or 0.
+func nextDeadline(state *game.GameState) int64 {
+	var next int64
+	consider := func(ms int64) {
+		if ms > 0 && (next == 0 || ms < next) {
+			next = ms
+		}
+	}
+	if state.Phase == game.PhaseResolving {
+		consider(state.ResolveAt)
+	}
+	if state.StumpsPending() {
+		consider(state.StumpDeadline)
+	}
+	consider(state.TurnDeadline)
+	return next
+}
+
+func (h *Hub) scheduleTick(roomID string, state *game.GameState) {
+	at := nextDeadline(state)
+	if at == 0 {
 		return
 	}
-	delay := time.Until(time.UnixMilli(state.ResolveAt)) + 20*time.Millisecond
+	delay := time.Until(time.UnixMilli(at)) + 20*time.Millisecond
 	if delay < 0 {
 		delay = 0
 	}
@@ -313,26 +339,31 @@ func (h *Hub) afterUpdate(roomID string, state *game.GameState) {
 			return
 		default:
 		}
-		h.resolveDue(roomID)
+		h.tickDue(roomID)
 	})
 }
 
-// resolveDue finalises the room's bout if its resolving deadline has passed.
-// It is idempotent: other instances' timers and incoming intents may race.
-func (h *Hub) resolveDue(roomID string) {
+// tickDue fires every overdue deadline of the room (resolution, stumps, turn
+// timer). It is idempotent: other instances' timers and incoming intents may
+// race, and the engine only acts when a deadline really passed.
+func (h *Hub) tickDue(roomID string) {
 	state, err := h.store.Update(h.ctx, roomID, false, func(s *game.GameState) error {
-		if !h.engine.ResolveIfDue(s, time.Now()) {
+		now := time.Now()
+		changed := h.engine.ResolveIfDue(s, now)
+		changed = h.engine.StumpsIfDue(s, now) || changed
+		changed = h.engine.ExpireTurn(s, now) || changed
+		if !changed {
 			return errNotDue
 		}
 		return nil
 	})
 	if err != nil {
 		if !errors.Is(err, errNotDue) && !errors.Is(err, store.ErrNotFound) {
-			h.log.Error("ws: resolve bout", "room", roomID, "err", err)
+			h.log.Error("ws: timers", "room", roomID, "err", err)
 		}
 		return
 	}
-	h.publish(roomID, state)
+	h.afterUpdate(roomID, state)
 }
 
 func (h *Hub) sendFailure(c *Client, err error, cardID string) {

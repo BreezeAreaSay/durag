@@ -88,10 +88,10 @@ const dict = {
     'move.transfer': '{name} переводит картой {card}',
     'move.take': '{name} берёт',
     'move.pass': '{name}: бито',
-    'move.bout_end_bito': 'Бито! {n} карт уходят в отбой',
+    'move.bout_end_bito': 'Бито! В отбой: {n} {cards}',
     'move.bout_end_took': '{name} забирает весь стол',
-    'move.took': '{name} забрал {n} карт',
-    'move.bito': 'Бито: {n} карт в отбое',
+    'move.took': '{name} забрал {n} {cards}',
+    'move.bito': 'Бито: {n} {cards} в отбое',
     'move.stump': '{name} берёт пенёк',
     'move.stump_grow': '{name}: пенёк остался и вырос до {n}',
     'move.out': '{name} вышел: карт больше нет',
@@ -118,6 +118,20 @@ const dict = {
     'role.me.offline': 'ОФФЛАЙН',
     'hud.fxOn': 'FX ВКЛ',
     'hud.fxOff': 'FX ВЫКЛ',
+    'game.takeStump': 'ВЗЯТЬ ПЕНЁК',
+    'game.takeStumpHint': 'РУКА ПУСТА: БЕРИ ПЕНЁК',
+    'game.stumpWait': 'ЖДЁМ: {names} БЕРЁТ ПЕНЁК',
+    'role.stump': 'БЕРЁТ ПЕНЁК',
+    'role.me.stump': 'БЕРУ ПЕНЁК',
+    'move.stump_wait': 'Пенёк: ждём {n} {players}',
+    'word.cards': 'карта|карты|карт',
+    'word.cards_acc': 'карту|карты|карт',
+    'word.players_gen': 'игрока|игроков|игроков',
+    'move.timeout_auto_attack': 'Время вышло: {name} ходит {card}',
+    'move.timeout_auto_take': 'Время вышло: {name} берёт',
+    'move.timeout_auto_pass': 'Время вышло: {name} бито',
+    'err.STUMP_PENDING': 'Сначала разбирают пеньки',
+    'err.NO_STUMP': 'Сейчас пенёк брать нельзя',
   },
   en: {
     tagline: 'Unlimited Durak. Hidden trump. Jokers.',
@@ -206,10 +220,10 @@ const dict = {
     'move.transfer': '{name} transfers with {card}',
     'move.take': '{name} takes',
     'move.pass': '{name}: pass',
-    'move.bout_end_bito': 'Beaten! {n} cards go to the discard',
+    'move.bout_end_bito': 'Beaten! {n} {cards} go to the discard',
     'move.bout_end_took': '{name} takes the whole table',
-    'move.took': '{name} took {n} cards',
-    'move.bito': 'Beaten: {n} cards discarded',
+    'move.took': '{name} took {n} {cards}',
+    'move.bito': 'Beaten: {n} {cards} discarded',
     'move.stump': '{name} picks up the stump',
     'move.stump_grow': '{name}: untouched stump grows to {n}',
     'move.out': '{name} is out: no cards left',
@@ -236,6 +250,20 @@ const dict = {
     'role.me.offline': 'OFFLINE',
     'hud.fxOn': 'FX ON',
     'hud.fxOff': 'FX OFF',
+    'game.takeStump': 'TAKE STUMP',
+    'game.takeStumpHint': 'EMPTY HAND: TAKE YOUR STUMP',
+    'game.stumpWait': 'WAITING: {names} TAKES THE STUMP',
+    'role.stump': 'TAKES STUMP',
+    'role.me.stump': 'I TAKE STUMP',
+    'move.stump_wait': 'Stumps: waiting for {n} {players}',
+    'word.cards': 'card|cards|cards',
+    'word.cards_acc': 'card|cards|cards',
+    'word.players_gen': 'player|players|players',
+    'move.timeout_auto_attack': 'Time is up: {name} leads {card}',
+    'move.timeout_auto_take': 'Time is up: {name} takes',
+    'move.timeout_auto_pass': 'Time is up: {name} passes',
+    'err.STUMP_PENDING': 'Stumps are being taken first',
+    'err.NO_STUMP': 'You cannot take a stump right now',
   },
 } as const;
 
@@ -258,6 +286,26 @@ export function t(key: Key, vars?: Record<string, string | number>): string {
     for (const [k, v] of Object.entries(vars)) s = s.replace(`{${k}}`, String(v));
   }
   return s;
+}
+
+/**
+ * Picks the noun form for a count: `one|few|many` (Russian rules, e.g. 1 карта / 2 карты / 5 карт,
+ * 21 карта / 12 карт); English uses `one|other`.
+ */
+export function countWord(n: number | string, key: Key): string {
+  const forms = t(key).split('|');
+  const one = forms[0] ?? '';
+  const few = forms[1] ?? one;
+  const many = forms[2] ?? few;
+  const v = Math.abs(Math.trunc(Number(n))) || 0;
+  if (current === 'ru') {
+    const m10 = v % 10;
+    const m100 = v % 100;
+    if (m10 === 1 && m100 !== 11) return one;
+    if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return few;
+    return many;
+  }
+  return v === 1 ? one : many;
 }
 
 /** Translates a server error code, falling back to the server message. */

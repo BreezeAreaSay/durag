@@ -93,20 +93,39 @@ type GameState struct {
 	Phase          string     `json:"phase"`           // "" or PhaseResolving
 	ResolveAt      int64      `json:"resolve_at"`      // unix milliseconds; when the resolving phase ends
 	ResolveOutcome string     `json:"resolve_outcome"` // OutcomeBito / OutcomeTook while resolving
+	StumpPending   []string   `json:"stump_pending"`   // players who must take their stump before the next bout starts
+	StumpDeadline  int64      `json:"stump_deadline"`  // unix ms; pending stumps are taken automatically afterwards (0 = none)
+	TurnDeadline   int64      `json:"turn_deadline"`   // unix ms; the server acts for idle players afterwards (0 = no timer)
+	TurnTimeoutMs  int64      `json:"turn_timeout_ms"` // length of the turn timer, for the progress ring
+	TurnActors     []string   `json:"turn_actors"`     // who has to act before TurnDeadline
 }
 
 // NewGameState creates an empty waiting room.
 func NewGameState(roomID string) *GameState {
 	return &GameState{
-		RoomID:     roomID,
-		Players:    []Player{},
-		Deck:       []Card{},
-		TableCards: map[string][]Card{},
-		TableOrder: []string{},
-		Status:     StatusWaiting,
-		MaxPlayers: MaxPlayers,
-		UpdatedAt:  time.Now().Unix(),
+		RoomID:       roomID,
+		Players:      []Player{},
+		Deck:         []Card{},
+		TableCards:   map[string][]Card{},
+		TableOrder:   []string{},
+		Status:       StatusWaiting,
+		MaxPlayers:   MaxPlayers,
+		UpdatedAt:    time.Now().Unix(),
+		StumpPending: []string{},
+		TurnActors:   []string{},
 	}
+}
+
+// StumpsPending reports whether the game waits for somebody to take a stump.
+func (s *GameState) StumpsPending() bool { return len(s.StumpPending) > 0 }
+
+func (s *GameState) stumpPendingFor(id string) bool {
+	for _, p := range s.StumpPending {
+		if p == id {
+			return true
+		}
+	}
+	return false
 }
 
 // --- lookups -------------------------------------------------------------
@@ -357,6 +376,8 @@ func (s *GameState) Clone() *GameState {
 	}
 	out.TableOrder = append([]string{}, s.TableOrder...)
 	out.FinishedOrder = append([]string{}, s.FinishedOrder...)
+	out.StumpPending = append([]string{}, s.StumpPending...)
+	out.TurnActors = append([]string{}, s.TurnActors...)
 	out.Log = append([]LogEntry{}, s.Log...)
 	return &out
 }

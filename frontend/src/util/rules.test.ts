@@ -64,6 +64,11 @@ function state(partial: Partial<GameState>): GameState {
     phase: '',
     resolve_at: 0,
     resolve_outcome: '',
+    stump_pending: [],
+    stump_deadline: 0,
+    turn_deadline: 0,
+    turn_timeout_ms: 0,
+    turn_actors: [],
     ...partial,
   };
 }

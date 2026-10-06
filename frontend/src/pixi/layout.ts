@@ -119,6 +119,12 @@ export function discardSlot(m: Metrics): Slot {
   return { x: m.width - 16 - (m.cardW * s) / 2, y: m.tableTop + (m.cardH * s) / 2 + 4, rotation: 0.35, scale: s };
 }
 
+/** The viewer's own stump: a small face-down stack at the right end of the hand. */
+export function stumpSlot(m: Metrics): Slot {
+  const s = 0.55;
+  return { x: m.width - 14 - (m.cardW * s) / 2, y: m.height - (m.cardH * s) / 2 - 64, rotation: 0.12, scale: s };
+}
+
 /** Where cards fly when an opponent takes them / where their cards come from. */
 export function exitSlot(m: Metrics): Slot {
   return { x: m.width / 2, y: -m.cardH * 0.6, rotation: 0, scale: 0.6 };

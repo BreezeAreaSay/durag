@@ -13,12 +13,14 @@ import {
   handSlots,
   hitSlot,
   nextAttackSlot,
+  stumpSlot,
   tableSlots,
   trumpSlot,
   type Metrics,
   type Slot,
 } from './layout';
-import { createChromaticFilter, createHalftoneFilter, createHologramFilter, filterCompiles, type HologramFilter } from './shaders';
+import { createChromaticFilter, createGlitchFilter, createHalftoneFilter, createHologramFilter, filterCompiles, type ChromaticFilter, type GlitchFilter, type HalftoneFilter, type HologramFilter } from './shaders';
+import { FxDirector } from './fxDirector';
 import { drawSuit } from './suits';
 import { canBeat } from '../util/rules';
 import { isSuper } from '../util/cards';
@@ -28,10 +30,15 @@ import type { SceneModel } from './model';
 export interface SceneHandlers {
   onPlay(cardId: string, targetId?: string): void;
   onTransfer(cardId: string): void;
+  /** the viewer tapped their stump during the stump step */
+  onTakeStump?(): void;
+  /** the WebGL context was lost (iOS memory pressure): the host remounts the scene */
+  onContextLost?(): void;
 }
 
 export interface SceneLabels {
   trump: string;
+  stump?: string;
 }
 
 export interface SceneOptions {
@@ -67,10 +74,23 @@ interface Pending {
 }
 
 const FONT = 'Unbounded, "Arial Black", Impact, sans-serif';
-const PENDING_TTL = 2500;
-const INK = 0x111111;
+// A card in flight returns to the hand ONLY on ERROR (or when the state shows
+// it elsewhere); this is just a last-resort guard against a lost connection.
+const PENDING_TTL = 15000;
+
+// Shader strengths at full intensity. The FxDirector scales them by its
+// 0..1 level: zero during ordinary play, a short burst on the big moments.
+const FX_STEP_MS = 1000 / 12; // stop-motion cadence of the effect levels
+const HALFTONE_MAX = 0.22;
+const CHROMATIC_MAX = 0.3;
+const GLITCH_MAX = 0.6;
+const PLATE_GLITCH_MAX = 0.3;
+const HOLOGRAM_STRENGTH = 0.45;
+const AMBIENT_QUIET = 0.3; // the bout pause and the stump step
+const INK = 0x0d0d0d;
+const PAPER = 0xece9e1;
 const ACID = 0xe6ff00;
-const RED = 0xff2a1a;
+const RED = 0xcf1fff;
 
 export class TableScene {
   readonly app = new Application();
@@ -90,6 +110,13 @@ export class TableScene {
   private metrics: Metrics = computeMetrics(390, 844);
   private drag: DragState | null = null;
   private hologram: HologramFilter | null = null;
+  private glitch: GlitchFilter | null = null;
+  private plateGlitch: GlitchFilter | null = null;
+  private worldFx: { halftone: HalftoneFilter; chromatic: ChromaticFilter } | null = null;
+  private readonly fxDirector = new FxDirector();
+  private fxAcc = 0;
+  private worldFxOn = false;
+  private glitchOn = false;
   private time = 0;
   private ready = false;
   private destroyed = false;
@@ -104,6 +131,10 @@ export class TableScene {
   private trumpPlateSuit: Suit | '' = '';
   private discardPile = new Container();
   private discardLabel!: Text;
+  private stumpPile = new Container();
+  private stumpLabel!: Text;
+  private stumpShown = -1;
+  private dissolved = new Set<string>();
 
   // trump reveal animation
   private prevRevealed: boolean | null = null;
@@ -135,6 +166,10 @@ export class TableScene {
     }
     host.appendChild(this.app.canvas);
     this.app.canvas.style.touchAction = 'none';
+    this.app.canvas.addEventListener('webglcontextlost', (event) => {
+      event.preventDefault();
+      this.handlers.onContextLost?.();
+    });
     try {
       await Promise.race([document.fonts.load('900 32px Unbounded'), new Promise((r) => setTimeout(r, 1500))]);
     } catch {
@@ -164,6 +199,14 @@ export class TableScene {
       this.time += ticker.deltaMS;
       this.tweener.update(ticker.deltaMS);
       this.hologram?.setTime(this.time / 1000);
+      this.glitch?.setTime(this.time / 1000);
+      this.plateGlitch?.setTime(this.time / 1000);
+      this.fxAcc += ticker.deltaMS;
+      if (this.fxAcc >= FX_STEP_MS) {
+        const dt = this.fxAcc;
+        this.fxAcc = 0;
+        if (this.fxDirector.step(dt)) this.refreshFx(false);
+      }
       this.expirePending();
     });
 
@@ -175,9 +218,16 @@ export class TableScene {
 
   update(model: SceneModel): void {
     const first = this.model === null;
+    const prev = this.model;
     this.model = model;
     if (model.resolving && model.resolveOutcome) this.lastOutcome = model.resolveOutcome;
+    // Effects are moments, not a constant filter: quiet while people play.
+    this.fxDirector.setAmbient(model.resolving || model.stumpStep ? AMBIENT_QUIET : 0);
+    if (!first && model.resolving && !prev?.resolving) this.fxDirector.hit(0.6, 1200); // the stamp slams in
+    if (!first && model.lastEvent === 'stump' && prev?.version !== model.version) this.fxDirector.hit(0.5, 900);
     if (!first && this.prevRevealed === false && model.trumpRevealed && model.trumpCard) {
+      this.fxDirector.hit(1, 1800);
+      this.fxDirector.hitGlitch(1, 1800);
       this.playTrumpReveal(model.trumpCard, model.hand.some((c) => c.id === model.trumpCard!.id));
     }
     this.prevRevealed = model.trumpRevealed;
@@ -200,6 +250,13 @@ export class TableScene {
     this.metrics = computeMetrics(this.app.screen.width, this.app.screen.height, this.topInset);
     this.rebuildPiles();
     this.sync(true);
+  }
+
+  /** The connection came back: forget optimistic moves, the state is the truth. */
+  clearPending(): void {
+    for (const id of this.pending.keys()) this.views.get(id)?.setPending(false);
+    this.pending.clear();
+    if (this.ready) this.sync(false);
   }
 
   /** The server rejected a card: snap it back into the hand. */
@@ -226,29 +283,81 @@ export class TableScene {
 
   // --- effects ---------------------------------------------------------------
 
-  // Deliberately gentle: a faint riso screen in the mid-tones and a sub-pixel
-  // RGB misregistration. Anything stronger reads as a compression artefact on
-  // small screens, and the cards must stay razor sharp.
+  // Deliberately gentle, and not constant: the passes are created once and
+  // attached only while the FxDirector's level is above zero, so during
+  // ordinary play (attacking, defending, throwing in) the picture is clean and
+  // razor sharp. The big moments get a short burst that fades out.
   private enableFx(): void {
     const quality = { resolution: this.app.renderer.resolution };
-    const halftone = createHalftoneFilter({ dotSize: 3, strength: 0.28, ...quality });
-    const chromatic = createChromaticFilter(0.4, quality);
-    const hologram = createHologramFilter(0.6, quality);
-    if (![halftone, chromatic, hologram].every((f) => filterCompiles(this.app.renderer, f))) return;
+    const halftone = createHalftoneFilter({ dotSize: 3, strength: HALFTONE_MAX, ...quality });
+    const chromatic = createChromaticFilter(CHROMATIC_MAX, quality);
+    const hologram = createHologramFilter(HOLOGRAM_STRENGTH, quality);
+    const glitch = createGlitchFilter(GLITCH_MAX, quality); // trump cards on the table
+    const plateGlitch = createGlitchFilter(PLATE_GLITCH_MAX, quality); // the trump plate: its label must stay readable
+    if (![halftone, chromatic, hologram, glitch, plateGlitch].every((f) => filterCompiles(this.app.renderer, f))) return;
     this.hologram = hologram;
-    this.world.filters = [halftone, chromatic];
+    this.glitch = glitch;
+    this.plateGlitch = plateGlitch;
+    this.worldFx = { halftone, chromatic };
     this.fxActive = true;
     this.applyHologram(hologram);
+    this.refreshFx(true);
   }
 
   private disableFx(): void {
-    const old = this.world.filters;
     this.world.filters = null;
-    if (Array.isArray(old)) old.forEach((f) => f.destroy());
+    this.worldFx?.halftone.destroy();
+    this.worldFx?.chromatic.destroy();
+    this.worldFx = null;
+    this.worldFxOn = false;
     this.applyHologram(null);
     this.hologram?.destroy();
     this.hologram = null;
+    this.glitchOn = false;
+    for (const view of this.views.values()) view.setGlitch(null);
+    this.trumpPlate.filters = null;
+    this.glitch?.destroy();
+    this.glitch = null;
+    this.plateGlitch?.destroy();
+    this.plateGlitch = null;
     this.fxActive = false;
+  }
+
+  /** Applies the FxDirector's current levels to the filters (called per stop-motion step). */
+  private refreshFx(force: boolean): void {
+    if (!this.fxActive || !this.worldFx) return;
+    const level = this.fxDirector.level;
+    const on = level > 0.02;
+    if (on !== this.worldFxOn || force) {
+      this.world.filters = on ? [this.worldFx.halftone, this.worldFx.chromatic] : null;
+      this.worldFxOn = on;
+    }
+    if (on) {
+      this.worldFx.halftone.setStrength(HALFTONE_MAX * level);
+      this.worldFx.chromatic.setOffset(CHROMATIC_MAX * level);
+    }
+    const g = this.fxDirector.glitch;
+    const glitchOn = g > 0.02;
+    if (glitchOn !== this.glitchOn || force) {
+      this.glitchOn = glitchOn;
+      this.applyGlitch();
+    }
+    if (glitchOn) {
+      this.glitch?.setStrength(GLITCH_MAX * g);
+      this.plateGlitch?.setStrength(PLATE_GLITCH_MAX * g);
+    }
+  }
+
+  /** Trump cards lying on the table (and the trump plate) flicker like engine artefacts — only in glitch moments. */
+  private applyGlitch(): void {
+    const m = this.model;
+    const known = this.glitchOn && Boolean(m?.trumpRevealed && m.trumpSuit);
+    const active = known ? this.glitch : null;
+    this.trumpPlate.filters = known && this.plateGlitch ? [this.plateGlitch] : null;
+    for (const view of this.views.values()) {
+      const onTable = view.root.parent === this.layers.table;
+      view.setGlitch(active && onTable && view.card.suit === m!.trumpSuit ? active : null);
+    }
   }
 
   private applyHologram(filter: Filter | null): void {
@@ -286,14 +395,20 @@ export class TableScene {
       if (wanted.has(id) || this.drag?.id === id) continue;
       if (this.pending.has(id)) continue; // still waiting for the server's verdict
       this.views.delete(id);
+      if (view.isDissolved) {
+        view.destroy(); // already blown to pixels by the Super card
+        continue;
+      }
       const wasOnTable = view.root.parent === this.layers.table;
       const outcome = m.lastOutcome || this.lastOutcome;
       const exit = wasOnTable && outcome !== 'took' ? discardSlot(metrics) : exitSlot(metrics);
       view.root.eventMode = 'none';
       view.root.visible = true;
+      view.setGlitch(null);
       this.reparent(view, this.layers.table);
       void this.tweener.to(view.root, { x: exit.x, y: exit.y, rotation: exit.rotation, scale: exit.scale, alpha: 0.9 }, { duration: 360, ease: easings.outQuad }).then(() => view.destroy());
     }
+    if (m.table.length === 0) this.dissolved.clear();
 
     // Place every visible card.
     for (const [id, p] of wanted) {
@@ -311,8 +426,16 @@ export class TableScene {
           // cards the viewer just took come from the table centre, not the deck
           const c = nextAttackSlot(0, metrics);
           view.root.position.set(c.x, c.y);
+        } else if (p.kind === 'hand' && m.lastEvent === 'stump') {
+          // the stump was just picked up: cards come out of the viewer's stump pile
+          const sSlot = stumpSlot(metrics);
+          view.root.position.set(sSlot.x, sSlot.y);
+          view.root.scale.set(sSlot.scale);
         }
-        if (p.kind === 'attack' || p.kind === 'defense') this.flash(view);
+        if (p.kind === 'attack' || p.kind === 'defense') {
+          this.flash(view);
+          if (m.trumpRevealed && p.card.suit === m.trumpSuit) this.fxDirector.hitGlitch(1, 700);
+        }
       }
       if (this.pending.has(id)) {
         if (p.kind === 'attack' || p.kind === 'defense') {
@@ -333,8 +456,52 @@ export class TableScene {
       this.moveTo(view, p.slot, immediate && !spawned);
     }
 
+    // The Super card destroys the card it beats: coarse pixels, no card left.
+    for (const pair of m.table) {
+      if (pair.defense?.id === 'SC' && !this.dissolved.has(pair.attack.id)) {
+        this.dissolved.add(pair.attack.id);
+        const target = this.views.get(pair.attack.id);
+        if (target) this.later(immediate ? 0 : 380, () => this.disintegrate(target));
+      }
+    }
+
     if (m.table.length === 0 && !m.resolving) this.lastOutcome = '';
+    this.applyGlitch();
     this.updatePiles();
+  }
+
+  /** Blows a card apart into coarse squares and crosses (stop-motion). */
+  private disintegrate(view: CardView): void {
+    if (this.destroyed || view.isDissolved) return;
+    const { x, y } = view.root.position;
+    const scale = view.root.scale.x;
+    const w = view.w * scale;
+    const h = view.h * scale;
+    view.setDissolved(true);
+    this.fxDirector.hit(0.9, 1000); // the Super card moment
+    const colors = [INK, PAPER, PAPER, RED, ACID];
+    for (let i = 0; i < 30; i++) {
+      const g = new Graphics();
+      const size = 4 + Math.round(Math.random() * 6);
+      const color = colors[i % colors.length]!;
+      if (i % 4 === 0) {
+        g.rect(-size, -1.5, size * 2, 3).fill({ color });
+        g.rect(-1.5, -size, 3, size * 2).fill({ color });
+      } else {
+        g.rect(-size / 2, -size / 2, size, size).fill({ color });
+      }
+      g.position.set(x + (Math.random() - 0.5) * w, y + (Math.random() - 0.5) * h);
+      this.layers.drag.addChild(g);
+      const angle = Math.random() * Math.PI * 2;
+      const dist = 50 + Math.random() * 110;
+      void this.tweener
+        .to(
+          g,
+          { x: g.x + Math.cos(angle) * dist, y: g.y + Math.sin(angle) * dist + 30, rotation: (Math.random() - 0.5) * 4, alpha: 0, scale: 0.4 },
+          { duration: 420 + Math.random() * 400, ease: easings.outQuad },
+        )
+        .then(() => g.destroy());
+    }
   }
 
   /** Briefly outlines a card another player just put on the table. */
@@ -450,11 +617,18 @@ export class TableScene {
   // --- piles -----------------------------------------------------------------
 
   private buildPiles(): void {
-    this.deckLabel = new Text({ text: '', style: { fontFamily: FONT, fontWeight: '900', fontSize: 16, fill: INK } });
+    this.deckLabel = new Text({ text: '', style: { fontFamily: FONT, fontWeight: '900', fontSize: 16, fill: PAPER } });
     this.deckLabel.anchor.set(0.5);
-    this.discardLabel = new Text({ text: '', style: { fontFamily: FONT, fontWeight: '900', fontSize: 14, fill: 0x8a8780 } });
+    this.discardLabel = new Text({ text: '', style: { fontFamily: FONT, fontWeight: '900', fontSize: 14, fill: 0x8a877f } });
     this.discardLabel.anchor.set(0.5);
-    this.layers.piles.addChild(this.deckPile, this.discardPile, this.trumpPlate, this.deckLabel, this.discardLabel);
+    this.stumpLabel = new Text({ text: '', style: { fontFamily: FONT, fontWeight: '900', fontSize: 13, fill: PAPER } });
+    this.stumpLabel.anchor.set(1, 1); // right-aligned: the pile sits at the screen edge
+    this.stumpPile.eventMode = 'none';
+    this.stumpPile.cursor = 'pointer';
+    this.stumpPile.on('pointertap', () => {
+      if (this.model?.mustTakeStump) this.handlers.onTakeStump?.();
+    });
+    this.layers.piles.addChild(this.deckPile, this.discardPile, this.trumpPlate, this.stumpPile, this.deckLabel, this.discardLabel, this.stumpLabel);
     this.rebuildPiles();
   }
 
@@ -493,7 +667,25 @@ export class TableScene {
     }
     this.deckLabel.position.set(d.x, d.y + (m.cardH * d.scale) / 2 + 14);
     this.discardLabel.position.set(ds.x, ds.y + (m.cardH * ds.scale) / 2 + 14);
+    const st = stumpSlot(m);
+    this.stumpLabel.position.set(m.width - 10, st.y - (m.cardH * st.scale) / 2 - 8);
+    this.stumpShown = -1;
     this.updatePiles();
+  }
+
+  /** The viewer's stump: a rough minimalist stack of face-down cards. */
+  private rebuildStumpPile(count: number): void {
+    const m = this.metrics;
+    this.stumpPile.removeChildren().forEach((c) => c.destroy({ children: true }));
+    const st = stumpSlot(m);
+    for (let i = count - 1; i >= 0; i--) {
+      const back = new CardView({ id: `stump-${i}`, suit: 'None', rank: 0 }, m.cardW, m.cardH, false);
+      back.root.scale.set(st.scale);
+      back.root.position.set(st.x - i * 2, st.y - i * 3);
+      back.root.rotation = st.rotation + (i % 2 ? -0.06 : 0.05);
+      this.stumpPile.addChild(back.root);
+    }
+    this.stumpShown = count;
   }
 
   /** A loud acid plate with a huge suit glyph: the trump, once it is known. */
@@ -501,9 +693,9 @@ export class TableScene {
     this.trumpPlate.removeChildren().forEach((c) => c.destroy({ children: true }));
     const w = m.cardW * 0.82;
     const h = m.cardH * 0.82;
-    const shadow = new Graphics().rect(-w / 2 + 5, -h / 2 + 6, w, h).fill({ color: INK });
+    const shadow = new Graphics().rect(-w / 2 + 5, -h / 2 + 6, w, h).fill({ color: PAPER, alpha: 0.25 });
     const plate = new Graphics().rect(-w / 2, -h / 2, w, h).fill({ color: ACID }).stroke({ width: 3, color: INK, alignment: 1 });
-    const label = new Text({ text: this.labels.trump.toUpperCase(), style: { fontFamily: FONT, fontWeight: '900', fontSize: Math.max(9, Math.round(w * 0.16)), fill: INK, letterSpacing: 1 } });
+    const label = new Text({ text: this.labels.trump.toUpperCase(), style: { fontFamily: FONT, fontWeight: '900', fontSize: Math.max(7, Math.round(w * 0.13)), fill: INK } });
     label.anchor.set(0.5, 0);
     label.position.set(0, -h / 2 + 6);
     const glyph = drawSuit(new Graphics(), 'None', w * 0.62, INK);
@@ -539,6 +731,23 @@ export class TableScene {
     this.discardPile.children.forEach((c, i) => {
       c.visible = m.discardCount > (2 - i) * 8;
     });
+    if (m.stumpCount !== this.stumpShown) this.rebuildStumpPile(Math.min(m.stumpCount, 5));
+    this.stumpPile.visible = m.stumpCount > 0;
+    this.stumpLabel.text = m.stumpCount > 0 ? `×${m.stumpCount}` : ''; // the word itself is in the HUD strip below
+    this.stumpPile.eventMode = m.mustTakeStump ? 'static' : 'none';
+    this.stumpPile.alpha = m.mustTakeStump ? 1 : 0.85;
+    const st = stumpSlot(this.metrics);
+    if (m.mustTakeStump) {
+      if (this.stumpPile.scale.x === 1) {
+        void this.tweener.to(this.stumpPile, { scale: 1.12, rotation: -0.04 }, { duration: 260, ease: easings.outBack });
+      }
+    } else if (this.stumpPile.scale.x !== 1) {
+      this.tweener.cancel(this.stumpPile);
+      this.stumpPile.scale.set(1);
+      this.stumpPile.rotation = 0;
+    }
+    this.stumpPile.pivot.set(st.x, st.y);
+    this.stumpPile.position.set(st.x, st.y);
   }
 
   // --- interaction -------------------------------------------------------------

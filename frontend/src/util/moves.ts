@@ -1,6 +1,6 @@
 // Human readable descriptions of log entries ("who beat what with which card").
 import type { GameState, LogEntry, Suit } from '../types/protocol';
-import { t } from '../i18n';
+import { countWord, t } from '../i18n';
 import { SUIT_SYMBOL, cardFromId, cardLabel } from './cards';
 
 function tableCardCount(state: GameState): number {
@@ -26,15 +26,22 @@ export function describeMove(state: GameState, entry: LogEntry | undefined): str
     case 'pass':
       return t('move.pass', { name: who });
     case 'bout_end':
-      return entry.text === 'took' ? t('move.bout_end_took', { name: who }) : t('move.bout_end_bito', { n: tableCardCount(state) });
+      if (entry.text === 'took') return t('move.bout_end_took', { name: who });
+      return t('move.bout_end_bito', { n: tableCardCount(state), cards: countWord(tableCardCount(state), 'word.cards') });
     case 'took':
-      return t('move.took', { name: who, n: entry.text ?? '' });
+      return t('move.took', { name: who, n: entry.text ?? '', cards: countWord(entry.text ?? 0, 'word.cards_acc') });
     case 'bito':
-      return t('move.bito', { n: entry.text ?? '' });
+      return t('move.bito', { n: entry.text ?? '', cards: countWord(entry.text ?? 0, 'word.cards') });
     case 'stump':
       return t('move.stump', { name: who });
     case 'stump_grow':
       return t('move.stump_grow', { name: who, n: entry.text ?? '' });
+    case 'stump_wait':
+      return t('move.stump_wait', { n: entry.text ?? '', players: countWord(entry.text ?? 0, 'word.players_gen') });
+    case 'timeout':
+      if (entry.text === 'auto_attack') return t('move.timeout_auto_attack', { name: who, card: card(entry.card_id) });
+      if (entry.text === 'auto_take') return t('move.timeout_auto_take', { name: who });
+      return t('move.timeout_auto_pass', { name: who });
     case 'out':
       return t('move.out', { name: who });
     case 'trump_revealed': {

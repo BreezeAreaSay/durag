@@ -24,6 +24,8 @@ type Config struct {
 	RoomTTL          time.Duration
 	InitDataMaxAge   time.Duration
 	BoutResolveDelay time.Duration // how long a finished bout stays on the table
+	StumpAutoDelay   time.Duration // how long players get to take their stump themselves
+	TurnTimeout      time.Duration // idle players get a default move after this (0 = off)
 	LogLevel         string
 }
 
@@ -95,6 +97,12 @@ func FromEnv() (Config, error) {
 	}
 	if c.BoutResolveDelay, err = time.ParseDuration(getenv("BOUT_RESOLVE_DELAY", "3500ms")); err != nil {
 		return c, fmt.Errorf("config: BOUT_RESOLVE_DELAY: %w", err)
+	}
+	if c.StumpAutoDelay, err = time.ParseDuration(getenv("STUMP_AUTO_DELAY", "4s")); err != nil {
+		return c, fmt.Errorf("config: STUMP_AUTO_DELAY: %w", err)
+	}
+	if c.TurnTimeout, err = time.ParseDuration(getenv("TURN_TIMEOUT", "45s")); err != nil {
+		return c, fmt.Errorf("config: TURN_TIMEOUT: %w", err)
 	}
 	if c.BotToken == "" && !c.AllowDevAuth {
 		return c, errors.New("config: TELEGRAM_BOT_TOKEN is empty and ALLOW_DEV_AUTH is false: nobody could log in")

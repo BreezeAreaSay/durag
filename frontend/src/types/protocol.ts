@@ -61,6 +61,11 @@ export interface GameState {
   phase: '' | 'resolving'; // "resolving": the finished bout stays on the table until resolve_at
   resolve_at: number; // unix ms
   resolve_outcome: '' | 'bito' | 'took';
+  stump_pending: string[]; // players who must take their stump before the next bout
+  stump_deadline: number; // unix ms; the server takes pending stumps afterwards
+  turn_deadline: number; // unix ms; 0 = no timer
+  turn_timeout_ms: number;
+  turn_actors: string[]; // who has to act before turn_deadline
 }
 
 export type Outcome = GameState['resolve_outcome'];
@@ -101,10 +106,11 @@ export type ClientMessage =
   | { type: 'PLAY_CARD'; payload: { card_id: string; target_card_id?: string } }
   | { type: 'TRANSFER_TURN'; payload: { card_id: string } }
   | { type: 'TAKE_CARDS' }
-  | { type: 'PASS' }
+  | { type: 'TAKE_STUMP' }
+  | { type: 'RESOLVE_BOUT' } // "nothing more to throw in" (alias PASS on the server)
   | { type: 'READY'; payload: { ready: boolean } }
   | { type: 'LEAVE_ROOM' }
-  | { type: 'REACT'; payload: { emoji: string } }
+  | { type: 'SEND_EMOJI'; payload: { emoji: string } } // alias REACT on the server
   | { type: 'PING' };
 
 export interface ClientConfig {

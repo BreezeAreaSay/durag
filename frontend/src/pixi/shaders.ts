@@ -119,8 +119,12 @@ export interface FilterQuality {
   resolution?: number;
 }
 
-export function createHalftoneFilter(opts: { dotSize?: number; angle?: number; strength?: number } & FilterQuality = {}): Filter {
-  return new Filter({
+export interface HalftoneFilter extends Filter {
+  setStrength(v: number): void;
+}
+
+export function createHalftoneFilter(opts: { dotSize?: number; angle?: number; strength?: number } & FilterQuality = {}): HalftoneFilter {
+  const filter = new Filter({
     glProgram: GlProgram.from({ vertex: VERTEX, fragment: HALFTONE_FRAG, name: 'durag-halftone' }),
     resources: {
       halftoneUniforms: {
@@ -130,11 +134,20 @@ export function createHalftoneFilter(opts: { dotSize?: number; angle?: number; s
       },
     },
     ...(opts.resolution ? { resolution: opts.resolution } : {}),
-  });
+  }) as HalftoneFilter;
+  const uniforms = (filter.resources as { halftoneUniforms: { uniforms: { uStrength: number } } }).halftoneUniforms.uniforms;
+  filter.setStrength = (v) => {
+    uniforms.uStrength = v;
+  };
+  return filter;
 }
 
-export function createChromaticFilter(offset = 0.8, quality: FilterQuality = {}): Filter {
-  return new Filter({
+export interface ChromaticFilter extends Filter {
+  setOffset(v: number): void;
+}
+
+export function createChromaticFilter(offset = 0.8, quality: FilterQuality = {}): ChromaticFilter {
+  const filter = new Filter({
     glProgram: GlProgram.from({ vertex: VERTEX, fragment: CHROMATIC_FRAG, name: 'durag-chromatic' }),
     resources: {
       chromaticUniforms: {
@@ -143,7 +156,12 @@ export function createChromaticFilter(offset = 0.8, quality: FilterQuality = {})
     },
     padding: 4,
     ...(quality.resolution ? { resolution: quality.resolution } : {}),
-  });
+  }) as ChromaticFilter;
+  const uniforms = (filter.resources as { chromaticUniforms: { uniforms: { uOffset: number } } }).chromaticUniforms.uniforms;
+  filter.setOffset = (v) => {
+    uniforms.uOffset = v;
+  };
+  return filter;
 }
 
 export interface HologramFilter extends Filter {
@@ -191,4 +209,70 @@ export function filterCompiles(renderer: unknown, filter: Filter): boolean {
     console.warn('durag: shader failed to compile, effects disabled', err);
     return false;
   }
+}
+
+const GLITCH_FRAG = `precision highp float;
+in vec2 vTextureCoord;
+out vec4 finalColor;
+
+uniform sampler2D uTexture;
+uniform highp vec4 uInputSize;
+uniform highp vec4 uInputClamp;
+uniform float uTime;
+uniform float uStrength;
+
+float hash(vec2 p) {
+  return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+}
+
+void main(void) {
+  vec2 uv = vTextureCoord;
+  float t = floor(uTime * 12.0) / 12.0; // stop-motion glitch steps
+  // horizontal slices that jump sideways now and then
+  float band = floor(uv.y * uInputSize.y / 6.0);
+  float r = hash(vec2(band, t));
+  float shift = (r > 0.84 ? (r - 0.84) * 6.0 : 0.0) * uStrength * uInputSize.z * 20.0;
+  float ab = 1.6 * uInputSize.z * uStrength;
+  vec2 uvG = clamp(uv + vec2(shift, 0.0), uInputClamp.xy, uInputClamp.zw);
+  vec2 uvR = clamp(uv + vec2(shift + ab, 0.0), uInputClamp.xy, uInputClamp.zw);
+  vec2 uvB = clamp(uv + vec2(shift - ab, 0.0), uInputClamp.xy, uInputClamp.zw);
+  vec4 c = texture(uTexture, uvG);
+  vec4 col = vec4(texture(uTexture, uvR).r, c.g, texture(uTexture, uvB).b, c.a);
+  // dead pixels: sparse 3px blocks burnt to acid or black
+  vec2 cell = floor(uv * uInputSize.xy / 3.0);
+  float d = hash(cell + vec2(t * 7.0, t * 3.0));
+  if (col.a > 0.1) {
+    if (d > 0.992) col.rgb = mix(col.rgb, vec3(0.9, 1.0, 0.0) * col.a, 0.95);
+    else if (d < 0.004) col.rgb *= 0.08;
+  }
+  finalColor = col;
+}
+`;
+
+export interface GlitchFilter extends Filter {
+  setTime(seconds: number): void;
+  setStrength(v: number): void;
+}
+
+/** Engine-artefact glitch for trump cards on the table: RGB split, slice shifts, dead pixels. */
+export function createGlitchFilter(strength = 1, quality: FilterQuality = {}): GlitchFilter {
+  const filter = new Filter({
+    glProgram: GlProgram.from({ vertex: VERTEX, fragment: GLITCH_FRAG, name: 'durag-glitch' }),
+    resources: {
+      glitchUniforms: {
+        uTime: { value: 0, type: 'f32' },
+        uStrength: { value: strength, type: 'f32' },
+      },
+    },
+    padding: Math.ceil(22 * strength) + 4, // room for the displaced slices, so nothing is hard-clipped
+    ...(quality.resolution ? { resolution: quality.resolution } : {}),
+  }) as GlitchFilter;
+  const uniforms = (filter.resources as { glitchUniforms: { uniforms: { uTime: number; uStrength: number } } }).glitchUniforms.uniforms;
+  filter.setTime = (seconds) => {
+    uniforms.uTime = seconds;
+  };
+  filter.setStrength = (v) => {
+    uniforms.uStrength = v;
+  };
+  return filter;
 }

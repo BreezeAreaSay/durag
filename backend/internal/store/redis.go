@@ -238,4 +238,10 @@ func normalize(s *game.GameState) {
 	if s.FinishedOrder == nil {
 		s.FinishedOrder = []string{}
 	}
+	if s.StumpPending == nil {
+		s.StumpPending = []string{}
+	}
+	if s.TurnActors == nil {
+		s.TurnActors = []string{}
+	}
 }

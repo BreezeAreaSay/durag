@@ -196,6 +196,8 @@ def dotenv_text() -> str:
         "ROOM_TTL=24h",
         "TG_INITDATA_MAX_AGE=24h",
         f"BOUT_RESOLVE_DELAY={env('BOUT_RESOLVE_DELAY', '3500ms')}",
+        f"STUMP_AUTO_DELAY={env('STUMP_AUTO_DELAY', '4s')}",
+        f"TURN_TIMEOUT={env('TURN_TIMEOUT', '45s')}",
         f"DOMAIN={domain}",
         f"CERTBOT_EMAIL={email}",
         f"VITE_BOT_USERNAME={env('VITE_BOT_USERNAME')}",

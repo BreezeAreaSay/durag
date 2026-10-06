@@ -1,6 +1,7 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { TableScene, type SceneLabels } from './TableScene';
 import type { SceneModel } from './model';
+import type { Connection } from '../state/GameContext';
 
 interface Props {
   model: SceneModel;
@@ -9,14 +10,18 @@ interface Props {
   /** Height of the HTML panel at the top; the table keeps clear of it. */
   topInset: number;
   labels: SceneLabels;
+  connection: Connection;
   onPlay(cardId: string, targetId?: string): void;
   onTransfer(cardId: string): void;
+  onTakeStump(): void;
 }
 
 /** Mounts the PixiJS table once and streams model updates into it. */
-export function PixiTable({ model, reject, fx, topInset, labels, onPlay, onTransfer }: Props) {
+export function PixiTable({ model, reject, fx, topInset, labels, connection, onPlay, onTransfer, onTakeStump }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<TableScene | null>(null);
+  // bumped when the WebGL context is lost: the scene is torn down and rebuilt
+  const [generation, setGeneration] = useState(0);
   const modelRef = useRef(model);
   modelRef.current = model;
   const fxRef = useRef(fx);
@@ -25,8 +30,8 @@ export function PixiTable({ model, reject, fx, topInset, labels, onPlay, onTrans
   topRef.current = topInset;
   const labelsRef = useRef(labels);
   labelsRef.current = labels;
-  const handlersRef = useRef({ onPlay, onTransfer });
-  handlersRef.current = { onPlay, onTransfer };
+  const handlersRef = useRef({ onPlay, onTransfer, onTakeStump });
+  handlersRef.current = { onPlay, onTransfer, onTakeStump };
 
   useEffect(() => {
     const host = hostRef.current;
@@ -36,6 +41,11 @@ export function PixiTable({ model, reject, fx, topInset, labels, onPlay, onTrans
       {
         onPlay: (id, target) => handlersRef.current.onPlay(id, target),
         onTransfer: (id) => handlersRef.current.onTransfer(id),
+        onTakeStump: () => handlersRef.current.onTakeStump(),
+        onContextLost: () => {
+          console.warn('WebGL context lost: rebuilding the table');
+          setGeneration((g) => g + 1);
+        },
       },
       { fx: fxRef.current, topInset: topRef.current, labels: labelsRef.current },
     );
@@ -56,9 +66,9 @@ export function PixiTable({ model, reject, fx, topInset, labels, onPlay, onTrans
     return () => {
       cancelled = true;
       sceneRef.current = null;
-      scene.destroy();
+      scene.destroy(); // app.destroy(true): frees the WebGL context and textures
     };
-  }, []);
+  }, [generation]);
 
   useEffect(() => {
     sceneRef.current?.update(model);
@@ -76,5 +86,12 @@ export function PixiTable({ model, reject, fx, topInset, labels, onPlay, onTrans
     sceneRef.current?.setTopInset(topInset);
   }, [topInset]);
 
-  return <div ref={hostRef} className="pixi-host" />;
+  // After a reconnect the server state is the only truth: drop optimistic moves.
+  const prevConnection = useRef(connection);
+  useEffect(() => {
+    if (connection === 'open' && prevConnection.current !== 'open') sceneRef.current?.clearPending();
+    prevConnection.current = connection;
+  }, [connection]);
+
+  return <div key={generation} ref={hostRef} className="pixi-host" />;
 }

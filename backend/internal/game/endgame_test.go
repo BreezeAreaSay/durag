@@ -118,8 +118,12 @@ func TestLeaveDuringResolvingClearsPhase(t *testing.T) {
 
 // --- empty hands in the end-game -----------------------------------------
 
-func TestThrowerPicksUpStumpImmediatelyWhenDeckIsEmpty(t *testing.T) {
+func endgameTable(t *testing.T) (*Engine, *GameState, *time.Time) {
+	t.Helper()
 	e, s := newPlaying(t, "A", "B", "C")
+	now := time.Unix(1_700_000_000, 0)
+	e.Now = func() time.Time { return now }
+	e.StumpAutoDelay = 3 * time.Second
 	setRoles(s, "A", "B")
 	setHand(t, s, "A", "H_7", "S_9")
 	setHand(t, s, "B", "H_10", "S_8", "D_4")
@@ -128,27 +132,97 @@ func TestThrowerPicksUpStumpImmediatelyWhenDeckIsEmpty(t *testing.T) {
 	setStump(t, s, "A", "C_2", "C_3")
 	setStump(t, s, "B", "D_2", "D_3")
 	setTrump(t, s, "S_5", true)
+	s.TrumpDrawnBy = "B"
 	s.Deck = []Card{}
-	s.TrumpCard = nil
 	s.DiscardCount = DeckSize - countCards(t, s)
+	return e, s, &now
+}
+
+func TestStumpIsTakenAsSeparateStepAfterTheBout(t *testing.T) {
+	e, s, now := endgameTable(t)
 	_ = e.PlayCard(s, "A", "H_7", "")
 	if err := e.PlayCard(s, "C", "C_7", ""); err != nil {
 		t.Fatal(err)
 	}
 	c := s.Player("C")
-	if len(c.Hand) != 2 || len(c.Stump) != 0 || c.Out {
-		t.Fatalf("C should hold the stump right away: hand %v stump %v out %v", c.Hand, c.Stump, c.Out)
+	if len(c.Hand) != 0 || len(c.Stump) != 2 || s.StumpsPending() {
+		t.Fatalf("nothing happens to the stump during the bout: hand %v stump %v pending %v", c.Hand, c.Stump, s.StumpPending)
 	}
-	// ...and may keep playing with it in the same bout
-	if err := e.PlayCard(s, "C", "D_7", ""); err != nil {
-		t.Fatalf("throw in from the stump: %v", err)
+	// the hand is empty: C cannot take the stump mid-bout
+	wantErr(t, e.TakeStump(s, "C"), ErrNoStump)
+	// B beats both sevens; nobody can throw in -> bout over
+	if err := e.PlayCard(s, "B", "H_10", "H_7"); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.PlayCard(s, "B", "S_8", "C_7"); err != nil {
+		t.Fatal(err)
+	}
+	if !s.TableEmpty() {
+		t.Fatalf("bout should be over, table %v", s.TableOrder)
+	}
+	if len(s.StumpPending) != 1 || s.StumpPending[0] != "C" || s.StumpDeadline != now.Add(3*time.Second).UnixMilli() {
+		t.Fatalf("C must be asked to take the stump: pending %v deadline %d", s.StumpPending, s.StumpDeadline)
+	}
+	if len(c.Hand) != 0 || len(c.Stump) != 2 {
+		t.Fatal("the stump is not taken automatically before the delay")
+	}
+	// roles are assigned but the next bout waits for the stump
+	if s.CurrentTurn != "B" || s.DefenderID != "C" {
+		t.Fatalf("roles %s / %s", s.CurrentTurn, s.DefenderID)
+	}
+	wantErr(t, e.PlayCard(s, "B", "D_4", ""), ErrStumpPending)
+	if s.TurnDeadline != 0 {
+		t.Fatal("no turn timer while stumps are pending")
+	}
+	// A has cards: not allowed to take anything
+	wantErr(t, e.TakeStump(s, "A"), ErrNoStump)
+	if err := e.TakeStump(s, "C"); err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Hand) != 2 || len(c.Stump) != 0 || s.StumpsPending() || s.StumpDeadline != 0 {
+		t.Fatalf("after taking: hand %v stump %v pending %v", c.Hand, c.Stump, s.StumpPending)
+	}
+	if err := e.PlayCard(s, "B", "D_4", ""); err != nil {
+		t.Fatalf("the next bout may start: %v", err)
 	}
 	if n := countCards(t, s); n != DeckSize {
 		t.Fatalf("cards %d", n)
 	}
 }
 
-func TestDefenderPicksUpStumpAndKeepsDefending(t *testing.T) {
+func TestPendingStumpsAreTakenAutomaticallyAfterTheDelay(t *testing.T) {
+	e, s, now := endgameTable(t)
+	_ = e.PlayCard(s, "A", "H_7", "")
+	_ = e.PlayCard(s, "C", "C_7", "")
+	_ = e.PlayCard(s, "B", "H_10", "H_7")
+	_ = e.PlayCard(s, "B", "S_8", "C_7")
+	if !s.StumpsPending() {
+		t.Fatal("expected a pending stump")
+	}
+	if e.StumpsIfDue(s, now.Add(time.Second)) {
+		t.Fatal("too early")
+	}
+	if !e.StumpsIfDue(s, now.Add(4*time.Second)) {
+		t.Fatal("should be taken after the delay")
+	}
+	if len(s.Player("C").Hand) != 2 || s.StumpsPending() {
+		t.Fatalf("auto-take failed: %v", s.Player("C").Hand)
+	}
+}
+
+func TestStumpTakenImmediatelyWithoutDelay(t *testing.T) {
+	e, s, _ := endgameTable(t)
+	e.StumpAutoDelay = 0
+	_ = e.PlayCard(s, "A", "H_7", "")
+	_ = e.PlayCard(s, "C", "C_7", "")
+	_ = e.PlayCard(s, "B", "H_10", "H_7")
+	_ = e.PlayCard(s, "B", "S_8", "C_7")
+	if s.StumpsPending() || len(s.Player("C").Hand) != 2 {
+		t.Fatalf("with no delay the stump goes straight to the hand: pending %v hand %v", s.StumpPending, s.Player("C").Hand)
+	}
+}
+
+func TestDefenderWithoutCardsMustTakeTheTable(t *testing.T) {
 	e, s := newPlaying(t, "A", "B")
 	setRoles(s, "A", "B")
 	setHand(t, s, "A", "H_7", "S_7", "D_9")
@@ -157,7 +231,6 @@ func TestDefenderPicksUpStumpAndKeepsDefending(t *testing.T) {
 	setStump(t, s, "A")
 	setTrump(t, s, "C_5", true)
 	s.Deck = []Card{}
-	s.TrumpCard = nil
 	s.DiscardCount = DeckSize - countCards(t, s)
 	_ = e.PlayCard(s, "A", "H_7", "")
 	_ = e.PlayCard(s, "A", "S_7", "")
@@ -165,24 +238,23 @@ func TestDefenderPicksUpStumpAndKeepsDefending(t *testing.T) {
 		t.Fatal(err)
 	}
 	b := s.Player("B")
-	if len(b.Hand) != 2 || len(b.Stump) != 0 {
-		t.Fatalf("defender should pick up the stump mid-bout: hand %v stump %v", b.Hand, b.Stump)
+	if len(b.Hand) != 0 || len(b.Stump) != 2 {
+		t.Fatalf("the stump stays put mid-bout: hand %v stump %v", b.Hand, b.Stump)
 	}
-	if s.TableEmpty() {
-		t.Fatal("bout continues: S_7 is still undefended")
+	wantErr(t, e.TakeStump(s, "B"), ErrNoStump)
+	// nothing left to beat with: the only option is to take
+	if err := e.TakeCards(s, "B"); err != nil {
+		t.Fatal(err)
 	}
-	if err := e.PlayCard(s, "B", "S_10", "S_7"); err != nil {
-		t.Fatalf("defend with a stump card: %v", err)
+	if !s.TableEmpty() || len(b.Hand) != 3 {
+		t.Fatalf("B took the table: %v", b.Hand)
 	}
-	if !s.TableEmpty() || s.Status != StatusPlaying {
-		t.Fatalf("bout should be over, game continues: table %v status %s", s.TableOrder, s.Status)
-	}
-	if len(b.Hand) != 1 || b.Out {
-		t.Fatalf("B keeps D_2: %v out %v", b.Hand, b.Out)
+	if s.StumpsPending() {
+		t.Fatal("B has cards again, no stump step")
 	}
 }
 
-func TestPlayerWithoutCardsLeavesImmediately(t *testing.T) {
+func TestPlayerWithoutCardsLeavesAtTheEndOfTheBout(t *testing.T) {
 	e, s := newPlaying(t, "A", "B", "C")
 	setRoles(s, "A", "B")
 	setHand(t, s, "A", "H_7")
@@ -193,36 +265,27 @@ func TestPlayerWithoutCardsLeavesImmediately(t *testing.T) {
 	setStump(t, s, "C")
 	setTrump(t, s, "C_5", true) // clubs are trumps: S_8 cannot beat D_10
 	s.Deck = []Card{}
-	s.TrumpCard = nil
 	s.DiscardCount = DeckSize - countCards(t, s)
 	if err := e.PlayCard(s, "A", "H_7", ""); err != nil {
 		t.Fatal(err)
 	}
-	a := s.Player("A")
-	if !a.Out || len(s.FinishedOrder) != 1 || s.FinishedOrder[0] != "A" {
-		t.Fatalf("A must be out the moment the last card leaves the hand: %+v", a)
+	if s.Player("A").Out {
+		t.Fatal("players leave at the end of the bout, not mid-bout")
 	}
-	if s.Status != StatusPlaying || s.TableEmpty() {
-		t.Fatal("the bout goes on without A: B still has to answer")
-	}
-	// B beats; C may throw in a 10; nobody holds a 7 -> bito
 	if err := e.PlayCard(s, "B", "H_10", "H_7"); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.PlayCard(s, "C", "D_10", ""); err != nil {
 		t.Fatalf("C throws in: %v", err)
 	}
-	if err := e.PlayCard(s, "B", "S_8", "D_10"); err != ErrCannotBeat {
-		t.Fatalf("expected cannot beat, got %v", err)
-	}
 	if err := e.TakeCards(s, "B"); err != nil {
 		t.Fatal(err)
 	}
-	if !s.TableEmpty() || s.Status != StatusPlaying {
-		t.Fatalf("B took, game continues between B and C: %v %s", s.TableOrder, s.Status)
+	if !s.Player("A").Out || len(s.FinishedOrder) != 1 || s.FinishedOrder[0] != "A" {
+		t.Fatalf("A is out once the bout ended: %+v", s.Player("A"))
 	}
-	if s.CurrentTurn != "C" || s.DefenderID != "B" {
-		t.Fatalf("roles %s / %s", s.CurrentTurn, s.DefenderID)
+	if s.Status != StatusPlaying || s.CurrentTurn != "C" || s.DefenderID != "B" {
+		t.Fatalf("game continues between B and C: %s %s/%s", s.Status, s.CurrentTurn, s.DefenderID)
 	}
 	if n := countCards(t, s); n != DeckSize {
 		t.Fatalf("cards %d", n)
@@ -240,18 +303,104 @@ func TestLastCardDrawIsStillPossible(t *testing.T) {
 	setStump(t, s, "B")
 	setTrump(t, s, "S_5", true)
 	s.Deck = []Card{}
-	s.TrumpCard = nil
 	s.DiscardCount = DeckSize - 2
 	_ = e.PlayCard(s, "A", "H_7", "")
-	if !s.Player("A").Out {
-		t.Fatal("A is out immediately")
-	}
 	if s.Status != StatusPlaying {
 		t.Fatal("the game must wait for B's answer")
 	}
 	_ = e.PlayCard(s, "B", "H_10", "H_7")
 	if s.Status != StatusFinished || s.LoserID != "" {
 		t.Fatalf("expected a draw, got status %s loser %q", s.Status, s.LoserID)
+	}
+}
+
+func TestTurnTimerPlaysDefaultMoves(t *testing.T) {
+	e, s := newPlaying(t, "A", "B")
+	now := time.Unix(1_700_000_000, 0)
+	e.Now = func() time.Time { return now }
+	e.TurnTimeout = 30 * time.Second
+	setRoles(s, "A", "B")
+	setHand(t, s, "A", "H_7", "S_9", "D_9", "C_11", "H_2", "C_3")
+	setHand(t, s, "B", "H_10", "S_8", "D_4", "C_5", "H_6", "D_12")
+	setTrump(t, s, "S_5", false)
+	rebuildDeck(t, s)
+	e.armTurn(s)
+	if len(s.TurnActors) != 1 || s.TurnActors[0] != "A" || s.TurnDeadline != now.Add(30*time.Second).UnixMilli() || s.TurnTimeoutMs != 30000 {
+		t.Fatalf("attacker must be on the clock: %v %d", s.TurnActors, s.TurnDeadline)
+	}
+	if e.ExpireTurn(s, now.Add(10*time.Second)) {
+		t.Fatal("not expired yet")
+	}
+	// attacker idles: the lowest card (2♥) is led for them
+	now = now.Add(31 * time.Second)
+	if !e.ExpireTurn(s, now) {
+		t.Fatal("timer should fire")
+	}
+	if len(s.TableOrder) != 1 || s.TableOrder[0] != "H_2" {
+		t.Fatalf("auto attack with the lowest card expected, table %v", s.TableOrder)
+	}
+	if len(s.TurnActors) != 1 || s.TurnActors[0] != "B" {
+		t.Fatalf("defender must be on the clock now: %v", s.TurnActors)
+	}
+	// defender idles: takes
+	now = now.Add(31 * time.Second)
+	if !e.ExpireTurn(s, now) {
+		t.Fatal("timer should fire for the defender")
+	}
+	if !s.DefenderTaking && !s.TableEmpty() {
+		t.Fatalf("auto take expected: taking=%v table=%v", s.DefenderTaking, s.TableOrder)
+	}
+	// nobody holds a matching card, so the bout resolved immediately (no delay in this engine)
+	if !s.TableEmpty() {
+		t.Fatalf("bout should have ended, table %v", s.TableOrder)
+	}
+	if len(s.Player("B").Hand) != 7 {
+		t.Fatalf("B took the 2♥: %d cards", len(s.Player("B").Hand))
+	}
+	if len(s.TurnActors) != 1 || s.TurnActors[0] != "A" {
+		t.Fatalf("A attacks again after the take: %v", s.TurnActors)
+	}
+	found := 0
+	for _, entry := range s.Log {
+		if entry.Type == "timeout" {
+			found++
+		}
+	}
+	if found != 2 {
+		t.Fatalf("expected two timeout log entries, got %d", found)
+	}
+}
+
+func TestTurnTimerPassesIdleThrowers(t *testing.T) {
+	e, s := newPlaying(t, "A", "B", "C")
+	now := time.Unix(1_700_000_000, 0)
+	e.Now = func() time.Time { return now }
+	e.TurnTimeout = 20 * time.Second
+	setRoles(s, "A", "B")
+	setHand(t, s, "A", "H_7", "S_7", "D_9", "C_11", "H_2", "C_3")
+	setHand(t, s, "B", "H_10", "S_8", "D_4", "C_5", "H_6", "D_12")
+	setHand(t, s, "C", "C_7", "D_10", "S_14", "H_9", "C_2", "D_2")
+	setTrump(t, s, "C_6", false)
+	rebuildDeck(t, s)
+	_ = e.PlayCard(s, "A", "H_7", "")
+	_ = e.PlayCard(s, "B", "H_10", "H_7")
+	// all defended; A (7♠) and C (7♣, 10♦) could still throw in
+	if len(s.TurnActors) != 2 {
+		t.Fatalf("both potential throwers on the clock: %v", s.TurnActors)
+	}
+	now = now.Add(21 * time.Second)
+	if !e.ExpireTurn(s, now) {
+		t.Fatal("timer should fire")
+	}
+	if !s.TableEmpty() || s.DiscardCount != 2 {
+		t.Fatalf("idle throwers pass and the bout ends: table %v discard %d", s.TableOrder, s.DiscardCount)
+	}
+}
+
+func TestNoTurnTimerWhenDisabled(t *testing.T) {
+	_, s := newPlaying(t, "A", "B")
+	if s.TurnDeadline != 0 || len(s.TurnActors) != 0 {
+		t.Fatalf("timer disabled by default: %d %v", s.TurnDeadline, s.TurnActors)
 	}
 }
 
@@ -313,6 +462,7 @@ func TestRandomPlayoutsWithResolvingPhase(t *testing.T) {
 		rng := NewRand(seed, seed+1)
 		e := NewEngine(rng)
 		e.ResolveDelay = time.Second
+		e.StumpAutoDelay = 3 * time.Second
 		clock := time.Unix(1_700_000_000, 0)
 		e.Now = func() time.Time { return clock }
 		s := NewGameState("r")
@@ -337,6 +487,25 @@ func TestRandomPlayoutsWithResolvingPhase(t *testing.T) {
 				clock = clock.Add(2 * time.Second)
 				if !e.ResolveIfDue(s, clock) {
 					t.Fatalf("seed %d: not resolved after the deadline", seed)
+				}
+				continue
+			}
+			if s.StumpsPending() {
+				if len(legalMoves(s)) != 0 {
+					t.Fatalf("seed %d: moves allowed while stumps are pending", seed)
+				}
+				// half of the time the players take their stumps themselves
+				if seed%2 == 0 {
+					for _, id := range append([]string{}, s.StumpPending...) {
+						if err := e.TakeStump(s, id); err != nil {
+							t.Fatalf("seed %d: take stump %s: %v", seed, id, err)
+						}
+					}
+				} else {
+					clock = clock.Add(5 * time.Second)
+					if !e.StumpsIfDue(s, clock) {
+						t.Fatalf("seed %d: stumps not taken after the deadline", seed)
+					}
 				}
 				continue
 			}

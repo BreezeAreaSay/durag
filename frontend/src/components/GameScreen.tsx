@@ -16,7 +16,7 @@ interface Props {
 }
 
 export function GameScreen({ state }: Props) {
-  const { selfId, playCard, transfer, lastError, reactions, react } = useGame();
+  const { selfId, playCard, transfer, takeStump, lastError, reactions, react, connection } = useGame();
   const [fx, setFx] = useState(getFxSetting);
   const [panelOpen, setPanelOpen] = useState(false);
   const [hudTop, setHudTop] = useState(150);
@@ -45,7 +45,7 @@ export function GameScreen({ state }: Props) {
   const metrics = useMemo(() => computeMetrics(size.w, size.h, hudTop), [size, hudTop]);
   const model = useMemo(() => (selfId ? toSceneModel(state, selfId) : null), [state, selfId]);
   const reject = useMemo(() => (lastError?.cardId ? { cardId: lastError.cardId, nonce: lastError.nonce } : null), [lastError]);
-  const labels = useMemo(() => ({ trump: t('game.trump') }), []);
+  const labels = useMemo(() => ({ trump: t('game.trump'), stump: t('game.stump').toUpperCase() }), []);
 
   useEffect(() => {
     closingConfirmation(state.status === 'playing');
@@ -71,6 +71,11 @@ export function GameScreen({ state }: Props) {
           fx={fx}
           topInset={hudTop}
           labels={labels}
+          connection={connection}
+          onTakeStump={() => {
+            haptic('medium');
+            takeStump();
+          }}
           onPlay={(cardId, targetId) => {
             haptic('light');
             playCard(cardId, targetId);

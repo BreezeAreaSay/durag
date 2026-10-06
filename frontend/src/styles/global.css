@@ -30,13 +30,18 @@
 }
 
 :root {
-  --paper: #f2f0ea;
-  --ink: #111111;
+  /* v10 "Indie Punk & Glitch": dark worn paper, acid tape, toxic magenta */
+  --bg: #161513;
+  --paper: #ece9e1;
+  --ink: #0d0d0d;
   --acid: #e6ff00;
-  --red: #ff2a1a;
-  --grey: #8a8780;
+  --red: #cf1fff; /* the "red" suits are toxic magenta now */
+  --toxic: #cf1fff;
+  --grey: #8a877f;
+  --text: #ece9e1;
   --shadow: 6px 6px 0 var(--ink);
   --shadow-small: 3px 3px 0 var(--ink);
+  --tape-shadow: 5px 5px 0 rgba(0, 0, 0, 0.75);
   --display: 'Unbounded', 'Arial Black', Impact, sans-serif;
   --mono: ui-monospace, 'SF Mono', Menlo, Consolas, 'Courier New', monospace;
   --safe-top: env(safe-area-inset-top, 0px);
@@ -55,8 +60,8 @@ body,
 }
 
 body {
-  background: var(--paper);
-  color: var(--ink);
+  background: var(--bg);
+  color: var(--text);
   font-family: var(--mono);
   font-size: 14px;
   line-height: 1.35;
@@ -68,16 +73,27 @@ body {
   -webkit-user-select: none;
 }
 
-/* Procedural digital noise: weightless SVG turbulence, multiplied over the paper. */
+/* Deep grain + worn-paper fibres: two layers of procedural SVG turbulence. */
 body::before {
   content: '';
   position: fixed;
   inset: 0;
   z-index: 0;
   pointer-events: none;
-  opacity: 0.55;
-  mix-blend-mode: multiply;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.2 0 0 0 0 0.2 0 0 0 0 0.2 0 0 0 0.35 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  opacity: 0.6;
+  mix-blend-mode: screen;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.95' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.75 0 0 0 0 0.73 0 0 0 0 0.68 0 0 0 0.22 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.35;
+  mix-blend-mode: soft-light;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='600' height='600'%3E%3Cfilter id='f'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.012 0.35' numOctaves='2' seed='7' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.9 0 0 0 0 0.88 0 0 0 0 0.8 0 0 0 0.5 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23f)'/%3E%3C/svg%3E"),
+    radial-gradient(ellipse at 50% 40%, transparent 55%, rgba(0, 0, 0, 0.55) 100%);
 }
 
 #root {
@@ -95,7 +111,8 @@ body::before {
   letter-spacing: -0.05em;
   margin: 0;
   text-transform: uppercase;
-  text-shadow: 6px 6px 0 var(--acid), 9px 9px 0 var(--ink);
+  color: var(--paper);
+  text-shadow: 5px 5px 0 var(--toxic), 9px 9px 0 var(--acid);
 }
 .zine-title--code {
   font-size: clamp(40px, 16vw, 84px);
@@ -108,8 +125,8 @@ body::before {
 
 .tape {
   display: inline-block;
-  background: var(--ink);
-  color: var(--paper);
+  background: var(--acid);
+  color: var(--ink);
   font-family: var(--display);
   font-weight: 700;
   font-size: 12px;
@@ -162,7 +179,18 @@ body::before {
   padding: 16px 26px;
 }
 .btn--paper {
-  background: #fff;
+  background: var(--paper);
+}
+.btn--pulse {
+  animation: pulse-tape 900ms steps(2) infinite alternate;
+}
+@keyframes pulse-tape {
+  from {
+    transform: rotate(-1deg) scale(1);
+  }
+  to {
+    transform: rotate(1deg) scale(1.04);
+  }
 }
 .btn--ink {
   background: var(--ink);
@@ -186,6 +214,7 @@ body::before {
   font-size: 11px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+  color: var(--text);
 }
 .field__hint {
   color: var(--grey);
@@ -197,8 +226,9 @@ body::before {
   padding: 12px 14px;
   border: 3px solid var(--ink);
   border-radius: 0;
-  background: #fff;
-  box-shadow: var(--shadow-small);
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: var(--tape-shadow);
   outline: none;
   width: 100%;
 }
@@ -245,10 +275,11 @@ body::before {
 }
 .sticker-text {
   display: inline-block;
-  background: #fff;
+  background: var(--paper);
+  color: var(--ink);
   border: 3px solid var(--ink);
   padding: 6px 12px;
-  box-shadow: var(--shadow-small);
+  box-shadow: var(--tape-shadow);
   transform: rotate(1.5deg);
   font-family: var(--display);
   font-weight: 700;
@@ -270,6 +301,7 @@ body::before {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   margin: 0 0 10px;
+  color: var(--text);
 }
 .players__list {
   list-style: none;
@@ -284,10 +316,11 @@ body::before {
   grid-template-columns: 52px 1fr auto;
   align-items: center;
   gap: 12px;
-  background: #fff;
+  background: var(--paper);
+  color: var(--ink);
   border: 3px solid var(--ink);
   padding: 8px 12px;
-  box-shadow: var(--shadow-small);
+  box-shadow: var(--tape-shadow);
 }
 .players__item--ready {
   background: var(--acid);
@@ -401,16 +434,17 @@ body::before {
   font-size: 10px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  background: #fff;
+  background: var(--paper);
   border: 2px solid var(--ink);
   padding: 4px 7px;
-  box-shadow: 2px 2px 0 var(--ink);
+  box-shadow: var(--tape-shadow);
   color: var(--ink);
   cursor: default;
 }
 .chip--ink {
   background: var(--ink);
   color: var(--paper);
+  border-color: var(--paper);
 }
 .chip--acid {
   background: var(--acid);
@@ -419,6 +453,8 @@ body::before {
   background: transparent;
   box-shadow: none;
   border-style: dashed;
+  border-color: var(--grey);
+  color: var(--text);
 }
 .chip--link {
   margin-left: auto;
@@ -457,11 +493,13 @@ body::before {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--text);
 }
 .opponent__cards {
   font-family: var(--display);
   font-weight: 800;
   font-size: 14px;
+  color: var(--text);
 }
 .opponent__cards small {
   color: var(--grey);
@@ -479,7 +517,7 @@ body::before {
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--grey);
-  background: #fff;
+  background: rgba(13, 13, 13, 0.7);
   border: 2px solid var(--grey);
   padding: 2px 6px;
   width: max-content;
@@ -492,9 +530,10 @@ body::before {
 .roletag--me {
   font-size: 13px;
   padding: 5px 10px;
-  box-shadow: 3px 3px 0 var(--ink);
+  box-shadow: var(--tape-shadow);
   border-color: var(--ink);
   color: var(--ink);
+  background: var(--paper);
   transform: rotate(-2deg);
 }
 .chip--toggle {
@@ -502,6 +541,7 @@ body::before {
   font-family: var(--display);
 }
 
+/* status plates: strips of acid tape stuck on crooked, with torn ends */
 .status {
   pointer-events: none;
   margin: 2px 0 0;
@@ -509,20 +549,22 @@ body::before {
   font-weight: 800;
   font-size: 12px;
   letter-spacing: 0.04em;
-  background: #fff;
-  border: 2px solid var(--ink);
-  padding: 5px 8px;
+  color: var(--ink);
+  background: var(--paper);
+  padding: 7px 14px;
   width: max-content;
   max-width: 100%;
-  box-shadow: 3px 3px 0 var(--ink);
-  transform: rotate(-0.8deg);
+  filter: drop-shadow(3px 3px 0 rgba(0, 0, 0, 0.8));
+  clip-path: polygon(0 8%, 2% 0, 97% 2%, 100% 12%, 99% 55%, 100% 90%, 97% 100%, 3% 98%, 0 85%, 1% 40%);
+  transform: rotate(-1.2deg);
 }
 .status--hot {
   background: var(--acid);
+  transform: rotate(0.9deg);
 }
 .status--warn {
-  background: var(--red);
-  color: #fff;
+  background: var(--toxic);
+  color: var(--paper);
 }
 
 .hud-bottom {
@@ -678,13 +720,13 @@ body::before {
   font-weight: 900;
 }
 .chip__suit--red {
-  color: var(--red);
+  color: var(--toxic);
 }
 .me__meta {
-  background: #fff;
-  border: 2px solid var(--ink);
+  background: rgba(13, 13, 13, 0.7);
+  border: 1px dashed rgba(236, 233, 225, 0.5);
   padding: 2px 6px;
-  color: var(--ink);
+  color: var(--text);
 }
 
 /* --- bout result stamp + last move ------------------------------------------ */
@@ -736,12 +778,12 @@ body::before {
   margin: 0;
   font-family: var(--mono);
   font-size: 12px;
-  background: #fff;
-  border: 2px solid var(--ink);
+  color: var(--paper);
+  background: rgba(13, 13, 13, 0.85);
+  border: 1px dashed rgba(236, 233, 225, 0.5);
   padding: 4px 8px;
   width: max-content;
   max-width: 100%;
-  box-shadow: 2px 2px 0 var(--ink);
   transform: rotate(0.6deg);
 }
 
@@ -786,10 +828,11 @@ body::before {
   align-items: center;
   justify-content: center;
   padding: 20px;
-  background: rgba(242, 240, 234, 0.72);
+  background: rgba(22, 21, 19, 0.78);
 }
 .overlay__card {
-  background: #fff;
+  background: var(--paper);
+  color: var(--ink);
   border: 4px solid var(--ink);
   padding: 28px 22px;
   box-shadow: 10px 10px 0 var(--ink);
@@ -804,4 +847,25 @@ body::before {
     left: 16px;
     right: 16px;
   }
+}
+
+/* --- turn timer ring around a sticker -------------------------------------- */
+.avatar-btn {
+  position: relative;
+}
+.timer-ring {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  color: var(--acid);
+  pointer-events: none;
+  overflow: visible;
+  filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.9));
+}
+.timer-ring__arc {
+  transition: stroke-dasharray 120ms steps(2);
+}
+.timer-ring__arc--hot {
+  stroke: var(--toxic);
 }

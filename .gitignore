@@ -29,3 +29,7 @@ deploy/nginx/ssl/
 
 # e2e screenshots
 frontend/e2e/*.png
+
+# Python bytecode (deploy/remote.py)
+__pycache__/
+*.pyc

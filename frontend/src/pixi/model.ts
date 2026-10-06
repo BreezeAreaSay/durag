@@ -20,6 +20,12 @@ export interface SceneModel {
   resolveOutcome: Outcome;
   /** Outcome of the most recent finished bout, from the log. */
   lastOutcome: Outcome;
+  /** viewer's own stump size (cards are hidden, only the count is known) */
+  stumpCount: number;
+  /** the game waits for stumps to be taken (separate step between bouts) */
+  stumpStep: boolean;
+  /** the viewer is one of the players who must take their stump now */
+  mustTakeStump: boolean;
   version: number;
 }
 
@@ -45,11 +51,14 @@ export function toSceneModel(state: GameState, selfId: string): SceneModel {
     discardCount: state.discard_count,
     role,
     defenderTaking: state.defender_taking,
-    interactive: state.status === 'playing' && role !== 'spectator' && state.phase !== 'resolving',
+    interactive: state.status === 'playing' && role !== 'spectator' && state.phase !== 'resolving' && state.stump_pending.length === 0,
     lastEvent: state.log[state.log.length - 1]?.type ?? '',
     resolving: state.phase === 'resolving',
     resolveOutcome: state.resolve_outcome,
     lastOutcome: lastOutcomeOf(state),
+    stumpCount: me?.stump_count ?? 0,
+    stumpStep: state.stump_pending.length > 0,
+    mustTakeStump: state.stump_pending.includes(selfId),
     version: state.version,
   };
 }

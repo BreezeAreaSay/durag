@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { Button } from './Button';
 import { Sticker } from './Sticker';
+import { TimerRing } from './TimerRing';
 import { useGame, type Reaction } from '../state/GameContext';
 import { t, type Key } from '../i18n';
 import { SUIT_SYMBOL } from '../util/cards';
@@ -20,14 +21,15 @@ interface Props {
   onTopHeight(height: number): void;
 }
 
-type RoleKey = 'attack' | 'throw' | 'defend' | 'take' | 'pass' | 'wait' | 'out' | 'offline';
-const HOT_ROLES: RoleKey[] = ['attack', 'defend', 'take', 'throw'];
+type RoleKey = 'attack' | 'throw' | 'defend' | 'take' | 'pass' | 'wait' | 'out' | 'offline' | 'stump';
+const HOT_ROLES: RoleKey[] = ['attack', 'defend', 'take', 'throw', 'stump'];
 
 /** What a player is doing right now, for the tag next to their avatar. */
 function roleKey(state: GameState, p: Player): RoleKey {
   if (p.out) return 'out';
   if (!p.connected) return 'offline';
   if (state.status !== 'playing') return 'wait';
+  if (state.stump_pending.includes(p.id)) return 'stump';
   const tableEmpty = state.table_order.length === 0;
   if (p.id === state.defender_id) return state.defender_taking ? 'take' : 'defend';
   if (p.id === state.current_turn_player_id) return p.passed && !tableEmpty ? 'pass' : 'attack';
@@ -48,6 +50,11 @@ function statusLine(state: GameState, selfId: string): string {
   if (state.phase === 'resolving') {
     return state.resolve_outcome === 'took' ? t('game.takesStamp', { name: defender?.name ?? '?' }) : t('game.resolvingBito');
   }
+  if (state.stump_pending.length > 0) {
+    if (state.stump_pending.includes(selfId)) return t('game.takeStumpHint');
+    const names = state.stump_pending.map((id) => state.players.find((p) => p.id === id)?.name ?? '?').join(', ');
+    return t('game.stumpWait', { names });
+  }
   if (me?.out) return t('game.youOut');
   switch (role) {
     case 'attacker':
@@ -67,7 +74,7 @@ function statusLine(state: GameState, selfId: string): string {
 }
 
 export function Hud({ state, fx, onToggleFx, handTop, reactions, onAvatarClick, onTopHeight }: Props) {
-  const { selfId, take, pass, leave, connection } = useGame();
+  const { selfId, take, pass, takeStump, leave, connection } = useGame();
   const topRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
@@ -84,8 +91,11 @@ export function Hud({ state, fx, onToggleFx, handTop, reactions, onAvatarClick, 
   const role = selfId ? roleOf(state, selfId) : 'spectator';
   const tableEmpty = state.table_order.length === 0;
   const resolving = state.phase === 'resolving';
-  const canTake = role === 'defender' && !tableEmpty && !state.defender_taking && !resolving;
-  const canPass = (role === 'attacker' || role === 'thrower') && !tableEmpty && !me?.passed && (me?.hand_count ?? 0) > 0 && !resolving;
+  const stumpStep = state.stump_pending.length > 0;
+  const mustTakeStump = selfId !== null && state.stump_pending.includes(selfId);
+  const canTake = role === 'defender' && !tableEmpty && !state.defender_taking && !resolving && !stumpStep;
+  const canPass = (role === 'attacker' || role === 'thrower') && !tableEmpty && !me?.passed && (me?.hand_count ?? 0) > 0 && !resolving && !stumpStep;
+  const timerFor = (id: string) => (state.turn_deadline > 0 && state.turn_actors.includes(id) ? state.turn_deadline : 0);
   const last = lastMove(state);
   const trumpKnown = state.trump_revealed && state.trump_suit !== '';
   const trumpRed = state.trump_suit === 'Hearts' || state.trump_suit === 'Diamonds';
@@ -122,6 +132,7 @@ export function Hud({ state, fx, onToggleFx, handTop, reactions, onAvatarClick, 
               <li key={p.id} className={`opponent ${p.out ? 'opponent--out' : ''}`}>
                 <button type="button" className="avatar-btn" onClick={() => onAvatarClick(p.id)} aria-label={p.name}>
                   <Sticker name={p.name} avatarUrl={p.avatar_url} seed={p.id} size={40} muted={!p.connected || p.out} />
+                  {timerFor(p.id) ? <TimerRing deadline={timerFor(p.id)} timeoutMs={state.turn_timeout_ms} size={64} /> : null}
                 </button>
                 {reaction ? (
                   <span className="reaction" key={reaction.nonce}>
@@ -150,6 +161,11 @@ export function Hud({ state, fx, onToggleFx, handTop, reactions, onAvatarClick, 
           {connection !== 'open' ? <p className="status status--warn">{t('conn.reconnecting')}</p> : null}
         </div>
         <div className="actionband__buttons">
+          {mustTakeStump ? (
+            <Button big onClick={takeStump} className="btn--pulse">
+              {t('game.takeStump')}
+            </Button>
+          ) : null}
           {canTake ? (
             <Button big onClick={take}>
               {t('game.take')}
@@ -168,6 +184,7 @@ export function Hud({ state, fx, onToggleFx, handTop, reactions, onAvatarClick, 
           <div className="me">
             <button type="button" className="avatar-btn" onClick={() => onAvatarClick(me.id)} aria-label={me.name}>
               <Sticker name={me.name} avatarUrl={me.avatar_url} seed={me.id} size={34} />
+              {timerFor(me.id) ? <TimerRing deadline={timerFor(me.id)} timeoutMs={state.turn_timeout_ms} size={58} /> : null}
             </button>
             {reactions[me.id] ? (
               <span className="reaction reaction--me" key={reactions[me.id]!.nonce}>

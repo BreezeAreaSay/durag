@@ -17,6 +17,16 @@ type Engine struct {
 	// calling ResolveBout / ResolveIfDue once the delay has passed.
 	ResolveDelay time.Duration
 
+	// StumpAutoDelay is how long the game waits for a player to take their
+	// stump (TAKE_STUMP) after a bout before doing it for them. 0 takes the
+	// stump immediately at the end of the bout.
+	StumpAutoDelay time.Duration
+
+	// TurnTimeout is the turn timer: when the players who have to act stay
+	// idle for this long, the server plays the default move for them
+	// (lowest card / take / pass). 0 disables the timer.
+	TurnTimeout time.Duration
+
 	// Now returns the current time (overridable in tests).
 	Now func() time.Time
 }
@@ -141,6 +151,17 @@ func (e *Engine) Leave(s *GameState, id string) error {
 		}
 		s.DefenderID = s.NextActive(s.CurrentTurn)
 	}
+	kept := []string{}
+	for _, pid := range s.StumpPending {
+		if pid != id {
+			kept = append(kept, pid)
+		}
+	}
+	s.StumpPending = kept
+	if !s.StumpsPending() {
+		s.StumpDeadline = 0
+	}
+	e.armTurn(s)
 	s.touch()
 	return nil
 }
@@ -271,12 +292,15 @@ func (e *Engine) Start(s *GameState) error {
 	s.BoutNumber = 1
 	s.Status = StatusPlaying
 
+	s.StumpPending = []string{}
+	s.StumpDeadline = 0
 	s.CurrentTurn = e.firstAttacker(s)
 	s.DefenderID = s.NextActive(s.CurrentTurn)
 	s.addLog(LogEntry{Type: "start", PlayerID: s.CurrentTurn})
 	for _, i := range grown {
 		s.addLog(LogEntry{Type: "stump_grow", PlayerID: s.Players[i].ID, Text: fmt.Sprint(len(s.Players[i].Stump))})
 	}
+	e.armTurn(s)
 	s.touch()
 	return nil
 }
@@ -316,8 +340,8 @@ func (e *Engine) PlayCard(s *GameState, playerID, cardID, targetID string) error
 		s.addLog(LogEntry{Type: kind, PlayerID: playerID, CardID: cardID})
 	}
 	s.resetPasses()
-	s.settleHands()
 	e.checkBoutEnd(s)
+	e.armTurn(s)
 	s.touch()
 	return nil
 }
@@ -340,8 +364,8 @@ func (e *Engine) TransferTurn(s *GameState, playerID, cardID string) error {
 	s.TransferCount++
 	s.resetPasses()
 	s.addLog(LogEntry{Type: "transfer", PlayerID: playerID, CardID: cardID, TargetID: s.DefenderID})
-	s.settleHands()
 	e.checkBoutEnd(s)
+	e.armTurn(s)
 	s.touch()
 	return nil
 }
@@ -356,6 +380,7 @@ func (e *Engine) TakeCards(s *GameState, playerID string) error {
 	s.resetPasses()
 	s.addLog(LogEntry{Type: "take", PlayerID: playerID})
 	e.checkBoutEnd(s)
+	e.armTurn(s)
 	s.touch()
 	return nil
 }
@@ -368,8 +393,157 @@ func (e *Engine) Pass(s *GameState, playerID string) error {
 	s.Player(playerID).Passed = true
 	s.addLog(LogEntry{Type: "pass", PlayerID: playerID})
 	e.checkBoutEnd(s)
+	e.armTurn(s)
 	s.touch()
 	return nil
+}
+
+// TakeStump handles TAKE_STUMP: between bouts a player whose hand ran dry
+// picks up their hidden stump. The next bout starts once every pending
+// stump is taken (or the server takes them after StumpAutoDelay).
+func (e *Engine) TakeStump(s *GameState, playerID string) error {
+	if err := s.ValidateTakeStump(playerID); err != nil {
+		return err
+	}
+	e.takeStump(s, playerID)
+	s.touch()
+	return nil
+}
+
+func (e *Engine) takeStump(s *GameState, playerID string) {
+	p := s.Player(playerID)
+	p.Hand = append(p.Hand, p.Stump...)
+	p.Stump = []Card{}
+	kept := []string{}
+	for _, id := range s.StumpPending {
+		if id != playerID {
+			kept = append(kept, id)
+		}
+	}
+	s.StumpPending = kept
+	s.addLog(LogEntry{Type: "stump", PlayerID: playerID})
+	if !s.StumpsPending() {
+		s.StumpDeadline = 0
+		e.armTurn(s)
+	}
+}
+
+// StumpsIfDue takes every pending stump once the deadline has passed.
+func (e *Engine) StumpsIfDue(s *GameState, now time.Time) bool {
+	if s.Status != StatusPlaying || !s.StumpsPending() || s.StumpDeadline == 0 || now.UnixMilli() < s.StumpDeadline {
+		return false
+	}
+	for _, id := range append([]string{}, s.StumpPending...) {
+		if p := s.Player(id); p != nil && len(p.Stump) > 0 {
+			e.takeStump(s, id)
+		}
+	}
+	s.StumpPending = []string{}
+	s.StumpDeadline = 0
+	e.armTurn(s)
+	s.touch()
+	return true
+}
+
+// --- turn timer -----------------------------------------------------------------
+
+// turnActors lists the players who have to do something right now.
+func (s *GameState) turnActors() []string {
+	if s.Status != StatusPlaying || s.Phase == PhaseResolving || s.StumpsPending() {
+		return nil
+	}
+	if s.TableEmpty() {
+		if a := s.Attacker(); a != nil && !a.Out {
+			return []string{a.ID}
+		}
+		return nil
+	}
+	if !s.DefenderTaking && !s.AllDefended() {
+		return []string{s.DefenderID}
+	}
+	var actors []string
+	for i := range s.Players {
+		p := &s.Players[i]
+		if p.Out || p.ID == s.DefenderID || p.Passed || len(p.Hand) == 0 {
+			continue
+		}
+		if AutoPassWhenNoLegalThrowIn && !s.CanThrowIn(p) {
+			continue
+		}
+		actors = append(actors, p.ID)
+	}
+	return actors
+}
+
+// armTurn (re)starts the turn timer for the current actors.
+func (e *Engine) armTurn(s *GameState) {
+	actors := s.turnActors()
+	s.TurnTimeoutMs = e.TurnTimeout.Milliseconds()
+	if e.TurnTimeout <= 0 || len(actors) == 0 {
+		s.TurnDeadline = 0
+		s.TurnActors = []string{}
+		return
+	}
+	s.TurnActors = actors
+	s.TurnDeadline = e.now().Add(e.TurnTimeout).UnixMilli()
+}
+
+// ExpireTurn performs the default move for idle players once the turn
+// timer ran out: the attacker leads with the lowest card, the defender takes,
+// throwers pass. It reports whether anything happened.
+func (e *Engine) ExpireTurn(s *GameState, now time.Time) bool {
+	if s.Status != StatusPlaying || s.TurnDeadline == 0 || now.UnixMilli() < s.TurnDeadline {
+		return false
+	}
+	actors := s.turnActors()
+	if len(actors) == 0 {
+		s.TurnDeadline = 0
+		s.TurnActors = []string{}
+		s.touch()
+		return true
+	}
+	acted := false
+	switch {
+	case s.TableEmpty():
+		a := s.Attacker()
+		if a != nil && len(a.Hand) > 0 {
+			card := lowestCard(a.Hand)
+			if err := e.PlayCard(s, a.ID, card.ID, ""); err == nil {
+				s.addLog(LogEntry{Type: "timeout", PlayerID: a.ID, CardID: card.ID, Text: "auto_attack"})
+				acted = true
+			}
+		}
+	case !s.DefenderTaking && !s.AllDefended():
+		if err := e.TakeCards(s, s.DefenderID); err == nil {
+			s.addLog(LogEntry{Type: "timeout", PlayerID: s.DefenderID, Text: "auto_take"})
+			acted = true
+		}
+	default:
+		for _, id := range actors {
+			if err := e.Pass(s, id); err == nil {
+				s.addLog(LogEntry{Type: "timeout", PlayerID: id, Text: "auto_pass"})
+				acted = true
+			}
+		}
+	}
+	if !acted {
+		// nothing sensible to do: drop the timer instead of looping
+		s.TurnDeadline = 0
+		s.TurnActors = []string{}
+	}
+	s.touch()
+	return true
+}
+
+// lowestCard picks the weakest card to lead with (lowest rank, specials last).
+func lowestCard(hand []Card) Card {
+	best := hand[0]
+	for _, c := range hand[1:] {
+		if c.Rank < best.Rank || (c.Rank == best.Rank && c.ID < best.ID) {
+			best = c
+		}
+	}
+	return best
 }
 
 // --- bout lifecycle --------------------------------------------------------
@@ -433,6 +607,8 @@ func (e *Engine) finishBout(s *GameState, took bool) {
 	s.ResolveOutcome = outcome
 	s.ResolveAt = e.now().Add(e.ResolveDelay).UnixMilli()
 	s.resetPasses()
+	s.TurnDeadline = 0
+	s.TurnActors = []string{}
 	s.addLog(LogEntry{Type: "bout_end", PlayerID: s.DefenderID, Text: outcome})
 }
 
@@ -446,6 +622,7 @@ func (e *Engine) ResolveBout(s *GameState) error {
 	s.ResolveAt = 0
 	s.ResolveOutcome = ""
 	e.endBout(s, took)
+	e.armTurn(s)
 	s.touch()
 	return nil
 }
@@ -481,35 +658,6 @@ func (s *GameState) clearTable() {
 	s.resetPasses()
 }
 
-// settleHands applies the end-game rules the moment a hand becomes empty
-// while the main deck is exhausted: the player immediately picks up their
-// stump and plays on with it; with nothing left anywhere they leave the game
-// as a winner right away. The defender is the exception: whether they are out
-// is decided when the bout ends (an undefended attack still forces a take).
-func (s *GameState) settleHands() {
-	if len(s.Deck) > 0 {
-		return
-	}
-	for i := range s.Players {
-		p := &s.Players[i]
-		if p.Out || len(p.Hand) > 0 {
-			continue
-		}
-		if len(p.Stump) > 0 {
-			p.Hand = append(p.Hand, p.Stump...)
-			p.Stump = []Card{}
-			s.addLog(LogEntry{Type: "stump", PlayerID: p.ID})
-			continue
-		}
-		if s.TrumpInDeck() || p.ID == s.DefenderID {
-			continue
-		}
-		p.Out = true
-		s.FinishedOrder = append(s.FinishedOrder, p.ID)
-		s.addLog(LogEntry{Type: "out", PlayerID: p.ID})
-	}
-}
-
 // endBout finishes the current bout: the defender either takes everything or
 // the cards are discarded ("бито"); then hands are refilled, stumps picked
 // up, finished players leave and the next roles are assigned.
@@ -528,7 +676,7 @@ func (e *Engine) endBout(s *GameState, took bool) {
 	s.clearTable()
 
 	s.refill(attackerID, defenderID)
-	s.pickupStumps()
+	e.queueStumps(s)
 	s.markOuts()
 	if s.finishIfOver() {
 		return
@@ -604,21 +752,37 @@ func (s *GameState) refill(attackerID, defenderID string) {
 	}
 }
 
-// pickupStumps gives a player their hidden stump once the main deck is empty
-// and their hand is empty.
-func (s *GameState) pickupStumps() {
+// queueStumps runs right after a bout: players whose hand is empty while the
+// main deck is exhausted take their stump as a separate step. With
+// StumpAutoDelay == 0 the stump is taken on the spot; otherwise the players
+// get StumpAutoDelay to do it themselves (TAKE_STUMP) before the server does.
+func (e *Engine) queueStumps(s *GameState) {
 	if len(s.Deck) > 0 {
 		return
 	}
+	pending := []string{}
 	for i := range s.Players {
 		p := &s.Players[i]
 		if p.Out || len(p.Hand) > 0 || len(p.Stump) == 0 {
 			continue
 		}
-		p.Hand = append(p.Hand, p.Stump...)
-		p.Stump = []Card{}
-		s.addLog(LogEntry{Type: "stump", PlayerID: p.ID})
+		pending = append(pending, p.ID)
 	}
+	if len(pending) == 0 {
+		return
+	}
+	if e.StumpAutoDelay <= 0 {
+		for _, id := range pending {
+			p := s.Player(id)
+			p.Hand = append(p.Hand, p.Stump...)
+			p.Stump = []Card{}
+			s.addLog(LogEntry{Type: "stump", PlayerID: id})
+		}
+		return
+	}
+	s.StumpPending = pending
+	s.StumpDeadline = e.now().Add(e.StumpAutoDelay).UnixMilli()
+	s.addLog(LogEntry{Type: "stump_wait", Text: fmt.Sprint(len(pending))})
 }
 
 // markOuts removes players who have no cards anywhere once nothing is left
@@ -657,6 +821,10 @@ func (s *GameState) finish(loserID string) {
 	s.LoserID = loserID
 	s.CurrentTurn = ""
 	s.DefenderID = ""
+	s.StumpPending = []string{}
+	s.StumpDeadline = 0
+	s.TurnDeadline = 0
+	s.TurnActors = []string{}
 	s.clearTable()
 	for i := range s.Players {
 		s.Players[i].IsReady = false
@@ -713,6 +881,10 @@ func (e *Engine) resetToLobby(s *GameState) {
 	s.FinishedOrder = []string{}
 	s.DiscardCount = 0
 	s.BoutNumber = 0
+	s.StumpPending = []string{}
+	s.StumpDeadline = 0
+	s.TurnDeadline = 0
+	s.TurnActors = []string{}
 	s.Status = StatusWaiting
 	s.addLog(LogEntry{Type: "lobby"})
 }

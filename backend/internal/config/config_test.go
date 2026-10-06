@@ -35,6 +35,9 @@ func TestLoadDotEnvAndFromEnv(t *testing.T) {
 	if c.RedisAddr != "" || c.InitDataMaxAge != 24*time.Hour || c.BoutResolveDelay != 3500*time.Millisecond {
 		t.Fatalf("%+v", c)
 	}
+	if c.StumpAutoDelay != 4*time.Second || c.TurnTimeout != 45*time.Second {
+		t.Fatalf("%+v", c)
+	}
 	if err := LoadDotEnv(filepath.Join(dir, "missing.env")); err != nil {
 		t.Fatalf("missing file must be ignored: %v", err)
 	}

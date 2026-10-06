@@ -59,6 +59,8 @@ func main() {
 
 	engine := game.NewEngine(nil)
 	engine.ResolveDelay = cfg.BoutResolveDelay
+	engine.StumpAutoDelay = cfg.StumpAutoDelay
+	engine.TurnTimeout = cfg.TurnTimeout
 	auth := ws.TelegramAuth{BotToken: cfg.BotToken, MaxAge: cfg.InitDataMaxAge, AllowDev: cfg.AllowDevAuth}
 	hub := ws.NewHub(st, engine, auth, ws.Options{AllowedOrigins: cfg.AllowedOrigins, Logger: logger})
 

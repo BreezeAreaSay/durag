@@ -44,6 +44,7 @@ export interface GameContextValue {
   transfer(cardId: string): void;
   take(): void;
   pass(): void;
+  takeStump(): void;
   setDevName(name: string): void;
   clearError(): void;
 }
@@ -305,14 +306,15 @@ export function GameProvider({ children }: { children: ReactNode }) {
       lastError,
       replaced,
       reactions,
-      react: (emoji) => send({ type: 'REACT', payload: { emoji } }),
+      react: (emoji) => send({ type: 'SEND_EMOJI', payload: { emoji } }),
       join,
       leave,
       setReady: (ready) => send({ type: 'READY', payload: { ready } }),
       playCard: (cardId, targetCardId) => send({ type: 'PLAY_CARD', payload: { card_id: cardId, target_card_id: targetCardId } }),
       transfer: (cardId) => send({ type: 'TRANSFER_TURN', payload: { card_id: cardId } }),
       take: () => send({ type: 'TAKE_CARDS' }),
-      pass: () => send({ type: 'PASS' }),
+      pass: () => send({ type: 'RESOLVE_BOUT' }),
+      takeStump: () => send({ type: 'TAKE_STUMP' }),
       setDevName,
       clearError: () => setLastError(null),
     }),

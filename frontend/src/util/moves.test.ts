@@ -35,6 +35,11 @@ function state(log: GameState['log']): GameState {
     phase: '',
     resolve_at: 0,
     resolve_outcome: '',
+    stump_pending: [],
+    stump_deadline: 0,
+    turn_deadline: 0,
+    turn_timeout_ms: 0,
+    turn_actors: [],
   };
 }
 
@@ -49,6 +54,24 @@ describe('describeMove', () => {
     expect(describeMove(s, { type: 'bout_end', player_id: 'B', text: 'took' })).toBe('Bob takes the whole table');
     expect(describeMove(s, { type: 'trump_revealed', text: 'Spades' })).toBe('Trump revealed: ♠');
     expect(describeMove(s, { type: 'out', player_id: 'A' })).toBe('Alice is out: no cards left');
+  });
+  it('agrees nouns with counts in both languages', () => {
+    const s = state([]);
+    expect(describeMove(s, { type: 'took', player_id: 'B', text: '1' })).toBe('Bob took 1 card');
+    expect(describeMove(s, { type: 'took', player_id: 'B', text: '5' })).toBe('Bob took 5 cards');
+    expect(describeMove(s, { type: 'stump_wait', text: '1' })).toBe('Stumps: waiting for 1 player');
+    setLang('ru');
+    try {
+      expect(describeMove(s, { type: 'took', player_id: 'B', text: '1' })).toBe('Bob забрал 1 карту');
+      expect(describeMove(s, { type: 'took', player_id: 'B', text: '3' })).toBe('Bob забрал 3 карты');
+      expect(describeMove(s, { type: 'took', player_id: 'B', text: '12' })).toBe('Bob забрал 12 карт');
+      expect(describeMove(s, { type: 'took', player_id: 'B', text: '21' })).toBe('Bob забрал 21 карту');
+      expect(describeMove(s, { type: 'bito', text: '2' })).toBe('Бито: 2 карты в отбое');
+      expect(describeMove(s, { type: 'stump_wait', text: '1' })).toBe('Пенёк: ждём 1 игрока');
+      expect(describeMove(s, { type: 'stump_wait', text: '2' })).toBe('Пенёк: ждём 2 игроков');
+    } finally {
+      setLang('en');
+    }
   });
   it('skips lobby noise and finds the last real move', () => {
     const s = state([

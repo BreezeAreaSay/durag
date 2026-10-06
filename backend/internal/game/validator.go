@@ -38,6 +38,8 @@ var (
 	ErrRoomFull             = ruleErr("ROOM_FULL", "the room is full")
 	ErrNotEnoughPlayers     = ruleErr("NOT_ENOUGH_PLAYERS", "at least two players are needed")
 	ErrResolving            = ruleErr("RESOLVING", "the bout is over, wait for the next one")
+	ErrStumpPending         = ruleErr("STUMP_PENDING", "stumps are being taken, wait a moment")
+	ErrNoStump              = ruleErr("NO_STUMP", "you have no stump to take right now")
 	ErrNotResolving         = ruleErr("NOT_RESOLVING", "no bout is waiting to be resolved")
 	ErrTransferTooFewCards  = ruleErr("TRANSFER_TOO_FEW_CARDS", "the next player has too few cards to take over the defence")
 )
@@ -98,7 +100,29 @@ func (s *GameState) seated(playerID string) (*Player, error) {
 	if s.Phase == PhaseResolving {
 		return nil, ErrResolving
 	}
+	if s.StumpsPending() {
+		return nil, ErrStumpPending
+	}
 	return p, nil
+}
+
+// ValidateTakeStump checks a TAKE_STUMP intent: stumps are taken strictly
+// between bouts, only by players whose hand ran dry while the deck is empty.
+func (s *GameState) ValidateTakeStump(playerID string) error {
+	if s.Status != StatusPlaying {
+		return ErrNotPlaying
+	}
+	p := s.Player(playerID)
+	if p == nil {
+		return ErrUnknownPlayer
+	}
+	if p.Out {
+		return ErrPlayerOut
+	}
+	if !s.stumpPendingFor(playerID) || len(p.Stump) == 0 {
+		return ErrNoStump
+	}
+	return nil
 }
 
 // ThrowInAllowed reports whether attackers may currently add cards to the

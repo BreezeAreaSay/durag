@@ -433,3 +433,136 @@ func TestReactionsAreBroadcastAndRateLimited(t *testing.T) {
 		t.Fatalf("got %+v", e)
 	}
 }
+
+func TestV10AliasesAndTakeStump(t *testing.T) {
+	eng := game.NewEngine(game.NewRand(7, 8))
+	srv, _, st := newTestServerWithEngine(t, true, eng)
+	a := dial(t, srv)
+	a.send(TypeJoinRoom, devJoin("V", true, "A", "Alice"))
+	a.state()
+	b := dial(t, srv)
+	b.send(TypeJoinRoom, devJoin("V", false, "B", "Bob"))
+	b.state()
+	a.state()
+	a.send(TypeReady, ReadyPayload{Ready: true})
+	a.state()
+	b.state()
+	b.send(TypeReady, ReadyPayload{Ready: true})
+	a.state()
+	b.state()
+	craftBout(t, st, "V", "dev:A", "dev:B")
+
+	// TAKE_STUMP with nothing pending is refused
+	a.send(TypeTakeStump, nil)
+	if e := a.errorPayload(); e.Code != "NO_STUMP" {
+		t.Fatalf("got %+v", e)
+	}
+	a.state()
+
+	// RESOLVE_BOUT behaves like PASS
+	a.send(TypePlayCard, PlayCardPayload{CardID: "H_7"})
+	a.state()
+	b.state()
+	a.send(TypePlayCard, PlayCardPayload{CardID: "S_9"}) // not a 7: rejected, proves the table is open
+	if e := a.errorPayload(); e.Code != "RANK_MISMATCH" {
+		t.Fatalf("got %+v", e)
+	}
+	a.state()
+	a.send(TypeResolveBout, nil)
+	st1 := a.state()
+	b.state()
+	var alice *game.Player
+	for i := range st1.Players {
+		if st1.Players[i].ID == "dev:A" {
+			alice = &st1.Players[i]
+		}
+	}
+	if alice == nil || !alice.Passed {
+		t.Fatalf("RESOLVE_BOUT must mark the attacker as passed: %+v", alice)
+	}
+
+	// SEND_EMOJI is REACT
+	b.send(TypeSendEmoji, ReactPayload{Emoji: "👏"})
+	for _, c := range []*testClient{a, b} {
+		env := c.expect(TypeReaction)
+		var r ReactionPayload
+		_ = json.Unmarshal(env.Payload, &r)
+		if r.Emoji != "👏" || r.PlayerID != "dev:B" {
+			t.Fatalf("reaction %+v", r)
+		}
+	}
+}
+
+func TestStumpStepOverTheWire(t *testing.T) {
+	eng := game.NewEngine(game.NewRand(9, 10))
+	eng.StumpAutoDelay = 400 * time.Millisecond
+	srv, _, st := newTestServerWithEngine(t, true, eng)
+	a := dial(t, srv)
+	a.send(TypeJoinRoom, devJoin("S", true, "A", "Alice"))
+	a.state()
+	b := dial(t, srv)
+	b.send(TypeJoinRoom, devJoin("S", false, "B", "Bob"))
+	b.state()
+	a.state()
+	a.send(TypeReady, ReadyPayload{Ready: true})
+	a.state()
+	b.state()
+	b.send(TypeReady, ReadyPayload{Ready: true})
+	a.state()
+	b.state()
+	// end-game: deck empty, trump drawn, A leads the last card, B beats it;
+	// A has a stump and must take it before the next bout.
+	if _, err := st.Update(context.Background(), "S", false, func(s *game.GameState) error {
+		set := func(id string, hand []string, stump []string) {
+			p := s.Player(id)
+			p.Hand, p.Stump = nil, nil
+			for _, c := range hand {
+				card, _ := game.CardByID(c)
+				p.Hand = append(p.Hand, card)
+			}
+			for _, c := range stump {
+				card, _ := game.CardByID(c)
+				p.Stump = append(p.Stump, card)
+			}
+		}
+		set("dev:A", []string{"H_7"}, []string{"C_2", "C_3"})
+		set("dev:B", []string{"H_10", "S_8"}, nil)
+		trump, _ := game.CardByID("S_5")
+		s.TrumpCard = &trump
+		s.TrumpSuit = trump.Suit
+		s.TrumpRevealed = true
+		s.TrumpDrawnBy = "dev:B"
+		s.Deck = nil
+		s.DiscardCount = game.DeckSize - 5
+		s.CurrentTurn = "dev:A"
+		s.DefenderID = "dev:B"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	a.send(TypePlayCard, PlayCardPayload{CardID: "H_7"})
+	a.state()
+	b.state()
+	b.send(TypePlayCard, PlayCardPayload{CardID: "H_10", TargetCardID: "H_7"})
+	sa := a.state()
+	b.state()
+	if len(sa.StumpPending) != 1 || sa.StumpPending[0] != "dev:A" || sa.StumpDeadline == 0 {
+		t.Fatalf("expected A to be asked for the stump: %+v", sa.StumpPending)
+	}
+	// B may not start the next bout yet
+	b.send(TypePlayCard, PlayCardPayload{CardID: "S_8"})
+	if e := b.errorPayload(); e.Code != "STUMP_PENDING" {
+		t.Fatalf("got %+v", e)
+	}
+	b.state()
+	// the server takes the stump for A after the delay and broadcasts
+	final := a.state()
+	if final.StumpsPending() {
+		t.Fatalf("stump still pending: %+v", final.StumpPending)
+	}
+	for _, p := range final.Players {
+		if p.ID == "dev:A" && (p.HandCount != 2 || p.StumpCount != 0) {
+			t.Fatalf("A should hold the stump now: %+v", p)
+		}
+	}
+}
