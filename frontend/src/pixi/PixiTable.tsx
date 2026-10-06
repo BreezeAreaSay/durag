@@ -16,6 +16,15 @@ interface Props {
   onTakeStump(): void;
 }
 
+declare global {
+  interface Window {
+    /** read-only scene diagnostics, present only with `?debug=1` */
+    __durag?: TableScene;
+  }
+}
+
+const DEBUG = typeof location !== 'undefined' && new URLSearchParams(location.search).has('debug');
+
 /** Mounts the PixiJS table once and streams model updates into it. */
 export function PixiTable({ model, reject, fx, topInset, labels, connection, onPlay, onTransfer, onTakeStump }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -57,6 +66,7 @@ export function PixiTable({ model, reject, fx, topInset, labels, connection, onP
           return;
         }
         sceneRef.current = scene;
+        if (DEBUG) window.__durag = scene;
         scene.setFx(fxRef.current);
         scene.update(modelRef.current);
       })
@@ -66,6 +76,7 @@ export function PixiTable({ model, reject, fx, topInset, labels, connection, onP
     return () => {
       cancelled = true;
       sceneRef.current = null;
+      if (window.__durag === scene) delete window.__durag;
       scene.destroy(); // app.destroy(true): frees the WebGL context and textures
     };
   }, [generation]);

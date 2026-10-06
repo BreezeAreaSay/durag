@@ -50,6 +50,8 @@ export class CardView {
   readonly w: number;
   readonly h: number;
 
+  private glow = new Graphics();
+  private glowOn = false;
   private shadow = new Graphics();
   private face = new Container();
   private back = new Container();
@@ -62,11 +64,12 @@ export class CardView {
     this.card = card;
     this.w = w;
     this.h = h;
+    this.buildGlow();
     this.buildShadow();
     this.buildFace(hologram);
     this.buildBack();
     this.buildHighlight();
-    this.root.addChild(this.shadow, this.back, this.face, this.highlight);
+    this.root.addChild(this.glow, this.shadow, this.back, this.face, this.highlight);
     this.setFaceUp(faceUp);
     this.root.label = `card:${card.id}`;
   }
@@ -101,9 +104,22 @@ export class CardView {
     this.shadow.position.set(on ? SHADOW_DX * 2 : SHADOW_DX, on ? SHADOW_DY * 2.2 : SHADOW_DY);
   }
 
-  /** Engine-artefact glitch (trump cards lying on the table). */
-  setGlitch(filter: Filter | null): void {
-    this.root.filters = filter ? [filter] : null;
+  /** A soft acid halo: the trump card you are beating with. */
+  setGlow(on: boolean): void {
+    if (this.glowOn === on) return;
+    this.glowOn = on;
+    this.glow.visible = on;
+    this.glow.alpha = 1;
+  }
+
+  get isGlowing(): boolean {
+    return this.glowOn;
+  }
+
+  /** Slow breathing of the halo (called on the stop-motion cadence). */
+  setGlowPhase(seconds: number): void {
+    if (!this.glowOn) return;
+    this.glow.alpha = 0.7 + 0.3 * (0.5 + 0.5 * Math.sin(seconds * 2.4));
   }
 
   /** A card the Super card destroyed: it is gone visually but keeps its slot. */
@@ -126,6 +142,15 @@ export class CardView {
     // on dark paper the hard offset "shadow" is a pale misregistered double print
     this.shadow.poly(jaggedRect(w, h, this.card.id + ':s')).fill({ color: PAPER, alpha: 0.22 });
     this.shadow.position.set(SHADOW_DX, SHADOW_DY);
+  }
+
+  private buildGlow(): void {
+    const { w, h } = this;
+    // three jagged rings of falling alpha stand in for a blur: a faint light, not a neon sign
+    this.glow.poly(jaggedRect(w, h, this.card.id + ':g3', 18, 11, 1.5)).fill({ color: ACID, alpha: 0.05 });
+    this.glow.poly(jaggedRect(w, h, this.card.id + ':g2', 11, 10, 1.3)).fill({ color: ACID, alpha: 0.08 });
+    this.glow.poly(jaggedRect(w, h, this.card.id + ':g1', 5, 9, 1.2)).fill({ color: ACID, alpha: 0.14 });
+    this.glow.visible = false;
   }
 
   private buildHighlight(): void {

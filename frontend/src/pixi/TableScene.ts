@@ -83,8 +83,9 @@ const PENDING_TTL = 15000;
 const FX_STEP_MS = 1000 / 12; // stop-motion cadence of the effect levels
 const HALFTONE_MAX = 0.22;
 const CHROMATIC_MAX = 0.3;
-const GLITCH_MAX = 0.6;
-const PLATE_GLITCH_MAX = 0.3;
+const PLATE_GLITCH_MAX = 0.3; // the trump plate only: cards never get the glitch pass
+const REVEAL_HOLD_MS = 1600; // the drawn trump card rests in the centre this long
+const REVEAL_GUARD_MS = 4000; // hard stop for the reveal animation (the hand card must never stay hidden)
 const HOLOGRAM_STRENGTH = 0.45;
 const AMBIENT_QUIET = 0.3; // the bout pause and the stump step
 const INK = 0x0d0d0d;
@@ -110,7 +111,6 @@ export class TableScene {
   private metrics: Metrics = computeMetrics(390, 844);
   private drag: DragState | null = null;
   private hologram: HologramFilter | null = null;
-  private glitch: GlitchFilter | null = null;
   private plateGlitch: GlitchFilter | null = null;
   private worldFx: { halftone: HalftoneFilter; chromatic: ChromaticFilter } | null = null;
   private readonly fxDirector = new FxDirector();
@@ -191,6 +191,9 @@ export class TableScene {
     stage.on('pointermove', this.onPointerMove);
     stage.on('pointerup', this.onPointerUp);
     stage.on('pointerupoutside', this.onPointerUp);
+    // iOS / Telegram cancel a touch when a system gesture takes over: never leave a card stuck in the air
+    stage.on('pointercancel', this.onPointerCancel);
+    document.addEventListener('visibilitychange', this.onVisibility);
 
     if (this.fx) this.enableFx();
 
@@ -199,13 +202,13 @@ export class TableScene {
       this.time += ticker.deltaMS;
       this.tweener.update(ticker.deltaMS);
       this.hologram?.setTime(this.time / 1000);
-      this.glitch?.setTime(this.time / 1000);
       this.plateGlitch?.setTime(this.time / 1000);
       this.fxAcc += ticker.deltaMS;
       if (this.fxAcc >= FX_STEP_MS) {
         const dt = this.fxAcc;
         this.fxAcc = 0;
         if (this.fxDirector.step(dt)) this.refreshFx(false);
+        for (const view of this.views.values()) view.setGlowPhase(this.time / 1000);
       }
       this.expirePending();
     });
@@ -230,6 +233,8 @@ export class TableScene {
       this.fxDirector.hitGlitch(1, 1800);
       this.playTrumpReveal(model.trumpCard, model.hand.some((c) => c.id === model.trumpCard!.id));
     }
+    // A drag that outlived its card (auto-move, took, reconnect) or the phase would block every input.
+    if (this.drag && (!model.interactive || !model.hand.some((c) => c.id === this.drag!.id))) this.cancelDrag();
     this.prevRevealed = model.trumpRevealed;
     if (this.ready) this.sync(false);
   }
@@ -274,11 +279,34 @@ export class TableScene {
     this.tweener.clear();
     for (const id of this.timers) window.clearTimeout(id);
     this.timers.clear();
+    document.removeEventListener('visibilitychange', this.onVisibility);
     if (this.ready) {
       this.app.renderer.off('resize', this.onResize);
       this.app.destroy(true, { children: true });
     }
     this.views.clear();
+  }
+
+  /** Read-only snapshot for diagnostics and end-to-end tests (`?debug=1` exposes it as window.__durag). */
+  debugSnapshot(): Record<string, unknown> {
+    const layerName = (c: Container | null) => (c === this.layers.hand ? 'hand' : c === this.layers.table ? 'table' : c === this.layers.drag ? 'drag' : c === this.layers.piles ? 'piles' : 'none');
+    const m = this.model;
+    return {
+      hand: (m?.hand ?? []).map((c) => {
+        const v = this.views.get(c.id);
+        return v ? { id: c.id, x: Math.round(v.root.x), y: Math.round(v.root.y), visible: v.root.visible, renderable: v.root.renderable, alpha: v.root.alpha, layer: layerName(v.root.parent) } : { id: c.id, missing: true };
+      }),
+      table: m?.table.length ?? 0,
+      pending: [...this.pending.keys()],
+      drag: this.drag?.id ?? null,
+      revealHidden: this.revealHidden,
+      revealTemp: this.revealTemp !== null,
+      trumpRevealed: m?.trumpRevealed ?? false,
+      trumpSuit: m?.trumpSuit ?? '',
+      glowing: [...this.views.values()].filter((v) => v.isGlowing).map((v) => v.card.id),
+      fx: { active: this.fxActive, level: this.fxDirector.level, glitch: this.fxDirector.glitch },
+      version: m?.version ?? 0,
+    };
   }
 
   // --- effects ---------------------------------------------------------------
@@ -292,11 +320,9 @@ export class TableScene {
     const halftone = createHalftoneFilter({ dotSize: 3, strength: HALFTONE_MAX, ...quality });
     const chromatic = createChromaticFilter(CHROMATIC_MAX, quality);
     const hologram = createHologramFilter(HOLOGRAM_STRENGTH, quality);
-    const glitch = createGlitchFilter(GLITCH_MAX, quality); // trump cards on the table
-    const plateGlitch = createGlitchFilter(PLATE_GLITCH_MAX, quality); // the trump plate: its label must stay readable
-    if (![halftone, chromatic, hologram, glitch, plateGlitch].every((f) => filterCompiles(this.app.renderer, f))) return;
+    const plateGlitch = createGlitchFilter(PLATE_GLITCH_MAX, quality); // the trump plate flickers in glitch moments
+    if (![halftone, chromatic, hologram, plateGlitch].every((f) => filterCompiles(this.app.renderer, f))) return;
     this.hologram = hologram;
-    this.glitch = glitch;
     this.plateGlitch = plateGlitch;
     this.worldFx = { halftone, chromatic };
     this.fxActive = true;
@@ -314,10 +340,7 @@ export class TableScene {
     this.hologram?.destroy();
     this.hologram = null;
     this.glitchOn = false;
-    for (const view of this.views.values()) view.setGlitch(null);
     this.trumpPlate.filters = null;
-    this.glitch?.destroy();
-    this.glitch = null;
     this.plateGlitch?.destroy();
     this.plateGlitch = null;
     this.fxActive = false;
@@ -342,22 +365,14 @@ export class TableScene {
       this.glitchOn = glitchOn;
       this.applyGlitch();
     }
-    if (glitchOn) {
-      this.glitch?.setStrength(GLITCH_MAX * g);
-      this.plateGlitch?.setStrength(PLATE_GLITCH_MAX * g);
-    }
+    if (glitchOn) this.plateGlitch?.setStrength(PLATE_GLITCH_MAX * g);
   }
 
-  /** Trump cards lying on the table (and the trump plate) flicker like engine artefacts — only in glitch moments. */
+  /** The trump plate flickers like an engine artefact — only in glitch moments (reveal, rare blips). */
   private applyGlitch(): void {
     const m = this.model;
     const known = this.glitchOn && Boolean(m?.trumpRevealed && m.trumpSuit);
-    const active = known ? this.glitch : null;
     this.trumpPlate.filters = known && this.plateGlitch ? [this.plateGlitch] : null;
-    for (const view of this.views.values()) {
-      const onTable = view.root.parent === this.layers.table;
-      view.setGlitch(active && onTable && view.card.suit === m!.trumpSuit ? active : null);
-    }
   }
 
   private applyHologram(filter: Filter | null): void {
@@ -404,11 +419,13 @@ export class TableScene {
       const exit = wasOnTable && outcome !== 'took' ? discardSlot(metrics) : exitSlot(metrics);
       view.root.eventMode = 'none';
       view.root.visible = true;
-      view.setGlitch(null);
+      view.setGlow(false);
       this.reparent(view, this.layers.table);
       void this.tweener.to(view.root, { x: exit.x, y: exit.y, rotation: exit.rotation, scale: exit.scale, alpha: 0.9 }, { duration: 360, ease: easings.outQuad }).then(() => view.destroy());
     }
     if (m.table.length === 0) this.dissolved.clear();
+    // The reveal animation is over (or never ran to its end): nothing may stay hidden.
+    if (this.revealHidden && !this.revealTemp) this.revealHidden = null;
 
     // Place every visible card.
     for (const [id, p] of wanted) {
@@ -432,10 +449,7 @@ export class TableScene {
           view.root.position.set(sSlot.x, sSlot.y);
           view.root.scale.set(sSlot.scale);
         }
-        if (p.kind === 'attack' || p.kind === 'defense') {
-          this.flash(view);
-          if (m.trumpRevealed && p.card.suit === m.trumpSuit) this.fxDirector.hitGlitch(1, 700);
-        }
+        if (p.kind === 'attack' || p.kind === 'defense') this.flash(view);
       }
       if (this.pending.has(id)) {
         if (p.kind === 'attack' || p.kind === 'defense') {
@@ -446,6 +460,10 @@ export class TableScene {
         }
       }
       if (this.drag?.id === id) continue;
+      // a card the Super card blew apart came back (the defender took the table): it is whole again
+      if (view.isDissolved && p.kind === 'hand') view.setDissolved(false);
+      // the trump card you beat with glows softly
+      view.setGlow(p.kind === 'defense' && m.trumpRevealed && p.card.suit === m.trumpSuit);
       if (view.root.parent !== p.layer) this.reparent(view, p.layer);
       view.root.zIndex = p.z;
       view.setFaceUp(p.faceUp);
@@ -587,31 +605,45 @@ export class TableScene {
     this.revealTemp = temp;
     if (mine) {
       this.revealHidden = card.id;
-      this.views.get(card.id)?.root && (this.views.get(card.id)!.root.visible = false);
+      const own = this.views.get(card.id);
+      if (own) own.root.visible = false;
     }
     const centre = nextAttackSlot(0, m);
     void this.tweener.to(temp.root, { x: centre.x, y: centre.y - m.cardH * 0.12, rotation: -0.06, scale: 1.3 }, { duration: 480, ease: easings.outBack });
-    this.later(1600, () => {
-      const dest = mine ? this.handSlotFor(card.id) : exitSlot(this.metrics);
-      temp.setLifted(false);
-      void this.tweener.to(temp.root, { x: dest.x, y: dest.y, rotation: dest.rotation, scale: dest.scale }, { duration: 460, ease: easings.outQuad }).then(() => {
-        if (this.destroyed) return;
-        temp.destroy();
-        if (this.revealTemp === temp) this.revealTemp = null;
-        if (this.revealHidden === card.id) {
-          this.revealHidden = null;
-          const view = this.views.get(card.id);
-          if (view) {
-            const slot = this.handSlotFor(card.id);
-            view.root.visible = true;
-            view.root.position.set(slot.x, slot.y);
-            view.root.rotation = slot.rotation;
-            view.root.scale.set(slot.scale);
-          }
+
+    // Whatever happens to the animation (paused ticker, cancelled tween, an
+    // exception), the real card must become visible again: finish() is
+    // idempotent and also fired by a hard timer.
+    const finish = () => {
+      if (this.destroyed || this.revealTemp !== temp) return;
+      this.revealTemp = null;
+      this.tweener.cancel(temp.root);
+      temp.destroy();
+      if (this.revealHidden === card.id) {
+        this.revealHidden = null;
+        const view = this.views.get(card.id);
+        if (view) {
+          const slot = this.handSlotFor(card.id);
+          view.root.visible = true;
+          view.root.position.set(slot.x, slot.y);
+          view.root.rotation = slot.rotation;
+          view.root.scale.set(slot.scale);
         }
-        this.updatePiles();
-      });
+      }
+      this.updatePiles();
+    };
+    this.later(REVEAL_HOLD_MS, () => {
+      if (this.revealTemp !== temp) return;
+      try {
+        const dest = mine ? this.handSlotFor(card.id) : exitSlot(this.metrics);
+        temp.setLifted(false);
+        void this.tweener.to(temp.root, { x: dest.x, y: dest.y, rotation: dest.rotation, scale: dest.scale }, { duration: 460, ease: easings.outQuad }).then(finish);
+      } catch (err) {
+        console.warn('trump reveal animation failed, showing the card at once', err);
+        finish();
+      }
     });
+    this.later(REVEAL_GUARD_MS, finish);
   }
 
   // --- piles -----------------------------------------------------------------
@@ -771,7 +803,28 @@ export class TableScene {
       startTime: performance.now(),
       moved: false,
     };
+    const m = this.model;
+    if (m.role === 'defender' && m.trumpRevealed && view.card.suit === m.trumpSuit) view.setGlow(true);
   }
+
+  /** Drops the card back into the hand without playing it (cancelled touch, hidden tab, stale drag). */
+  private cancelDrag(): void {
+    const d = this.drag;
+    if (!d) return;
+    this.drag = null;
+    d.view.setLifted(false);
+    d.view.setGlow(false);
+    this.clearHighlights();
+    this.returnHome(d.view);
+  }
+
+  private onPointerCancel = (): void => {
+    this.cancelDrag();
+  };
+
+  private onVisibility = (): void => {
+    if (document.visibilityState === 'hidden') this.cancelDrag();
+  };
 
   private onPointerMove = (e: FederatedPointerEvent): void => {
     const g = e.global;
@@ -788,6 +841,7 @@ export class TableScene {
     if (!d) return;
     this.drag = null;
     d.view.setLifted(false);
+    d.view.setGlow(false); // the confirmed defense gets its glow back from sync()
     this.clearHighlights();
     const m = this.model;
     if (!m || !m.interactive) {
