@@ -218,31 +218,51 @@ func TestTakeGivesWholeTableAndSkipsDefender(t *testing.T) {
 	}
 }
 
-func TestUnlimitedThrowInsBeyondDefenderHand(t *testing.T) {
+func TestThrowInsNeverExceedDefenderHand(t *testing.T) {
+	// No six-card cap, but the defender must hold a card for every attack
+	// still waiting: with two cards in hand the table takes two attacks.
 	e, s := newPlaying(t, "A", "B", "C")
 	setRoles(s, "A", "B")
 	setHand(t, s, "A", "H_7", "S_7", "D_7", "C_7")
 	setHand(t, s, "B", "H_10", "S_8")
 	setHand(t, s, "C", "C_10", "D_10", "S_10")
 	setTrump(t, s, "C_5", false)
-	for _, id := range []string{"H_7", "S_7", "D_7", "C_7"} {
+	for _, id := range []string{"H_7", "S_7"} {
 		if err := e.PlayCard(s, "A", id, ""); err != nil {
 			t.Fatalf("%s: %v", id, err)
 		}
 	}
-	if len(s.TableOrder) != 4 {
-		t.Fatalf("four attacks expected, got %d", len(s.TableOrder))
+	wantErr(t, e.PlayCard(s, "A", "D_7", ""), ErrTooManyAttacks)
+	if len(s.TableOrder) != 2 {
+		t.Fatalf("two attacks expected, got %d", len(s.TableOrder))
 	}
+	// beating one frees nothing: one card left, one attack waiting
 	if err := e.PlayCard(s, "B", "H_10", "H_7"); err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{"C_10", "D_10", "S_10"} {
-		if err := e.PlayCard(s, "C", id, ""); err != nil {
+	wantErr(t, e.PlayCard(s, "C", "C_10", ""), ErrTooManyAttacks)
+	// a defender with a bigger hand can be piled on, no cap at six
+	e2, s2 := newPlaying(t, "A", "B", "C")
+	setRoles(s2, "A", "B")
+	setHand(t, s2, "A", "H_7", "S_7", "D_7", "C_7")
+	setHand(t, s2, "B", "H_10", "S_8", "D_4", "C_5", "H_6", "D_12", "C_13", "S_2")
+	setHand(t, s2, "C", "C_10", "D_10", "S_10")
+	setTrump(t, s2, "C_5", false)
+	for _, id := range []string{"H_7", "S_7", "D_7", "C_7"} {
+		if err := e2.PlayCard(s2, "A", id, ""); err != nil {
 			t.Fatalf("%s: %v", id, err)
 		}
 	}
-	if len(s.TableOrder) != 7 {
-		t.Fatalf("seven attacks expected, got %d", len(s.TableOrder))
+	if err := e2.PlayCard(s2, "B", "H_10", "H_7"); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"C_10", "D_10", "S_10"} {
+		if err := e2.PlayCard(s2, "C", id, ""); err != nil {
+			t.Fatalf("%s: %v", id, err)
+		}
+	}
+	if len(s2.TableOrder) != 7 {
+		t.Fatalf("seven attacks expected, got %d", len(s2.TableOrder))
 	}
 }
 

@@ -2,7 +2,7 @@
 // turned into a SceneModel and `sync()` moves cards to where the state says
 // they are. Drag-and-drop sends intents optimistically; an ERROR from the
 // server snaps the card back into the hand with a stop-motion rubber band.
-import { Application, Container, Graphics, Text, type FederatedPointerEvent, type Filter } from 'pixi.js';
+import { Application, Container, Graphics, Text, type FederatedPointerEvent } from 'pixi.js';
 import { CardView } from './CardView';
 import { StopMotionTweener, easings } from './tween';
 import {
@@ -19,8 +19,6 @@ import {
   type Metrics,
   type Slot,
 } from './layout';
-import { createChromaticFilter, createGlitchFilter, createHalftoneFilter, createHologramFilter, filterCompiles, type ChromaticFilter, type GlitchFilter, type HalftoneFilter, type HologramFilter } from './shaders';
-import { FxDirector } from './fxDirector';
 import { drawSuit } from './suits';
 import { canBeat } from '../util/rules';
 import { isSuper } from '../util/cards';
@@ -42,7 +40,6 @@ export interface SceneLabels {
 }
 
 export interface SceneOptions {
-  fx?: boolean;
   fps?: number;
   topInset?: number;
   labels?: SceneLabels;
@@ -64,7 +61,6 @@ interface DragState {
   dy: number;
   startX: number;
   startY: number;
-  startTime: number;
   moved: boolean;
 }
 
@@ -78,16 +74,11 @@ const FONT = 'Unbounded, "Arial Black", Impact, sans-serif';
 // it elsewhere); this is just a last-resort guard against a lost connection.
 const PENDING_TTL = 15000;
 
-// Shader strengths at full intensity. The FxDirector scales them by its
-// 0..1 level: zero during ordinary play, a short burst on the big moments.
-const FX_STEP_MS = 1000 / 12; // stop-motion cadence of the effect levels
-const HALFTONE_MAX = 0.22;
-const CHROMATIC_MAX = 0.3;
-const PLATE_GLITCH_MAX = 0.3; // the trump plate only: cards never get the glitch pass
+// No shader passes at all: WebKit on iPhones rendered filtered cards black.
+// Everything on the table is plain vector geometry, text and gradients.
+const GLOW_STEP_MS = 1000 / 12; // stop-motion cadence of the glow pulse
 const REVEAL_HOLD_MS = 1600; // the drawn trump card rests in the centre this long
 const REVEAL_GUARD_MS = 4000; // hard stop for the reveal animation (the hand card must never stay hidden)
-const HOLOGRAM_STRENGTH = 0.45;
-const AMBIENT_QUIET = 0.3; // the bout pause and the stump step
 const INK = 0x0d0d0d;
 const PAPER = 0xece9e1;
 const ACID = 0xe6ff00;
@@ -97,8 +88,6 @@ export class TableScene {
   readonly app = new Application();
 
   private readonly handlers: SceneHandlers;
-  private fx: boolean;
-  private fxActive = false;
   private topInset: number;
   private labels: SceneLabels;
   private readonly tweener: StopMotionTweener;
@@ -110,13 +99,7 @@ export class TableScene {
   private model: SceneModel | null = null;
   private metrics: Metrics = computeMetrics(390, 844);
   private drag: DragState | null = null;
-  private hologram: HologramFilter | null = null;
-  private plateGlitch: GlitchFilter | null = null;
-  private worldFx: { halftone: HalftoneFilter; chromatic: ChromaticFilter } | null = null;
-  private readonly fxDirector = new FxDirector();
-  private fxAcc = 0;
-  private worldFxOn = false;
-  private glitchOn = false;
+  private glowAcc = 0;
   private time = 0;
   private ready = false;
   private destroyed = false;
@@ -143,7 +126,6 @@ export class TableScene {
 
   constructor(handlers: SceneHandlers, opts: SceneOptions = {}) {
     this.handlers = handlers;
-    this.fx = opts.fx ?? true;
     this.topInset = opts.topInset ?? 0;
     this.labels = opts.labels ?? { trump: 'TRUMP' };
     this.tweener = new StopMotionTweener(opts.fps ?? 12);
@@ -195,19 +177,13 @@ export class TableScene {
     stage.on('pointercancel', this.onPointerCancel);
     document.addEventListener('visibilitychange', this.onVisibility);
 
-    if (this.fx) this.enableFx();
-
     this.app.renderer.on('resize', this.onResize);
     this.app.ticker.add((ticker) => {
       this.time += ticker.deltaMS;
       this.tweener.update(ticker.deltaMS);
-      this.hologram?.setTime(this.time / 1000);
-      this.plateGlitch?.setTime(this.time / 1000);
-      this.fxAcc += ticker.deltaMS;
-      if (this.fxAcc >= FX_STEP_MS) {
-        const dt = this.fxAcc;
-        this.fxAcc = 0;
-        if (this.fxDirector.step(dt)) this.refreshFx(false);
+      this.glowAcc += ticker.deltaMS;
+      if (this.glowAcc >= GLOW_STEP_MS) {
+        this.glowAcc = 0;
         for (const view of this.views.values()) view.setGlowPhase(this.time / 1000);
       }
       this.expirePending();
@@ -221,16 +197,9 @@ export class TableScene {
 
   update(model: SceneModel): void {
     const first = this.model === null;
-    const prev = this.model;
     this.model = model;
     if (model.resolving && model.resolveOutcome) this.lastOutcome = model.resolveOutcome;
-    // Effects are moments, not a constant filter: quiet while people play.
-    this.fxDirector.setAmbient(model.resolving || model.stumpStep ? AMBIENT_QUIET : 0);
-    if (!first && model.resolving && !prev?.resolving) this.fxDirector.hit(0.6, 1200); // the stamp slams in
-    if (!first && model.lastEvent === 'stump' && prev?.version !== model.version) this.fxDirector.hit(0.5, 900);
     if (!first && this.prevRevealed === false && model.trumpRevealed && model.trumpCard) {
-      this.fxDirector.hit(1, 1800);
-      this.fxDirector.hitGlitch(1, 1800);
       this.playTrumpReveal(model.trumpCard, model.hand.some((c) => c.id === model.trumpCard!.id));
     }
     // A drag that outlived its card (auto-move, took, reconnect) or the phase would block every input.
@@ -239,13 +208,6 @@ export class TableScene {
     if (this.ready) this.sync(false);
   }
 
-  /** Turns the shader effects on or off at runtime (HUD toggle). */
-  setFx(on: boolean): void {
-    this.fx = on;
-    if (!this.ready) return;
-    if (on && !this.fxActive) this.enableFx();
-    else if (!on && this.fxActive) this.disableFx();
-  }
 
   /** The HTML panel at the top changed its height: keep the piles below it. */
   setTopInset(px: number): void {
@@ -304,79 +266,8 @@ export class TableScene {
       trumpRevealed: m?.trumpRevealed ?? false,
       trumpSuit: m?.trumpSuit ?? '',
       glowing: [...this.views.values()].filter((v) => v.isGlowing).map((v) => v.card.id),
-      fx: { active: this.fxActive, level: this.fxDirector.level, glitch: this.fxDirector.glitch },
       version: m?.version ?? 0,
     };
-  }
-
-  // --- effects ---------------------------------------------------------------
-
-  // Deliberately gentle, and not constant: the passes are created once and
-  // attached only while the FxDirector's level is above zero, so during
-  // ordinary play (attacking, defending, throwing in) the picture is clean and
-  // razor sharp. The big moments get a short burst that fades out.
-  private enableFx(): void {
-    const quality = { resolution: this.app.renderer.resolution };
-    const halftone = createHalftoneFilter({ dotSize: 3, strength: HALFTONE_MAX, ...quality });
-    const chromatic = createChromaticFilter(CHROMATIC_MAX, quality);
-    const hologram = createHologramFilter(HOLOGRAM_STRENGTH, quality);
-    const plateGlitch = createGlitchFilter(PLATE_GLITCH_MAX, quality); // the trump plate flickers in glitch moments
-    if (![halftone, chromatic, hologram, plateGlitch].every((f) => filterCompiles(this.app.renderer, f))) return;
-    this.hologram = hologram;
-    this.plateGlitch = plateGlitch;
-    this.worldFx = { halftone, chromatic };
-    this.fxActive = true;
-    this.applyHologram(hologram);
-    this.refreshFx(true);
-  }
-
-  private disableFx(): void {
-    this.world.filters = null;
-    this.worldFx?.halftone.destroy();
-    this.worldFx?.chromatic.destroy();
-    this.worldFx = null;
-    this.worldFxOn = false;
-    this.applyHologram(null);
-    this.hologram?.destroy();
-    this.hologram = null;
-    this.glitchOn = false;
-    this.trumpPlate.filters = null;
-    this.plateGlitch?.destroy();
-    this.plateGlitch = null;
-    this.fxActive = false;
-  }
-
-  /** Applies the FxDirector's current levels to the filters (called per stop-motion step). */
-  private refreshFx(force: boolean): void {
-    if (!this.fxActive || !this.worldFx) return;
-    const level = this.fxDirector.level;
-    const on = level > 0.02;
-    if (on !== this.worldFxOn || force) {
-      this.world.filters = on ? [this.worldFx.halftone, this.worldFx.chromatic] : null;
-      this.worldFxOn = on;
-    }
-    if (on) {
-      this.worldFx.halftone.setStrength(HALFTONE_MAX * level);
-      this.worldFx.chromatic.setOffset(CHROMATIC_MAX * level);
-    }
-    const g = this.fxDirector.glitch;
-    const glitchOn = g > 0.02;
-    if (glitchOn !== this.glitchOn || force) {
-      this.glitchOn = glitchOn;
-      this.applyGlitch();
-    }
-    if (glitchOn) this.plateGlitch?.setStrength(PLATE_GLITCH_MAX * g);
-  }
-
-  /** The trump plate flickers like an engine artefact — only in glitch moments (reveal, rare blips). */
-  private applyGlitch(): void {
-    const m = this.model;
-    const known = this.glitchOn && Boolean(m?.trumpRevealed && m.trumpSuit);
-    this.trumpPlate.filters = known && this.plateGlitch ? [this.plateGlitch] : null;
-  }
-
-  private applyHologram(filter: Filter | null): void {
-    for (const view of this.views.values()) view.setHologram(filter);
   }
 
   // --- layout & sync -------------------------------------------------------
@@ -484,7 +375,6 @@ export class TableScene {
     }
 
     if (m.table.length === 0 && !m.resolving) this.lastOutcome = '';
-    this.applyGlitch();
     this.updatePiles();
   }
 
@@ -496,7 +386,6 @@ export class TableScene {
     const w = view.w * scale;
     const h = view.h * scale;
     view.setDissolved(true);
-    this.fxDirector.hit(0.9, 1000); // the Super card moment
     const colors = [INK, PAPER, PAPER, RED, ACID];
     for (let i = 0; i < 30; i++) {
       const g = new Graphics();
@@ -537,7 +426,7 @@ export class TableScene {
   }
 
   private createView(card: Card, m: Metrics): CardView {
-    const view = new CardView(card, m.cardW, m.cardH, true, isSuper(card) && this.hologram ? this.hologram : undefined);
+    const view = new CardView(card, m.cardW, m.cardH, true);
     view.root.on('pointerdown', (e: FederatedPointerEvent) => this.onCardDown(view, e));
     return view;
   }
@@ -593,7 +482,7 @@ export class TableScene {
   private playTrumpReveal(card: Card, mine: boolean): void {
     if (!this.ready) return;
     const m = this.metrics;
-    const temp = new CardView(card, m.cardW, m.cardH, true, isSuper(card) && this.hologram ? this.hologram : undefined);
+    const temp = new CardView(card, m.cardW, m.cardH, true);
     const from = trumpSlot(m);
     temp.root.position.set(from.x, from.y);
     temp.root.rotation = from.rotation;
@@ -800,7 +689,6 @@ export class TableScene {
       dy: view.root.y - g.y,
       startX: g.x,
       startY: g.y,
-      startTime: performance.now(),
       moved: false,
     };
     const m = this.model;
@@ -828,7 +716,6 @@ export class TableScene {
 
   private onPointerMove = (e: FederatedPointerEvent): void => {
     const g = e.global;
-    this.hologram?.setPointer(g.x / Math.max(1, this.metrics.width), g.y / Math.max(1, this.metrics.height));
     const d = this.drag;
     if (!d) return;
     if (!d.moved && Math.hypot(g.x - d.startX, g.y - d.startY) > 7) d.moved = true;
@@ -849,7 +736,10 @@ export class TableScene {
       return;
     }
     const g = e.global;
-    const quick = !d.moved && performance.now() - d.startTime < 350;
+    // Any release without movement is a tap, however long the finger rested:
+    // dropping a card back where it was would be a no-op anyway, and a slow
+    // frame must not turn a tap into an ignored move.
+    const quick = !d.moved;
     if (quick) {
       this.quickPlay(d.view);
       return;

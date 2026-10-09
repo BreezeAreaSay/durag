@@ -22,6 +22,7 @@ var (
 	ErrDefenderCannotAttack = ruleErr("DEFENDER_CANNOT_ATTACK", "the defender cannot throw cards in")
 	ErrRankMismatch         = ruleErr("RANK_MISMATCH", "only ranks already on the table may be thrown in")
 	ErrDefenderNoCards      = ruleErr("DEFENDER_HAS_NO_CARDS", "the defender has no cards left to beat with")
+	ErrTooManyAttacks       = ruleErr("TOO_MANY_ATTACKS", "the defender has no card left for one more attack")
 	ErrNotDefender          = ruleErr("NOT_DEFENDER", "only the defender may beat cards")
 	ErrDefenderIsTaking     = ruleErr("DEFENDER_TAKING", "the defender already decided to take the cards")
 	ErrTargetNotOnTable     = ruleErr("TARGET_NOT_ON_TABLE", "target card is not on the table")
@@ -128,15 +129,17 @@ func (s *GameState) ValidateTakeStump(playerID string) error {
 // ThrowInAllowed reports whether attackers may currently add cards to the
 // table: the bout must be open, and the defender must either still hold cards
 // or have announced that they take (then everything goes to them anyway).
+// ThrowInAllowed reports whether one more attack card may be put on the
+// table. Classic limit: the defender must hold a card for every attack still
+// waiting for a defence, whether they are beating or taking. It closes the
+// race where a throw-in slips in just before the defender plays their last
+// card and leaves them "defending" with an empty hand.
 func (s *GameState) ThrowInAllowed() bool {
 	if s.TableEmpty() {
 		return false
 	}
-	if s.DefenderTaking {
-		return true
-	}
 	d := s.Defender()
-	return d != nil && len(d.Hand) > 0
+	return d != nil && s.UndefendedCount() < len(d.Hand)
 }
 
 // CanThrowIn reports whether the player holds at least one card that could be
@@ -186,7 +189,10 @@ func (s *GameState) validateAttack(p *Player, card Card) error {
 		return ErrRankMismatch
 	}
 	if !s.ThrowInAllowed() {
-		return ErrDefenderNoCards
+		if d := s.Defender(); d != nil && len(d.Hand) == 0 {
+			return ErrDefenderNoCards
+		}
+		return ErrTooManyAttacks
 	}
 	return nil
 }

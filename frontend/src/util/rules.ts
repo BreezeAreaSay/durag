@@ -52,7 +52,10 @@ export function roleOf(state: GameState, playerId: string): Role {
 export function canThrowIn(state: GameState, card: Card): boolean {
   if (state.table_order.length === 0) return false;
   const defender = state.players.find((p) => p.id === state.defender_id);
-  if (!state.defender_taking && (!defender || defender.hand_count === 0)) return false;
+  // classic limit (server: ThrowInAllowed): the defender must hold a card for
+  // every attack still waiting, whether they are beating or taking
+  const undefended = tablePairs(state).filter((p) => !p.defense).length;
+  if (!defender || defender.hand_count <= undefended) return false;
   return tableRanks(state).has(card.rank);
 }
 

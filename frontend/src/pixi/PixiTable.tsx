@@ -6,7 +6,6 @@ import type { Connection } from '../state/GameContext';
 interface Props {
   model: SceneModel;
   reject: { cardId: string; nonce: number } | null;
-  fx: boolean;
   /** Height of the HTML panel at the top; the table keeps clear of it. */
   topInset: number;
   labels: SceneLabels;
@@ -26,15 +25,13 @@ declare global {
 const DEBUG = typeof location !== 'undefined' && new URLSearchParams(location.search).has('debug');
 
 /** Mounts the PixiJS table once and streams model updates into it. */
-export function PixiTable({ model, reject, fx, topInset, labels, connection, onPlay, onTransfer, onTakeStump }: Props) {
+export function PixiTable({ model, reject, topInset, labels, connection, onPlay, onTransfer, onTakeStump }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<TableScene | null>(null);
   // bumped when the WebGL context is lost: the scene is torn down and rebuilt
   const [generation, setGeneration] = useState(0);
   const modelRef = useRef(model);
   modelRef.current = model;
-  const fxRef = useRef(fx);
-  fxRef.current = fx;
   const topRef = useRef(topInset);
   topRef.current = topInset;
   const labelsRef = useRef(labels);
@@ -56,7 +53,7 @@ export function PixiTable({ model, reject, fx, topInset, labels, connection, onP
           setGeneration((g) => g + 1);
         },
       },
-      { fx: fxRef.current, topInset: topRef.current, labels: labelsRef.current },
+      { topInset: topRef.current, labels: labelsRef.current },
     );
     scene
       .init(host)
@@ -67,7 +64,6 @@ export function PixiTable({ model, reject, fx, topInset, labels, connection, onP
         }
         sceneRef.current = scene;
         if (DEBUG) window.__durag = scene;
-        scene.setFx(fxRef.current);
         scene.update(modelRef.current);
       })
       .catch((err: unknown) => {
@@ -89,9 +85,6 @@ export function PixiTable({ model, reject, fx, topInset, labels, connection, onP
     if (reject) sceneRef.current?.rejectCard(reject.cardId);
   }, [reject]);
 
-  useEffect(() => {
-    sceneRef.current?.setFx(fx);
-  }, [fx]);
 
   useEffect(() => {
     sceneRef.current?.setTopInset(topInset);

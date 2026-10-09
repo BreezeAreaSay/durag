@@ -123,31 +123,69 @@ func TestValidateThrowIn(t *testing.T) {
 	wantErr(t, err, ErrDefenderCannotAttack)
 }
 
-func TestThrowInBlockedWhenDefenderHasNoCardsUnlessTaking(t *testing.T) {
+func TestThrowInLimitedByDefenderHand(t *testing.T) {
+	e, s := threePlayers(t)
+	setHand(t, s, "B", "H_10", "S_10")
+	if err := e.PlayCard(s, "A", "H_7", ""); err != nil {
+		t.Fatal(err)
+	}
+	// one undefended card, two in the defender's hand: room for one more
+	if err := e.PlayCard(s, "A", "S_7", ""); err != nil {
+		t.Fatalf("second attack while the defender can still cover it: %v", err)
+	}
+	// two undefended, two in hand: the table is full
+	setHand(t, s, "C", "C_7")
+	_, err := s.ValidatePlay("C", "C_7", "")
+	wantErr(t, err, ErrTooManyAttacks)
+	if s.CanThrowIn(s.Player("C")) {
+		t.Fatal("a full table must count as nothing to throw in")
+	}
+	// the defender beats one: one undefended, one card left — still full
+	if err := e.PlayCard(s, "B", "H_10", "H_7"); err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.ValidatePlay("C", "C_7", "")
+	wantErr(t, err, ErrTooManyAttacks)
+	// the last card beats the last attack: the bout is over at once, the
+	// defender is never left "defending" with an empty hand
+	if err := e.PlayCard(s, "B", "S_10", "S_7"); err != nil {
+		t.Fatal(err)
+	}
+	if s.UndefendedCount() != 0 || !(s.Phase == PhaseResolving || s.TableEmpty()) {
+		t.Fatalf("bout should be finished: phase=%q table=%v", s.Phase, s.TableOrder)
+	}
+	if _, err := s.ValidatePlay("C", "C_7", ""); err == nil {
+		t.Fatal("throw-in after the defender's last card must be rejected")
+	}
+}
+
+func TestThrowInBlockedWhenDefenderHasNoCards(t *testing.T) {
 	e, s := threePlayers(t)
 	setHand(t, s, "B", "H_10")
 	if err := e.PlayCard(s, "A", "H_7", ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.PlayCard(s, "A", "S_7", ""); err != nil {
-		t.Fatalf("second attack while defender still has a card: %v", err)
-	}
-	// defender beats one and is left without cards
-	if err := e.PlayCard(s, "B", "H_10", "H_7"); err != nil {
-		t.Fatal(err)
-	}
 	setHand(t, s, "C", "C_7")
 	_, err := s.ValidatePlay("C", "C_7", "")
-	wantErr(t, err, ErrDefenderNoCards)
-	// once the defender takes, attackers may pile on again
+	wantErr(t, err, ErrTooManyAttacks)
+	// a defender who is taking can be given cards only while they have a card
+	// for each of them; with three in hand that is three attacks in total
+	setHand(t, s, "B", "H_10", "D_2", "C_3")
 	if err := e.TakeCards(s, "B"); err != nil {
 		t.Fatal(err)
 	}
 	if !s.DefenderTaking {
 		t.Fatal("defender should be taking")
 	}
-	if _, err := s.ValidatePlay("C", "C_7", ""); err != nil {
+	setHand(t, s, "C", "C_7", "D_7")
+	if err := e.PlayCard(s, "C", "C_7", ""); err != nil {
 		t.Fatalf("throw-in on a taking defender: %v", err)
+	}
+	if err := e.PlayCard(s, "C", "D_7", ""); err != nil {
+		t.Fatalf("third attack on a defender holding three: %v", err)
+	}
+	if s.ThrowInAllowed() {
+		t.Fatal("three attacks on a defender holding three cards: the table is full")
 	}
 }
 

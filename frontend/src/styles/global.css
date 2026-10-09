@@ -536,10 +536,6 @@ body::after {
   background: var(--paper);
   transform: rotate(-2deg);
 }
-.chip--toggle {
-  cursor: pointer;
-  font-family: var(--display);
-}
 
 /* status plates: strips of acid tape stuck on crooked, with torn ends */
 .status {

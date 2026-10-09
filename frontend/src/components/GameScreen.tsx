@@ -7,7 +7,6 @@ import { toSceneModel } from '../pixi/model';
 import { computeMetrics } from '../pixi/layout';
 import { useGame } from '../state/GameContext';
 import { closingConfirmation, haptic } from '../telegram/useTelegram';
-import { getFxSetting, setFxSetting } from '../state/settings';
 import { t } from '../i18n';
 import type { GameState } from '../types/protocol';
 
@@ -17,18 +16,11 @@ interface Props {
 
 export function GameScreen({ state }: Props) {
   const { selfId, playCard, transfer, takeStump, lastError, reactions, react, connection } = useGame();
-  const [fx, setFx] = useState(getFxSetting);
   const [panelOpen, setPanelOpen] = useState(false);
   const [hudTop, setHudTop] = useState(150);
   const [size, setSize] = useState({ w: window.innerWidth, h: window.innerHeight });
   const gameRef = useRef<HTMLDivElement>(null);
 
-  const toggleFx = useCallback(() => {
-    setFx((v) => {
-      setFxSetting(!v);
-      return !v;
-    });
-  }, []);
   const onTopHeight = useCallback((h: number) => setHudTop((prev) => (Math.abs(prev - h) < 1 ? prev : Math.round(h))), []);
   const onAvatarClick = useCallback(() => setPanelOpen(true), []);
 
@@ -68,7 +60,6 @@ export function GameScreen({ state }: Props) {
         <PixiTable
           model={model}
           reject={reject}
-          fx={fx}
           topInset={hudTop}
           labels={labels}
           connection={connection}
@@ -86,7 +77,7 @@ export function GameScreen({ state }: Props) {
           }}
         />
       ) : null}
-      <Hud state={state} fx={fx} onToggleFx={toggleFx} handTop={metrics.handTop} reactions={reactions} onAvatarClick={onAvatarClick} onTopHeight={onTopHeight} />
+      <Hud state={state} handTop={metrics.handTop} reactions={reactions} onAvatarClick={onAvatarClick} onTopHeight={onTopHeight} />
       {resolving ? (
         <div className={`stamp ${state.resolve_outcome === 'took' ? 'stamp--took' : ''}`} key={`${state.bout_number}-${state.resolve_outcome}`}>
           {state.resolve_outcome === 'took' ? t('game.takesStamp', { name: defenderName }) : t('game.bitoStamp')}

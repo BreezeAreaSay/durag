@@ -23,6 +23,7 @@ const CHROME = process.env.CHROME_PATH;
 const ROOM = 'EG' + Math.random().toString(36).slice(2, 6).toUpperCase();
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
 const problems = [];
+const serverErrors = [];
 
 function cardFromId(id) {
   if (id === 'RJ' || id === 'BJ') return { id, rank: 15 };
@@ -66,10 +67,14 @@ class Bot {
 
 function act(bot) {
   const s = bot.state;
-  if (bot.frozen || !s || s.status !== 'playing' || s.phase === 'resolving' || (s.stump_pending?.length ?? 0) > 0) return;
+  if (bot.frozen || !s || s.status !== 'playing' || s.phase === 'resolving') return;
   if (s.bout_number !== bot.bout) { bot.bout = s.bout_number; bot.skip.clear(); }
   const me = s.players.find((p) => p.id === s.viewer_id);
   if (!me || me.out) return;
+  if ((s.stump_pending?.length ?? 0) > 0) {
+    if (s.stump_pending.includes(me.id)) bot.once('stump', () => bot.send({ type: 'TAKE_STUMP' }));
+    return;
+  }
   const order = s.table_order ?? [];
   const undefended = order.filter((id) => !(s.table_cards[id]?.length));
   const hand = me.hand ?? [];
@@ -79,8 +84,9 @@ function act(bot) {
   }
   if (s.current_turn_player_id !== me.id) return;
   if (order.length === 0) {
-    // Only the face-down trump is left: hand this seat to the browser, which draws it.
-    if (s.deck_count === 0 && !s.trump_revealed) { bot.frozen = true; bot.onFrozen?.(s); return; }
+    // The deck is nearly gone: hand this seat to the browser, which draws the
+    // last cards one per bout and therefore the face-down trump as well.
+    if (s.deck_count <= 4 && !s.trump_revealed) { bot.frozen = true; bot.onFrozen?.(s); return; }
     const card = hand.find((c) => !bot.skip.has(c.id));
     if (card) bot.once('attack:' + card.id, () => bot.send({ type: 'PLAY_CARD', payload: { card_id: card.id } }));
     return;
@@ -107,10 +113,17 @@ try {
   for (const b of bots) b.onState = (bot) => act(bot);
   alice.send({ type: 'READY', payload: { ready: true } });
   bob.send({ type: 'READY', payload: { ready: true } });
-  const watchdog = new Promise((_, reject) => setTimeout(() => reject(new Error('the deck did not drain in 150s')), 150000));
+  const watchdog = new Promise((_, reject) => setTimeout(() => {
+    const dump = bots.map((b) => {
+      const s = b.state;
+      const me = s?.players.find((p) => p.id === s.viewer_id);
+      return `${b.name}: bout=${s?.bout_number} deck=${s?.deck_count} phase=${s?.phase} turn=${s?.current_turn_player_id === me?.id ? 'me' : 'other'} defender=${s?.defender_id === me?.id ? 'me' : 'other'} taking=${s?.defender_taking} table=${JSON.stringify(s?.table_cards)} hand=${me?.hand?.map((c) => c.id).join(',')} passed=${me?.passed} errors=${JSON.stringify(b.errors.slice(-3))} acted=${[...b.acted].slice(-4)}`;
+    });
+    reject(new Error('the deck did not drain in 60s\n' + dump.join('\n')));
+  }, 60000));
   const { bot: seat, state: s0 } = await Promise.race([frozen, watchdog]);
   const names = Object.fromEntries(s0.players.map((p) => [p.id, p.name]));
-  log(`bots stopped after bout ${s0.bout_number}: only the trump is left; attacker=${seat.name}; hands=${s0.players.map((p) => `${p.name}:${p.hand_count}+${p.stump_count}`).join(' ')}`);
+  log(`bots stopped after bout ${s0.bout_number}: deck=${s0.deck_count}+trump; attacker=${seat.name}; hands=${s0.players.map((p) => `${p.name}:${p.hand_count}+${p.stump_count}`).join(' ')}`);
   seat.ws.close(); // the browser takes this seat; the taker bot keeps playing
 
   browser = await chromium.launch({
@@ -126,6 +139,13 @@ try {
     const p = await ctx.newPage();
     p.on('console', (m) => { if (m.type() === 'error' && !m.location()?.url?.includes('telegram.org')) problems.push(`[${bot.name}] ${m.text()}`); });
     p.on('pageerror', (e) => problems.push(`[${bot.name}] ${e.message}`));
+    // every ERROR frame the page receives, for diagnostics
+    p.on('websocket', (ws) => ws.on('framereceived', (f) => {
+      try {
+        const m = JSON.parse(String(f.payload));
+        if (m.type === 'ERROR') serverErrors.push(`${new Date().toISOString().slice(11, 23)} ${bot.name}: ${JSON.stringify(m.payload)}`);
+      } catch { /* not json */ }
+    }));
     await p.goto(BASE + (debug ? '?debug=1' : ''));
     await p.waitForSelector('canvas', { timeout: 15000 });
     return p;
@@ -138,37 +158,67 @@ try {
   // One bout through the real UI: tap the rightmost card (never covered by a
   // neighbour), let the taker bot take, pass when the UI offers it, wait for
   // the next attack turn or the stump step.
+  const until = async (label, pred, timeoutMs) => {
+    const t0 = Date.now();
+    for (;;) {
+      const v = await pred();
+      if (v) return v;
+      if (Date.now() - t0 > timeoutMs) throw new Error(`${label}: timed out after ${timeoutMs}ms`);
+      await P.waitForTimeout(60);
+    }
+  };
   async function playBout(label) {
-    await P.waitForFunction(() => document.querySelector('.status')?.textContent?.includes('АТАКУЙ'), null, { timeout: 20000 });
+    await until(`${label}: my attack turn`, async () => ((await status(P)) ?? '').includes('АТАКУЙ'), 20000);
     await P.waitForTimeout(450); // let the stop-motion tweens settle
     const before = await snap();
     const card = before.hand[before.hand.length - 1];
     if (!card || card.missing || !card.visible) throw new Error(`${label}: no tappable hand card: ${JSON.stringify(before)}`);
     log(`${label}: tap ${card.id} at ${card.x},${card.y} (hand: ${before.hand.map((c) => `${c.id}@${c.x},${c.y}${c.visible ? '' : '!'}`).join(' ')})`);
-    await P.mouse.click(card.x, card.y);
-    const moved = await P.waitForFunction(() => !document.querySelector('.status')?.textContent?.includes('АТАКУЙ'), null, { timeout: 5000 }).then(() => true).catch(() => false);
-    if (!moved) {
-      const now = await snap();
-      const toast = await P.locator('.toast').textContent().catch(() => null);
-      await P.screenshot({ path: join(here, 'shot-bout-fail.png') });
-      throw new Error(`${label}: the tap did not become a move; toast=${toast} snapshot=${JSON.stringify(now)}`);
+    const errorsBefore = serverErrors.length;
+    // The server confirms the attack with a new state version (polled through
+    // CDP, so a throttled requestAnimationFrame cannot hide a fast bout).
+    const tapped = async () => {
+      await P.mouse.click(card.x, card.y);
+      return until(`${label}: confirmation`, async () => {
+        const s = await snap();
+        if (s.version > before.version) return 'moved';
+        const toast = await P.locator('.toast').textContent({ timeout: 10 }).catch(() => null);
+        return toast ? `toast: ${toast}` : null;
+      }, 4000).catch(() => 'nothing');
+    };
+    let result = await tapped();
+    if (result !== 'moved') {
+      // a tap that did not land is a harness timing issue only if a second one works
+      log(`${label}: first tap -> ${result}; snapshot=${JSON.stringify(await snap())}; retrying`);
+      await P.waitForTimeout(400);
+      result = await tapped();
+      if (result !== 'moved') {
+        await P.screenshot({ path: join(here, 'shot-bout-fail.png') });
+        throw new Error(`${label}: the tap did not become a move twice (${result}); server errors: ${JSON.stringify(serverErrors.slice(errorsBefore))}; snapshot=${JSON.stringify(await snap())}`);
+      }
+      problems.push(`${label}: the first tap did not land (${result}); the retry did`);
     }
-    const deadline = Date.now() + 20000;
-    for (;;) {
-      if (Date.now() > deadline) throw new Error(`${label}: the bout did not end`);
+    return until(`${label}: end of the bout`, async () => {
       if (await P.locator('button:has-text("ВЗЯТЬ ПЕНЁК")').count()) return 'stump';
       const st = (await status(P)) ?? '';
-      if (st.includes('АТАКУЙ')) return 'next';
+      const s = await snap();
+      if (st.includes('АТАКУЙ') && s.table === 0 && s.version > before.version) return 'next';
       const bito = P.locator('button:has-text("БИТО")');
       if (await bito.count()) await bito.click().catch(() => {});
-      await P.waitForTimeout(100);
-    }
+      return null;
+    }, 20000);
   }
 
-  let outcome = await playBout('bout-1');
-  // The refill after that bout handed us the last card: the trump. Its reveal
-  // animation must end with the card visible in the hand.
-  await P.waitForFunction(() => window.__durag?.debugSnapshot()?.trumpRevealed === true, null, { timeout: 5000 });
+  // Draw the rest of the deck one card per bout; the last draw is the trump
+  // and its reveal animation must end with the card visible in the hand.
+  let n = 0;
+  let outcome = 'next';
+  while (outcome === 'next' && n < 8) {
+    n++;
+    outcome = await playBout(`bout-${n}`);
+    if ((await snap())?.trumpRevealed) break;
+  }
+  if (outcome !== 'next') throw new Error(`expected to keep attacking until the trump is drawn, got ${outcome} after ${n} bouts`);
   await P.waitForTimeout(700);
   const mid = await snap();
   log(`trump reveal running: hidden=${mid.revealHidden} temp=${mid.revealTemp} suit=${mid.trumpSuit}`);
@@ -179,11 +229,10 @@ try {
   if (after.revealHidden !== null || after.revealTemp) problems.push('the trump reveal did not finish: ' + JSON.stringify(after));
   if (broken.length) problems.push('hand cards hidden after the trump reveal: ' + JSON.stringify(broken));
   if (after.drag || after.pending.length) problems.push(`stale drag/pending after the reveal: ${JSON.stringify({ drag: after.drag, pending: after.pending })}`);
-  log(`after the reveal: ${after.hand.length} cards in hand, hidden=${broken.length}, trump=${after.trumpSuit}, fx=${JSON.stringify(after.fx)}`);
+  log(`after the reveal: ${after.hand.length} cards in hand, hidden=${broken.length}, trump=${after.trumpSuit}`);
   await P.screenshot({ path: join(here, 'shot-after-reveal.png') });
 
-  let n = 1;
-  while (outcome === 'next' && n < 12) {
+  while (outcome === 'next' && n < 18) {
     n++;
     outcome = await playBout(`bout-${n}`);
   }
@@ -218,5 +267,6 @@ try {
   for (const b of bots) try { b.ws?.close(); } catch {}
   await browser?.close();
 }
+if (serverErrors.length) log('server ERROR frames seen by the browsers:\n' + serverErrors.join('\n'));
 if (problems.length) { console.error('PROBLEMS:\n' + problems.join('\n')); process.exit(1); }
 log('endgame test OK');

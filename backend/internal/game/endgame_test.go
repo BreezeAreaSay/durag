@@ -222,7 +222,9 @@ func TestStumpTakenImmediatelyWithoutDelay(t *testing.T) {
 	}
 }
 
-func TestDefenderWithoutCardsMustTakeTheTable(t *testing.T) {
+func TestDefenderOutOfCardsEndsTheBoutBeforeAnyThrowIn(t *testing.T) {
+	// The defender's last card closes the bout at once: nobody can throw in
+	// beyond their hand, so they are never left "defending" with no cards.
 	e, s := newPlaying(t, "A", "B")
 	setRoles(s, "A", "B")
 	setHand(t, s, "A", "H_7", "S_7", "D_9")
@@ -232,25 +234,28 @@ func TestDefenderWithoutCardsMustTakeTheTable(t *testing.T) {
 	setTrump(t, s, "C_5", true)
 	s.Deck = []Card{}
 	s.DiscardCount = DeckSize - countCards(t, s)
-	_ = e.PlayCard(s, "A", "H_7", "")
-	_ = e.PlayCard(s, "A", "S_7", "")
+	if err := e.PlayCard(s, "A", "H_7", ""); err != nil {
+		t.Fatal(err)
+	}
+	// one card in the defender's hand, one attack waiting: the table is full
+	wantErr(t, e.PlayCard(s, "A", "S_7", ""), ErrTooManyAttacks)
 	if err := e.PlayCard(s, "B", "H_10", "H_7"); err != nil {
 		t.Fatal(err)
 	}
 	b := s.Player("B")
-	if len(b.Hand) != 0 || len(b.Stump) != 2 {
-		t.Fatalf("the stump stays put mid-bout: hand %v stump %v", b.Hand, b.Stump)
+	if !s.TableEmpty() {
+		t.Fatalf("the bout should be over, table %v", s.TableOrder)
 	}
-	wantErr(t, e.TakeStump(s, "B"), ErrNoStump)
-	// nothing left to beat with: the only option is to take
-	if err := e.TakeCards(s, "B"); err != nil {
-		t.Fatal(err)
+	// after the bout the stump is picked up (immediately in tests) and the
+	// successful defender leads the next bout with it
+	if len(b.Hand) != 2 || len(b.Stump) != 0 {
+		t.Fatalf("stump should be in hand after the bout: hand %v stump %v", b.Hand, b.Stump)
 	}
-	if !s.TableEmpty() || len(b.Hand) != 3 {
-		t.Fatalf("B took the table: %v", b.Hand)
+	if s.StumpsPending() || s.CurrentTurn != "B" {
+		t.Fatalf("B should lead now: pending=%v turn=%s", s.StumpPending, s.CurrentTurn)
 	}
-	if s.StumpsPending() {
-		t.Fatal("B has cards again, no stump step")
+	if got := countCards(t, s); got != DeckSize {
+		t.Fatalf("cards went missing: %d of %d accounted for", got, DeckSize)
 	}
 }
 

@@ -11,8 +11,6 @@ import type { GameState, Player } from '../types/protocol';
 
 interface Props {
   state: GameState;
-  fx: boolean;
-  onToggleFx(): void;
   /** y (CSS px) where the hand starts; the action band sits right above it. */
   handTop: number;
   reactions: Record<string, Reaction>;
@@ -73,7 +71,7 @@ function statusLine(state: GameState, selfId: string): string {
   }
 }
 
-export function Hud({ state, fx, onToggleFx, handTop, reactions, onAvatarClick, onTopHeight }: Props) {
+export function Hud({ state, handTop, reactions, onAvatarClick, onTopHeight }: Props) {
   const { selfId, take, pass, takeStump, leave, connection } = useGame();
   const topRef = useRef<HTMLElement>(null);
 
@@ -116,9 +114,6 @@ export function Hud({ state, fx, onToggleFx, handTop, reactions, onAvatarClick, 
           <span className="chip chip--ghost">
             {t('game.bout')} {state.bout_number}
           </span>
-          <button className="chip chip--toggle" onClick={onToggleFx} title="halftone / chromatic / hologram shaders">
-            {fx ? t('hud.fxOn') : t('hud.fxOff')}
-          </button>
           <button className="chip chip--link" onClick={leave}>
             {t('game.leave')}
           </button>

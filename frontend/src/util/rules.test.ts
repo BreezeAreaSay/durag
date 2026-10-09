@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canBeat, canTransferWith, roleOf, tableRanks } from './rules';
+import { canBeat, canThrowIn, canTransferWith, roleOf, tableRanks } from './rules';
 import { cardFromId } from './cards';
 import type { GameState } from '../types/protocol';
 
@@ -92,5 +92,29 @@ describe('table helpers', () => {
     expect(canTransferWith(open, c('SC'))).toBe(false);
     const defended = state({ table_order: ['H_7'], table_cards: { H_7: [c('H_9')] } });
     expect(canTransferWith(defended, c('D_7'))).toBe(false);
+  });
+});
+
+describe('canThrowIn mirrors the defender-hand limit', () => {
+  const base = (handCount: number, taking = false) =>
+    state({
+      table_cards: { H_7: [], S_7: [] },
+      table_order: ['H_7', 'S_7'],
+      defender_id: 'B',
+      defender_taking: taking,
+      players: [
+        { id: 'A', name: 'A', hand: [], stump: [], is_ready: true, connected: true, passed: false, out: false, hand_count: 6, stump_count: 2 },
+        { id: 'B', name: 'B', hand: [], stump: [], is_ready: true, connected: true, passed: false, out: false, hand_count: handCount, stump_count: 2 },
+      ],
+    });
+  it('needs a defender card for every undefended attack', () => {
+    expect(canThrowIn(base(3), c('C_7'))).toBe(true);
+    expect(canThrowIn(base(2), c('C_7'))).toBe(false);
+    expect(canThrowIn(base(0), c('C_7'))).toBe(false);
+    expect(canThrowIn(base(3), c('C_9'))).toBe(false); // rank not on the table
+  });
+  it('applies while the defender is taking too', () => {
+    expect(canThrowIn(base(3, true), c('C_7'))).toBe(true);
+    expect(canThrowIn(base(2, true), c('C_7'))).toBe(false);
   });
 });

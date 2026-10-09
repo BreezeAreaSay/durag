@@ -1,7 +1,9 @@
-// A playing card drawn entirely with vector primitives: white face, 3px ink
-// border, a hard black shadow offset by 6px (no blur), huge corner index in
-// a wide grotesque and a crisp SVG suit. Special cards get their own art.
-import { Container, Graphics, Text, type Filter } from 'pixi.js';
+// A playing card drawn entirely with vector primitives: straight paper face
+// with a 3px ink border, a pale offset double print for a shadow (no blur),
+// huge corner index in a wide grotesque and a crisp SVG suit. Special cards
+// get their own art. No shader filters anywhere: WebKit on iPhones rendered
+// filtered cards as black rectangles.
+import { Container, FillGradient, Graphics, Text } from 'pixi.js';
 import type { Card } from '../types/protocol';
 import { cardColor, isJoker, isSuper, rankLabel } from '../util/cards';
 import { drawSuit } from './suits';
@@ -13,36 +15,7 @@ const ACID = 0xe6ff00;
 const SHADOW_DX = 6;
 const SHADOW_DY = 7;
 const FONT = 'Unbounded, "Arial Black", Impact, sans-serif';
-
-function hash(seed: string, i: number): number {
-  let h = 2166136261 ^ i;
-  for (let k = 0; k < seed.length; k++) h = Math.imul(h ^ seed.charCodeAt(k), 16777619);
-  h ^= h >>> 13;
-  h = Math.imul(h, 1274126177);
-  return ((h >>> 0) % 1000) / 1000;
-}
-
-/**
- * A rectangle whose edges wobble by a pixel or two, like a badly printed
- * flyer. Deterministic per seed so a card always has the same contour.
- */
-export function jaggedRect(w: number, h: number, seed: string, grow = 0, step = 7, jitter = 1.6): number[] {
-  const pts: number[] = [];
-  const x0 = -w / 2 - grow;
-  const y0 = -h / 2 - grow;
-  const x1 = w / 2 + grow;
-  const y1 = h / 2 + grow;
-  let i = 0;
-  const push = (x: number, y: number, nx: number, ny: number) => {
-    const j = (hash(seed, i++) - 0.5) * 2 * jitter;
-    pts.push(x + nx * j, y + ny * j);
-  };
-  for (let x = x0; x < x1; x += step) push(x, y0, 0, 1);
-  for (let y = y0; y < y1; y += step) push(x1, y, 1, 0);
-  for (let x = x1; x > x0; x -= step) push(x, y1, 0, 1);
-  for (let y = y1; y > y0; y -= step) push(x0, y, 1, 0);
-  return pts;
-}
+const CORNER = 4; // card corner radius: straight, calm cards (the torn contours got in the way)
 
 export class CardView {
   readonly root = new Container();
@@ -60,13 +33,13 @@ export class CardView {
   private _faceUp = true;
   private dissolved = false;
 
-  constructor(card: Card, w: number, h: number, faceUp = true, hologram?: Filter) {
+  constructor(card: Card, w: number, h: number, faceUp = true) {
     this.card = card;
     this.w = w;
     this.h = h;
     this.buildGlow();
     this.buildShadow();
-    this.buildFace(hologram);
+    this.buildFace();
     this.buildBack();
     this.buildHighlight();
     this.root.addChild(this.glow, this.shadow, this.back, this.face, this.highlight);
@@ -90,12 +63,6 @@ export class CardView {
 
   setPending(on: boolean): void {
     this.root.alpha = on ? 0.82 : 1;
-  }
-
-  /** Attaches or removes the pointer-driven hologram (Super card only). */
-  setHologram(filter: Filter | null): void {
-    if (!isSuper(this.card)) return;
-    this.face.filters = filter ? [filter] : null;
   }
 
   setLifted(on: boolean): void {
@@ -140,33 +107,33 @@ export class CardView {
   private buildShadow(): void {
     const { w, h } = this;
     // on dark paper the hard offset "shadow" is a pale misregistered double print
-    this.shadow.poly(jaggedRect(w, h, this.card.id + ':s')).fill({ color: PAPER, alpha: 0.22 });
+    this.shadow.roundRect(-w / 2, -h / 2, w, h, CORNER).fill({ color: PAPER, alpha: 0.22 });
     this.shadow.position.set(SHADOW_DX, SHADOW_DY);
   }
 
   private buildGlow(): void {
     const { w, h } = this;
-    // three jagged rings of falling alpha stand in for a blur: a faint light, not a neon sign
-    this.glow.poly(jaggedRect(w, h, this.card.id + ':g3', 18, 11, 1.5)).fill({ color: ACID, alpha: 0.05 });
-    this.glow.poly(jaggedRect(w, h, this.card.id + ':g2', 11, 10, 1.3)).fill({ color: ACID, alpha: 0.08 });
-    this.glow.poly(jaggedRect(w, h, this.card.id + ':g1', 5, 9, 1.2)).fill({ color: ACID, alpha: 0.14 });
+    // three rings of falling alpha stand in for a blur: a faint light, not a neon sign
+    this.glow.roundRect(-w / 2 - 18, -h / 2 - 18, w + 36, h + 36, CORNER + 18).fill({ color: ACID, alpha: 0.05 });
+    this.glow.roundRect(-w / 2 - 11, -h / 2 - 11, w + 22, h + 22, CORNER + 11).fill({ color: ACID, alpha: 0.08 });
+    this.glow.roundRect(-w / 2 - 5, -h / 2 - 5, w + 10, h + 10, CORNER + 5).fill({ color: ACID, alpha: 0.14 });
     this.glow.visible = false;
   }
 
   private buildHighlight(): void {
     const { w, h } = this;
-    this.highlight.poly(jaggedRect(w, h, this.card.id + ':h', 4, 9, 1.2)).stroke({ width: 4, color: ACID });
+    this.highlight.roundRect(-w / 2 - 4, -h / 2 - 4, w + 8, h + 8, CORNER + 4).stroke({ width: 4, color: ACID });
     this.highlight.visible = false;
   }
 
-  private buildFace(hologram?: Filter): void {
+  private buildFace(): void {
     const { w, h, card } = this;
     const color = cardColor(card) === 'red' ? RED : INK;
-    const plate = new Graphics().poly(jaggedRect(w, h, card.id)).fill({ color: PAPER }).stroke({ width: 3, color: INK, alignment: 0.5 });
+    const plate = new Graphics().roundRect(-w / 2, -h / 2, w, h, CORNER).fill({ color: PAPER }).stroke({ width: 3, color: INK, alignment: 0.5 });
     this.face.addChild(plate);
 
     if (isSuper(card)) {
-      this.buildSuperFace(hologram);
+      this.buildSuperFace();
       return;
     }
     if (isJoker(card)) {
@@ -234,14 +201,31 @@ export class CardView {
     this.face.addChild(badge);
   }
 
-  private buildSuperFace(hologram?: Filter): void {
+  /** The Super card: a static foil — a diagonal rainbow gradient under hatching, no shader. */
+  private buildSuperFace(): void {
     const { w, h } = this;
+    const foil = new FillGradient({
+      type: 'linear',
+      start: { x: 0, y: 0 },
+      end: { x: 1, y: 1 },
+      colorStops: [
+        { offset: 0, color: 0xcf1fff },
+        { offset: 0.3, color: 0xe6ff00 },
+        { offset: 0.55, color: 0x19e6ff },
+        { offset: 0.8, color: 0xff3fb0 },
+        { offset: 1, color: 0xe6ff00 },
+      ],
+      textureSpace: 'local',
+    });
+    const sheet = new Graphics().roundRect(-w / 2 + 3, -h / 2 + 3, w - 6, h - 6, CORNER).fill({ fill: foil, alpha: 0.55 });
+    this.face.addChild(sheet);
+
     const stripes = new Graphics();
     for (let i = -h; i < h; i += 9) {
       stripes.moveTo(-w / 2, i).lineTo(w / 2, i + w * 0.6);
     }
-    stripes.stroke({ width: 2, color: 0xdddddd });
-    const mask = new Graphics().rect(-w / 2 + 2, -h / 2 + 2, w - 4, h - 4).fill({ color: 0xffffff });
+    stripes.stroke({ width: 2, color: PAPER, alpha: 0.7 });
+    const mask = new Graphics().roundRect(-w / 2 + 3, -h / 2 + 3, w - 6, h - 6, CORNER).fill({ color: 0xffffff });
     stripes.mask = mask;
     this.face.addChild(stripes, mask);
 
@@ -263,13 +247,11 @@ export class CardView {
     bg.position.set(0, h * 0.34);
     bg.rotation = word.rotation = -0.06;
     this.face.addChild(bg, word);
-
-    if (hologram) this.face.filters = [hologram];
   }
 
   private buildBack(): void {
     const { w, h } = this;
-    const plate = new Graphics().poly(jaggedRect(w, h, this.card.id + ':b')).fill({ color: INK }).stroke({ width: 2, color: PAPER, alpha: 0.9 });
+    const plate = new Graphics().roundRect(-w / 2, -h / 2, w, h, CORNER).fill({ color: INK }).stroke({ width: 2, color: PAPER, alpha: 0.9 });
     const inner = new Graphics().rect(-w / 2 + 6, -h / 2 + 6, w - 12, h - 12).fill({ color: PAPER });
     const hatch = new Graphics();
     for (let i = -h; i < h + w; i += 7) {
