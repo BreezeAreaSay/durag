@@ -201,7 +201,7 @@ def dotenv_text() -> str:
         f"BOTS={env('BOTS', 'true')}",
         f"LLM_API_KEY={env('LLM_API_KEY')}",
         f"LLM_BASE_URL={env('LLM_BASE_URL', 'https://openrouter.ai/api/v1')}",
-        f"LLM_MODEL={env('LLM_MODEL', 'deepseek/deepseek-chat')}",
+        f"LLM_MODEL={env('LLM_MODEL', 'openrouter/free')}",
         f"LLM_TIMEOUT={env('LLM_TIMEOUT', '10s')}",
         f"DOMAIN={domain}",
         f"CERTBOT_EMAIL={email}",

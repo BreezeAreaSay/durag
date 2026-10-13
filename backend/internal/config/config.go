@@ -97,7 +97,7 @@ func FromEnv() (Config, error) {
 		BotsEnabled:    parseBool(getenv("BOTS", "true")),
 		LLMBaseURL:     getenv("LLM_BASE_URL", "https://openrouter.ai/api/v1"),
 		LLMAPIKey:      strings.TrimSpace(os.Getenv("LLM_API_KEY")),
-		LLMModel:       getenv("LLM_MODEL", "deepseek/deepseek-chat"),
+		LLMModel:       getenv("LLM_MODEL", "openrouter/free"),
 	}
 	var err error
 	if c.RedisDB, err = strconv.Atoi(getenv("REDIS_DB", "0")); err != nil {

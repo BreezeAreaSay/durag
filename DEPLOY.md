@@ -64,7 +64,7 @@ TURN_TIMEOUT=45s                        # таймер хода (0 — выкл�
 BOTS=true                               # кнопка «+ добавить бота» в лобби
 LLM_API_KEY=sk-or-...                   # ключ OpenRouter (или другого OpenAI-совместимого API); пусто — боты играют по правилам
 LLM_BASE_URL=https://openrouter.ai/api/v1
-LLM_MODEL=deepseek/deepseek-chat        # модель у провайдера (напр. qwen/qwen-plus)
+LLM_MODEL=openrouter/free               # бесплатный роутер; список через запятую, напр. openrouter/free,deepseek/deepseek-chat
 ```
 
 `PORT`, `REDIS_ADDR`, `ALLOWED_ORIGINS` в проде задаёт `docker-compose.prod.yml` (`ALLOWED_ORIGINS=https://$DOMAIN`).

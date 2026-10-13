@@ -68,8 +68,8 @@ func main() {
 	case !cfg.BotsEnabled:
 		logger.Info("bots are disabled (BOTS=false)")
 	case cfg.LLMAPIKey != "":
-		bots.Brain = &bot.LLM{BaseURL: cfg.LLMBaseURL, APIKey: cfg.LLMAPIKey, Model: cfg.LLMModel, Timeout: cfg.LLMTimeout}
-		logger.Info("bots: LLM brain", "model", cfg.LLMModel, "base_url", cfg.LLMBaseURL)
+		bots.Brain = bot.NewLLM(cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.LLMModel, cfg.LLMTimeout)
+		logger.Info("bots: LLM brain", "models", cfg.LLMModel, "base_url", cfg.LLMBaseURL)
 	default:
 		logger.Info("bots: rule-based brain only (set LLM_API_KEY for the LLM brain)")
 	}

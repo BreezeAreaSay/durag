@@ -221,9 +221,25 @@ func (h *Hub) botAct(roomID, botID string, version int64) {
 	h.afterUpdate(roomID, newState)
 }
 
+// worthAsking reports whether a decision has a real choice in it. Forced
+// moves (the only legal move, or nothing but take/pass/stump) are left to
+// the rules: model calls are rate-limited and cost latency.
+func worthAsking(moves []game.Move) bool {
+	if len(moves) < 2 {
+		return false
+	}
+	for _, m := range moves {
+		switch m.Type {
+		case game.MoveAttack, game.MoveThrowIn, game.MoveDefend, game.MoveTransfer:
+			return true
+		}
+	}
+	return false
+}
+
 // decide asks the model when there is one and falls back to the rules.
 func (h *Hub) decide(in bot.Context) (bot.Decision, bool) {
-	if h.bots.Brain != nil {
+	if h.bots.Brain != nil && worthAsking(in.Moves) {
 		timeout := h.bots.LLMTimeout
 		if timeout <= 0 {
 			timeout = 10 * time.Second
@@ -234,7 +250,11 @@ func (h *Hub) decide(in bot.Context) (bot.Decision, bool) {
 		if err == nil && legalMove(in.Moves, d.Move) {
 			return d, true
 		}
-		h.log.Warn("bot: model failed, rule-based fallback", "bot", in.BotID, "err", err)
+		if errors.Is(err, bot.ErrPaused) {
+			h.log.Debug("bot: model paused, rule-based move", "bot", in.BotID, "err", err)
+		} else {
+			h.log.Warn("bot: model failed, rule-based fallback", "bot", in.BotID, "err", err)
+		}
 	}
 	d, err := bot.NewHeuristic(rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64()))).Decide(h.ctx, in)
 	return d, err == nil

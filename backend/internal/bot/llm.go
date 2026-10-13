@@ -9,25 +9,84 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/breezeareasay/durag/backend/internal/game"
 )
 
-// LLM asks a chat model (DeepSeek, Qwen or anything speaking the
+// LLM asks a chat model (OpenRouter, DeepSeek, Qwen or anything speaking the
 // OpenAI-compatible /chat/completions API) for a move, in JSON. Every answer
 // is validated against the legal moves; the caller falls back to the
 // Heuristic on any error.
+//
+// Models are tried in order: an unknown or unavailable model (404, 5xx) or
+// an answer that is not a legal move moves on to the next one. A 429 (rate
+// limit) or 402 (no credits) pauses the model for a while — free tiers are
+// capped per account and per day, and there is no point in paying the
+// timeout on every move while the quota is gone.
 type LLM struct {
-	BaseURL string // e.g. https://api.deepseek.com/v1 or https://dashscope-intl.aliyuncs.com/compatible-mode/v1
+	BaseURL string // e.g. https://openrouter.ai/api/v1, https://api.deepseek.com/v1
 	APIKey  string
-	Model   string // e.g. deepseek-chat, qwen-plus
+	Models  []string // tried in order; "openrouter/free" picks any free model currently available
 	Timeout time.Duration
 	Client  *http.Client
+	// Referer and Title are OpenRouter's optional attribution headers.
+	Referer string
+	Title   string
+
+	mu          sync.Mutex
+	pausedUntil time.Time
+	pauseReason string
 }
 
-// ErrBadAnswer is returned when the model's JSON does not name a legal move.
-var ErrBadAnswer = errors.New("llm: answer is not a legal move")
+// NewLLM builds a client; models is a comma-separated list tried in order.
+func NewLLM(baseURL, apiKey, models string, timeout time.Duration) *LLM {
+	var list []string
+	for _, m := range strings.Split(models, ",") {
+		if m = strings.TrimSpace(m); m != "" {
+			list = append(list, m)
+		}
+	}
+	return &LLM{BaseURL: baseURL, APIKey: apiKey, Models: list, Timeout: timeout, Referer: "https://github.com/breezeareasay/durag", Title: "DURAG"}
+}
+
+var (
+	// ErrBadAnswer is returned when the model's JSON does not name a legal move.
+	ErrBadAnswer = errors.New("llm: answer is not a legal move")
+	// ErrPaused is returned while the model is resting after a rate limit or an empty balance.
+	ErrPaused = errors.New("llm: paused")
+)
+
+// httpError carries the status so Decide can tell a dead model from a dead quota.
+type httpError struct {
+	status int
+	body   string
+}
+
+func (e *httpError) Error() string { return fmt.Sprintf("llm: http %d: %s", e.status, e.body) }
+
+const (
+	pauseAfterRateLimit = 5 * time.Minute
+	pauseAfterNoCredits = time.Hour
+)
+
+// Paused reports whether the model is resting and why.
+func (l *LLM) Paused(now time.Time) (bool, string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if now.Before(l.pausedUntil) {
+		return true, l.pauseReason
+	}
+	return false, ""
+}
+
+func (l *LLM) pause(d time.Duration, reason string) {
+	l.mu.Lock()
+	l.pausedUntil = time.Now().Add(d)
+	l.pauseReason = reason
+	l.mu.Unlock()
+}
 
 type chatRequest struct {
 	Model          string        `json:"model"`
@@ -65,10 +124,17 @@ type answer struct {
 const systemPrompt = `Ты играешь в «Дурака» (вариант DURAG) за одного из игроков. Правила кратко: атакующий кладёт карту, защищающийся бьёт её старшей картой той же масти или козырем (козырь известен только после вскрытия), может перевести картой того же достоинства или взять весь стол. Подкидывать можно карты тех достоинств, что уже на столе, но не больше, чем карт в руке у защищающегося. Джокер бьёт любую карту своего цвета, Супер-карта бьёт всё. Кто остался с картами последним — проиграл.
 Тебе дают твою руку, стол и ПРОНУМЕРОВАННЫЙ список легальных ходов. Выбери лучший ход и ответь СТРОГО одним JSON-объектом вида {"move": <номер хода>, "say": "<короткая реплика до 60 символов или пустая строка>", "emoji": "<один эмодзи из списка 👍 👎 😂 😡 😎 🤔 🔥 💀 🤡 ❤️ 👏 🙏 или пустая строка>"}. Реплика — по-русски, в характере дворового игрока, без оскорблений, не чаще чем в каждом третьем ходе. Никакого текста вне JSON.`
 
-// Decide implements Brain.
+// Decide implements Brain: the first model that answers with a legal move wins.
 func (l *LLM) Decide(ctx context.Context, in Context) (Decision, error) {
 	if len(in.Moves) == 0 {
 		return Decision{}, ErrBadAnswer
+	}
+	if paused, why := l.Paused(time.Now()); paused {
+		return Decision{}, fmt.Errorf("%w: %s", ErrPaused, why)
+	}
+	models := l.Models
+	if len(models) == 0 {
+		models = []string{"openrouter/free"}
 	}
 	timeout := l.Timeout
 	if timeout <= 0 {
@@ -76,27 +142,66 @@ func (l *LLM) Decide(ctx context.Context, in Context) (Decision, error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	body, err := json.Marshal(chatRequest{
-		Model:          l.Model,
-		Messages:       []chatMessage{{Role: "system", Content: systemPrompt}, {Role: "user", Content: Prompt(in)}},
-		Temperature:    0.7,
-		MaxTokens:      160,
-		ResponseFormat: &respFormat{Type: "json_object"},
-	})
+	var lastErr error
+	for _, model := range models {
+		d, err := l.ask(ctx, model, in, true)
+		var he *httpError
+		if errors.As(err, &he) {
+			switch {
+			case he.status == http.StatusBadRequest && strings.Contains(strings.ToLower(he.body), "response_format"):
+				// the provider behind this model does not do JSON mode: the prompt asks for JSON anyway
+				d, err = l.ask(ctx, model, in, false)
+			case he.status == http.StatusPaymentRequired:
+				l.pause(pauseAfterNoCredits, "no credits (HTTP 402)")
+				return Decision{}, err
+			case he.status == http.StatusTooManyRequests:
+				l.pause(pauseAfterRateLimit, "rate limited (HTTP 429)")
+				return Decision{}, err
+			}
+		}
+		if err == nil {
+			return d, nil
+		}
+		lastErr = err
+		if ctx.Err() != nil {
+			return Decision{}, err // out of time: the rules take over
+		}
+	}
+	return Decision{}, lastErr
+}
+
+// ask sends one request for one model and validates the answer.
+func (l *LLM) ask(ctx context.Context, model string, in Context, jsonMode bool) (Decision, error) {
+	req := chatRequest{
+		Model:       model,
+		Messages:    []chatMessage{{Role: "system", Content: systemPrompt}, {Role: "user", Content: Prompt(in)}},
+		Temperature: 0.7,
+		MaxTokens:   160,
+	}
+	if jsonMode {
+		req.ResponseFormat = &respFormat{Type: "json_object"}
+	}
+	body, err := json.Marshal(req)
 	if err != nil {
 		return Decision{}, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(l.BaseURL, "/")+"/chat/completions", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(l.BaseURL, "/")+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
 		return Decision{}, err
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+l.APIKey)
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+l.APIKey)
+	if l.Referer != "" {
+		httpReq.Header.Set("HTTP-Referer", l.Referer)
+	}
+	if l.Title != "" {
+		httpReq.Header.Set("X-Title", l.Title)
+	}
 	client := l.Client
 	if client == nil {
 		client = http.DefaultClient
 	}
-	resp, err := client.Do(req)
+	resp, err := client.Do(httpReq)
 	if err != nil {
 		return Decision{}, err
 	}
@@ -106,7 +211,7 @@ func (l *LLM) Decide(ctx context.Context, in Context) (Decision, error) {
 		return Decision{}, err
 	}
 	if resp.StatusCode/100 != 2 {
-		return Decision{}, fmt.Errorf("llm: http %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+		return Decision{}, &httpError{status: resp.StatusCode, body: strings.TrimSpace(string(raw))}
 	}
 	var cr chatResponse
 	if err := json.Unmarshal(raw, &cr); err != nil {
