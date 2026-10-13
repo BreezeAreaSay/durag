@@ -68,8 +68,25 @@ func main() {
 	case !cfg.BotsEnabled:
 		logger.Info("bots are disabled (BOTS=false)")
 	case cfg.LLMAPIKey != "":
-		bots.Brain = bot.NewLLM(cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.LLMModel, cfg.LLMTimeout)
-		logger.Info("bots: LLM brain", "models", cfg.LLMModel, "base_url", cfg.LLMBaseURL)
+		llm := bot.NewLLM(cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.LLMModel, cfg.LLMTimeout)
+		if cfg.LLMFreeOnly {
+			var dropped []string
+			llm.Models, dropped = bot.FreeOnly(llm.Models)
+			if len(dropped) > 0 {
+				logger.Warn("bots: LLM_FREE_ONLY=true drops paid models from LLM_MODEL", "dropped", dropped, "kept", llm.Models)
+			}
+		}
+		bots.Brain = llm
+		logger.Info("bots: LLM brain", "models", llm.Models, "base_url", cfg.LLMBaseURL, "free_only", cfg.LLMFreeOnly)
+		go func() { // one request so the logs show at once whether the key and a model work
+			probeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			defer cancel()
+			if model, err := llm.Probe(probeCtx); err != nil {
+				logger.Warn("bots: LLM probe failed, bots play by the rules until a model answers", "err", err)
+			} else {
+				logger.Info("bots: LLM probe ok", "model", model)
+			}
+		}()
 	default:
 		logger.Info("bots: rule-based brain only (set LLM_API_KEY for the LLM brain)")
 	}

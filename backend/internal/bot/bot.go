@@ -52,7 +52,8 @@ type Decision struct {
 	Move      game.Move
 	Say       string
 	Emoji     string
-	AdminJoke bool // Say is the fourth-wall line: do not repeat it this game
+	AdminJoke bool   // Say is the fourth-wall line: do not repeat it this game
+	Model     string // which model answered (empty for the rules)
 }
 
 // Brain picks a move. Implementations must return one of in.Moves.

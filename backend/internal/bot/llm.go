@@ -71,6 +71,46 @@ const (
 	pauseAfterNoCredits = time.Hour
 )
 
+// FreeRouter is OpenRouter's router over whatever free model is currently up.
+const FreeRouter = "openrouter/free"
+
+// IsFree reports whether a model id is one OpenRouter serves for free.
+func IsFree(model string) bool {
+	return model == FreeRouter || strings.HasSuffix(model, ":free")
+}
+
+// FreeOnly keeps the free models of a list (the guard behind LLM_FREE_ONLY).
+// With nothing free left it falls back to the free router rather than to a
+// paid model.
+func FreeOnly(models []string) (kept, dropped []string) {
+	for _, m := range models {
+		if IsFree(m) {
+			kept = append(kept, m)
+		} else {
+			dropped = append(dropped, m)
+		}
+	}
+	if len(kept) == 0 {
+		kept = []string{FreeRouter}
+	}
+	return kept, dropped
+}
+
+// pauseForRateLimit reads OpenRouter's reason out of a 429: the per-minute
+// cap clears in a minute, the per-day cap at UTC midnight.
+func pauseForRateLimit(body string, now time.Time) time.Duration {
+	l := strings.ToLower(body)
+	switch {
+	case strings.Contains(l, "per-min") || strings.Contains(l, "per minute"):
+		return time.Minute
+	case strings.Contains(l, "per-day") || strings.Contains(l, "per day") || strings.Contains(l, "daily"):
+		y, m, d := now.UTC().Date()
+		midnight := time.Date(y, m, d+1, 0, 0, 0, 0, time.UTC)
+		return midnight.Sub(now) + time.Minute
+	}
+	return pauseAfterRateLimit
+}
+
 // Paused reports whether the model is resting and why.
 func (l *LLM) Paused(now time.Time) (bool, string) {
 	l.mu.Lock()
@@ -106,6 +146,7 @@ type respFormat struct {
 }
 
 type chatResponse struct {
+	Model   string `json:"model"` // the model that actually answered (routers resolve it)
 	Choices []struct {
 		Message chatMessage `json:"message"`
 	} `json:"choices"`
@@ -155,7 +196,7 @@ func (l *LLM) Decide(ctx context.Context, in Context) (Decision, error) {
 				l.pause(pauseAfterNoCredits, "no credits (HTTP 402)")
 				return Decision{}, err
 			case he.status == http.StatusTooManyRequests:
-				l.pause(pauseAfterRateLimit, "rate limited (HTTP 429)")
+				l.pause(pauseForRateLimit(he.body, time.Now()), "rate limited (HTTP 429)")
 				return Decision{}, err
 			}
 		}
@@ -223,7 +264,39 @@ func (l *LLM) ask(ctx context.Context, model string, in Context, jsonMode bool) 
 	if len(cr.Choices) == 0 {
 		return Decision{}, errors.New("llm: no choices")
 	}
-	return Parse(cr.Choices[0].Message.Content, in)
+	d, err := Parse(cr.Choices[0].Message.Content, in)
+	if err != nil {
+		return Decision{}, err
+	}
+	d.Model = cr.Model
+	if d.Model == "" {
+		d.Model = model
+	}
+	return d, nil
+}
+
+// Probe sends one tiny request so a deployment can see in its logs that the
+// key, the endpoint and at least one model work. It returns the model that
+// answered.
+func (l *LLM) Probe(ctx context.Context) (string, error) {
+	e := game.NewEngine(game.NewRand(1, 1))
+	s := game.NewGameState("PROBE")
+	for _, id := range []string{"a", "b"} {
+		if err := e.Join(s, id, id, ""); err != nil {
+			return "", err
+		}
+	}
+	for _, id := range []string{"a", "b"} {
+		if err := e.SetReady(s, id, true); err != nil {
+			return "", err
+		}
+	}
+	bot := s.CurrentTurn
+	d, err := l.Decide(ctx, Context{State: s.Sanitized(bot), BotID: bot, Moves: s.LegalMoves(bot), Mood: MoodNeutral})
+	if err != nil {
+		return "", err
+	}
+	return d.Model, nil
 }
 
 // Prompt renders the bot's view of the table for the model.

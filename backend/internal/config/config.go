@@ -36,6 +36,7 @@ type Config struct {
 	LLMBaseURL  string
 	LLMAPIKey   string
 	LLMModel    string
+	LLMFreeOnly bool // drop paid model ids from LLM_MODEL (default on)
 	LLMTimeout  time.Duration
 }
 
@@ -98,6 +99,7 @@ func FromEnv() (Config, error) {
 		LLMBaseURL:     getenv("LLM_BASE_URL", "https://openrouter.ai/api/v1"),
 		LLMAPIKey:      strings.TrimSpace(os.Getenv("LLM_API_KEY")),
 		LLMModel:       getenv("LLM_MODEL", "openrouter/free"),
+		LLMFreeOnly:    parseBool(getenv("LLM_FREE_ONLY", "true")),
 	}
 	var err error
 	if c.RedisDB, err = strconv.Atoi(getenv("REDIS_DB", "0")); err != nil {

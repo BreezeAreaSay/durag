@@ -65,6 +65,7 @@ BOTS=true                               # кнопка «+ добавить бо
 LLM_API_KEY=sk-or-...                   # ключ OpenRouter (или другого OpenAI-совместимого API); пусто — боты играют по правилам
 LLM_BASE_URL=https://openrouter.ai/api/v1
 LLM_MODEL=openrouter/free               # бесплатный роутер; список через запятую, напр. openrouter/free,deepseek/deepseek-chat
+LLM_FREE_ONLY=true                      # предохранитель: платные модели из списка отбрасываются, ключ не тратит деньги
 ```
 
 `PORT`, `REDIS_ADDR`, `ALLOWED_ORIGINS` в проде задаёт `docker-compose.prod.yml` (`ALLOWED_ORIGINS=https://$DOMAIN`).

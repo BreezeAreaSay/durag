@@ -219,7 +219,7 @@ func TestLLMPausesAfterRateLimitOrEmptyBalance(t *testing.T) {
 	calls := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		calls++
-		http.Error(w, `{"error":{"message":"Rate limit exceeded: free-models-per-day"}}`, 429)
+		http.Error(w, `{"error":{"message":"Rate limit exceeded: free-models-per-min"}}`, 429)
 	}))
 	defer srv.Close()
 	l := NewLLM(srv.URL, "k", "openrouter/free,deepseek/deepseek-chat", 2*time.Second)
@@ -235,7 +235,41 @@ func TestLLMPausesAfterRateLimitOrEmptyBalance(t *testing.T) {
 	if _, err := l.Decide(context.Background(), in); !errors.Is(err, ErrPaused) || calls != 1 {
 		t.Fatalf("while paused the model must not be called: err=%v calls=%d", err, calls)
 	}
-	if paused, _ := l.Paused(time.Now().Add(pauseAfterRateLimit + time.Second)); paused {
-		t.Fatal("the pause must end")
+	if paused, _ := l.Paused(time.Now().Add(time.Minute + time.Second)); paused {
+		t.Fatal("a per-minute cap pauses for a minute only")
+	}
+}
+
+func TestFreeOnlyAndRateLimitPauses(t *testing.T) {
+	kept, dropped := FreeOnly([]string{"openrouter/free", "deepseek/deepseek-chat", "qwen/qwen3-235b-a22b:free"})
+	if len(kept) != 2 || kept[0] != "openrouter/free" || kept[1] != "qwen/qwen3-235b-a22b:free" || len(dropped) != 1 || dropped[0] != "deepseek/deepseek-chat" {
+		t.Fatalf("kept %v dropped %v", kept, dropped)
+	}
+	if kept, _ := FreeOnly([]string{"deepseek/deepseek-chat"}); len(kept) != 1 || kept[0] != FreeRouter {
+		t.Fatalf("nothing free left must fall back to the free router, got %v", kept)
+	}
+	now := time.Date(2026, 10, 13, 20, 30, 0, 0, time.UTC)
+	if d := pauseForRateLimit("Rate limit exceeded: free-models-per-min", now); d != time.Minute {
+		t.Fatalf("per-minute cap: %v", d)
+	}
+	if d := pauseForRateLimit("Rate limit exceeded: free-models-per-day", now); d != 3*time.Hour+31*time.Minute {
+		t.Fatalf("per-day cap should rest until UTC midnight: %v", d)
+	}
+	if d := pauseForRateLimit("slow down", now); d != pauseAfterRateLimit {
+		t.Fatalf("unknown reason: %v", d)
+	}
+}
+
+func TestProbeReportsTheAnsweringModel(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"model":   "qwen/qwen3-235b-a22b:free",
+			"choices": []map[string]any{{"message": map[string]any{"content": `{"move": 1}`}}},
+		})
+	}))
+	defer srv.Close()
+	model, err := NewLLM(srv.URL, "k", "openrouter/free", 2*time.Second).Probe(context.Background())
+	if err != nil || model != "qwen/qwen3-235b-a22b:free" {
+		t.Fatalf("probe: %q %v", model, err)
 	}
 }
