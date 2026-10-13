@@ -43,10 +43,11 @@ type Player struct {
 	// Extensions (not in the original data model).
 	AvatarURL  string `json:"avatar_url,omitempty"`
 	Connected  bool   `json:"connected"`
-	Passed     bool   `json:"passed"`      // "бито" said in the current bout
-	Out        bool   `json:"out"`         // got rid of all cards, left the game as a non-loser
-	HandCount  int    `json:"hand_count"`  // filled by Sanitized()
-	StumpCount int    `json:"stump_count"` // filled by Sanitized()
+	Passed     bool   `json:"passed"`           // "бито" said in the current bout
+	Out        bool   `json:"out"`              // got rid of all cards, left the game as a non-loser
+	HandCount  int    `json:"hand_count"`       // filled by Sanitized()
+	StumpCount int    `json:"stump_count"`      // filled by Sanitized()
+	IsBot      bool   `json:"is_bot,omitempty"` // seat driven by the server (v10 §2)
 }
 
 // LogEntry is a compact description of something that happened. The client
@@ -118,6 +119,22 @@ func NewGameState(roomID string) *GameState {
 
 // StumpsPending reports whether the game waits for somebody to take a stump.
 func (s *GameState) StumpsPending() bool { return len(s.StumpPending) > 0 }
+
+// Actors lists the players who have to act right now (independent of the
+// turn timer): the attacker on an empty table, the defender facing an
+// undefended card, otherwise everybody who may still throw in.
+func (s *GameState) Actors() []string { return s.turnActors() }
+
+// HumanCount returns the number of seats not driven by the server.
+func (s *GameState) HumanCount() int {
+	n := 0
+	for i := range s.Players {
+		if !s.Players[i].IsBot {
+			n++
+		}
+	}
+	return n
+}
 
 func (s *GameState) stumpPendingFor(id string) bool {
 	for _, p := range s.StumpPending {

@@ -641,6 +641,39 @@ body::after {
   left: 0;
   font-size: 30px;
 }
+/* a bot's line: a wider paper bubble with small text, lives longer */
+.reaction--text {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  top: -34px;
+  left: 52px; /* beside the sticker, so the name stays readable */
+  width: max-content;
+  max-width: 230px;
+  font-size: 20px;
+  animation: reaction-pop 220ms steps(3) both, reaction-fade 500ms 4600ms both;
+}
+.reaction__text {
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.2;
+  color: var(--ink);
+  white-space: normal;
+}
+.players__remove {
+  font-family: var(--display);
+  font-weight: 900;
+  background: var(--paper);
+  color: var(--ink);
+  border: 2px solid var(--ink);
+  padding: 4px 10px;
+  cursor: pointer;
+  box-shadow: 2px 2px 0 var(--ink);
+}
+.players__bot {
+  font-size: 14px;
+}
+
 @keyframes reaction-pop {
   from {
     transform: rotate(-6deg) scale(0.3);

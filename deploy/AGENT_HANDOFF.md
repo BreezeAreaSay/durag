@@ -22,6 +22,8 @@
 | `DOMAIN` | да | домен, A-запись которого указывает на сервер |
 | `CERTBOT_EMAIL` | да | почта для Let's Encrypt |
 | `TELEGRAM_BOT_TOKEN` | да | токен бота от @BotFather |
+| `LLM_API_KEY` | нет | ключ OpenRouter (`sk-or-…`) для LLM-ботов; без него боты играют по встроенным правилам |
+| `LLM_BASE_URL`, `LLM_MODEL` | нет | по умолчанию `https://openrouter.ai/api/v1` и `deepseek/deepseek-chat` |
 | `VITE_BOT_USERNAME` | желательно | username бота без `@` |
 | `VITE_APP_SHORTNAME` | желательно | короткое имя Mini App из `/newapp` |
 | `DEPLOY_PATH`, `DEPLOY_BRANCH`, `DEPLOY_REPO` | нет | переопределения пути `/opt/durag`, ветки и репозитория |
@@ -69,7 +71,7 @@ curl -s -o /dev/null -w '%{http_code}\n' -N \
 
 ## 4. Правила безопасности
 
-* Не печатай значения `TELEGRAM_BOT_TOKEN`, `DEPLOY_PASSWORD`, ключей; не коммить `.env`.
+* Не печатай значения `TELEGRAM_BOT_TOKEN`, `LLM_API_KEY`, `DEPLOY_PASSWORD`, ключей; не коммить `.env`.
 * Не выполняй `docker compose down -v` (удалит volume Redis), не трогай `deploy/certbot/conf` и DNS.
 * `redis-cli FLUSHALL` (сброс всех столов) — только по явной просьбе человека.
 * Если `init-letsencrypt.sh` падает: сначала `LE_STAGING=1 python3 deploy/remote.py bootstrap` для проверки DNS и портов,

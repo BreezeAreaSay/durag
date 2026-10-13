@@ -80,15 +80,13 @@ func (m *Memory) Delete(_ context.Context, roomID string) error {
 	return nil
 }
 
-// Publish implements Store.
+// Publish implements Store. The sends happen under the lock, which is what
+// makes closing a subscriber's channel (also under the lock) safe: a timer
+// or a bot may publish at the very moment the last client of a room leaves.
 func (m *Memory) Publish(_ context.Context, roomID string, payload []byte) error {
 	m.mu.Lock()
-	targets := make([]chan []byte, 0, len(m.subs[roomID]))
+	defer m.mu.Unlock()
 	for ch := range m.subs[roomID] {
-		targets = append(targets, ch)
-	}
-	m.mu.Unlock()
-	for _, ch := range targets {
 		msg := append([]byte(nil), payload...)
 		select {
 		case ch <- msg:
@@ -116,8 +114,8 @@ func (m *Memory) Subscribe(ctx context.Context, roomID string) (<-chan []byte, e
 		if len(m.subs[roomID]) == 0 {
 			delete(m.subs, roomID)
 		}
+		close(ch) // under the lock: no Publish can be sending on it
 		m.mu.Unlock()
-		close(ch)
 	}()
 	return ch, nil
 }

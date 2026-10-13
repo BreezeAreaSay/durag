@@ -130,12 +130,16 @@ export function Hud({ state, handTop, reactions, onAvatarClick, onTopHeight }: P
                   {timerFor(p.id) ? <TimerRing deadline={timerFor(p.id)} timeoutMs={state.turn_timeout_ms} size={64} /> : null}
                 </button>
                 {reaction ? (
-                  <span className="reaction" key={reaction.nonce}>
+                  <span className={`reaction ${reaction.text ? 'reaction--text' : ''}`} key={reaction.nonce}>
                     {reaction.emoji}
+                    {reaction.text ? <span className="reaction__text">{reaction.text}</span> : null}
                   </span>
                 ) : null}
                 <div className="opponent__info">
-                  <span className="opponent__name">{p.name}</span>
+                  <span className="opponent__name">
+                    {p.is_bot ? <span aria-hidden="true">🤖 </span> : null}
+                    {p.name}
+                  </span>
                   <span className="opponent__cards">
                     {p.hand_count}
                     {p.stump_count ? <small> +{p.stump_count}</small> : null}

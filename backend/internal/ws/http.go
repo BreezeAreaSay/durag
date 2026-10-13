@@ -12,14 +12,15 @@ type ClientConfig struct {
 	DevAuth    bool `json:"dev_auth"`
 	MaxPlayers int  `json:"max_players"`
 	MinPlayers int  `json:"min_players"`
+	Bots       bool `json:"bots"` // ADD_BOT is available
 }
 
 // ConfigHandler serves the public client configuration.
-func ConfigHandler(devAuth bool) http.Handler {
+func ConfigHandler(devAuth, bots bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
-		_ = json.NewEncoder(w).Encode(ClientConfig{DevAuth: devAuth, MaxPlayers: game.MaxPlayers, MinPlayers: game.MinPlayers})
+		_ = json.NewEncoder(w).Encode(ClientConfig{DevAuth: devAuth, MaxPlayers: game.MaxPlayers, MinPlayers: game.MinPlayers, Bots: bots})
 	})
 }
 

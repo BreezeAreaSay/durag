@@ -25,6 +25,8 @@ const (
 	TypeSendEmoji    = "SEND_EMOJI"   // v10 name of REACT
 	TypeTakeStump    = "TAKE_STUMP"   // v10: pick up the stump between bouts
 	TypeResolveBout  = "RESOLVE_BOUT" // v10 name of PASS: "nothing more to throw in, resolve the bout"
+	TypeAddBot       = "ADD_BOT"      // v10 §2: seat a server-driven opponent (lobby only)
+	TypeRemoveBot    = "REMOVE_BOT"   // v10 §2: free a bot's seat (lobby only)
 )
 
 // Server -> client messages.
@@ -66,15 +68,22 @@ type ReadyPayload struct {
 	Ready bool `json:"ready"`
 }
 
+// RemoveBotPayload is the payload of REMOVE_BOT.
+type RemoveBotPayload struct {
+	PlayerID string `json:"player_id"`
+}
+
 // ReactPayload is the payload of REACT.
 type ReactPayload struct {
 	Emoji string `json:"emoji"`
 }
 
-// ReactionPayload is the payload of REACTION (server -> every client in the room).
+// ReactionPayload is the payload of REACTION (server -> every client in the
+// room). Bots may add a short line (Text) with or without an emoji.
 type ReactionPayload struct {
 	PlayerID string `json:"player_id"`
 	Emoji    string `json:"emoji"`
+	Text     string `json:"text,omitempty"`
 	TS       int64  `json:"ts"` // unix milliseconds
 }
 

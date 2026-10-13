@@ -23,6 +23,7 @@ type Options struct {
 	// AllowedOrigins lists acceptable Origin headers; "*" or empty allows any.
 	AllowedOrigins []string
 	Logger         *slog.Logger
+	Bots           BotOptions
 }
 
 // Hub owns every local connection, routes intents to the engine and relays
@@ -39,6 +40,10 @@ type Hub struct {
 
 	mu    sync.Mutex
 	rooms map[string]*roomSub
+
+	bots     BotOptions
+	botMu    sync.Mutex
+	botRooms map[string]*botRoom
 }
 
 type roomSub struct {
@@ -66,13 +71,15 @@ func NewHub(st store.Store, engine *game.Engine, auth Authenticator, opts Option
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	h := &Hub{
-		store:  st,
-		engine: engine,
-		auth:   auth,
-		log:    logger,
-		ctx:    ctx,
-		cancel: cancel,
-		rooms:  map[string]*roomSub{},
+		store:    st,
+		engine:   engine,
+		auth:     auth,
+		log:      logger,
+		ctx:      ctx,
+		cancel:   cancel,
+		rooms:    map[string]*roomSub{},
+		bots:     opts.Bots,
+		botRooms: map[string]*botRoom{},
 	}
 	h.upgrader = websocket.Upgrader{
 		ReadBufferSize:  4096,
@@ -147,7 +154,7 @@ func (h *Hub) handle(c *Client, env Envelope) {
 		c.enqueue(encode(TypePong, nil))
 	case TypeReact, TypeSendEmoji:
 		h.react(c, env.Payload)
-	case TypePlayCard, TypeTransferTurn, TypeTakeCards, TypePass, TypeResolveBout, TypeTakeStump, TypeReady, TypeLeaveRoom:
+	case TypePlayCard, TypeTransferTurn, TypeTakeCards, TypePass, TypeResolveBout, TypeTakeStump, TypeReady, TypeLeaveRoom, TypeAddBot, TypeRemoveBot:
 		h.intent(c, env)
 	default:
 		c.sendError("UNKNOWN_TYPE", "unknown message type: "+env.Type, "")
@@ -244,6 +251,17 @@ func (h *Hub) intent(c *Client, env Envelope) {
 			return h.engine.SetReady(s, playerID, p.Ready)
 		case TypeLeaveRoom:
 			return h.engine.Leave(s, playerID)
+		case TypeAddBot:
+			if h.bots.Disabled {
+				return errBotsDisabled
+			}
+			return h.engine.AddBot(s, newBotID(), pickBotName(s))
+		case TypeRemoveBot:
+			var p RemoveBotPayload
+			if err := json.Unmarshal(env.Payload, &p); err != nil {
+				return errBadPayload
+			}
+			return h.engine.RemoveBot(s, p.PlayerID)
 		}
 		return errBadPayload
 	}
@@ -259,8 +277,9 @@ func (h *Hub) intent(c *Client, env Envelope) {
 	if env.Type == TypeLeaveRoom {
 		h.removeFromRoom(c)
 		c.setRoom("", "")
-		if len(state.Players) == 0 {
+		if state.HumanCount() == 0 { // nobody or only bots left: the table is gone
 			_ = h.store.Delete(h.ctx, roomID)
+			h.dropBotRoom(roomID)
 			return
 		}
 	}
@@ -296,6 +315,7 @@ func (h *Hub) react(c *Client, raw json.RawMessage) {
 	if err := h.store.Publish(h.ctx, roomID, raw2); err != nil {
 		h.log.Error("ws: publish reaction", "err", err)
 	}
+	h.botHearEmoji(roomID, playerID, p.Emoji)
 }
 
 // afterUpdate broadcasts the new state and schedules the next server-side
@@ -304,6 +324,7 @@ func (h *Hub) react(c *Client, raw json.RawMessage) {
 func (h *Hub) afterUpdate(roomID string, state *game.GameState) {
 	h.publish(roomID, state)
 	h.scheduleTick(roomID, state)
+	h.scheduleBots(roomID, state)
 }
 
 // nextDeadline returns the earliest pending server deadline of a state (unix ms) or 0.
@@ -529,11 +550,12 @@ func (h *Hub) leaveRoom(c *Client, roomID, playerID string, dropped bool) {
 		}
 		return
 	}
-	if len(state.Players) == 0 {
+	if state.HumanCount() == 0 {
 		_ = h.store.Delete(h.ctx, roomID)
+		h.dropBotRoom(roomID)
 		return
 	}
-	h.publish(roomID, state)
+	h.afterUpdate(roomID, state)
 }
 
 // LocalRooms returns the number of rooms with local connections (metrics/tests).

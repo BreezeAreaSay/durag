@@ -13,6 +13,8 @@ export interface GameError {
 }
 
 export interface Reaction {
+  /** a bot's short line (spec v10 §2), shown as a speech bubble */
+  text?: string;
   emoji: string;
   nonce: number;
 }
@@ -39,6 +41,8 @@ export interface GameContextValue {
   react(emoji: string): void;
   join(roomId: string, create: boolean): void;
   leave(): void;
+  addBot(): void;
+  removeBot(playerId: string): void;
   setReady(ready: boolean): void;
   playCard(cardId: string, targetCardId?: string): void;
   transfer(cardId: string): void;
@@ -200,10 +204,10 @@ export function GameProvider({ children }: { children: ReactNode }) {
           roomRef.current = { roomId: msg.payload.room_id, create: false };
           sessionStorage.setItem(ROOM_KEY, msg.payload.room_id);
         } else if (msg.type === 'REACTION') {
-          const { player_id: playerId, emoji } = msg.payload;
+          const { player_id: playerId, emoji, text } = msg.payload;
           nonceRef.current += 1;
           const nonce = nonceRef.current;
-          setReactions((prev) => ({ ...prev, [playerId]: { emoji, nonce } }));
+          setReactions((prev) => ({ ...prev, [playerId]: { emoji, text, nonce } }));
           const previous = reactionTimers.current.get(playerId);
           if (previous) window.clearTimeout(previous);
           reactionTimers.current.set(
@@ -216,7 +220,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
                 delete next[playerId];
                 return next;
               });
-            }, 3200),
+            }, text ? 5200 : 3200),
           );
         } else if (msg.type === 'ERROR') {
           nonceRef.current += 1;
@@ -310,6 +314,8 @@ export function GameProvider({ children }: { children: ReactNode }) {
       join,
       leave,
       setReady: (ready) => send({ type: 'READY', payload: { ready } }),
+      addBot: () => send({ type: 'ADD_BOT' }),
+      removeBot: (playerId) => send({ type: 'REMOVE_BOT', payload: { player_id: playerId } }),
       playCard: (cardId, targetCardId) => send({ type: 'PLAY_CARD', payload: { card_id: cardId, target_card_id: targetCardId } }),
       transfer: (cardId) => send({ type: 'TRANSFER_TURN', payload: { card_id: cardId } }),
       take: () => send({ type: 'TAKE_CARDS' }),

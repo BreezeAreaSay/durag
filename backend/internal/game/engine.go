@@ -859,7 +859,7 @@ func (e *Engine) resetToLobby(s *GameState) {
 		p.Hand = []Card{}
 		p.Out = false
 		p.Passed = false
-		p.IsReady = false
+		p.IsReady = p.IsBot // bots are always up for another game
 		kept = append(kept, p)
 	}
 	s.Players = kept

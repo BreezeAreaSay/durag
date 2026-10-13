@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/breezeareasay/durag/backend/internal/bot"
 	"github.com/breezeareasay/durag/backend/internal/config"
 	"github.com/breezeareasay/durag/backend/internal/game"
 	"github.com/breezeareasay/durag/backend/internal/store"
@@ -62,12 +63,22 @@ func main() {
 	engine.StumpAutoDelay = cfg.StumpAutoDelay
 	engine.TurnTimeout = cfg.TurnTimeout
 	auth := ws.TelegramAuth{BotToken: cfg.BotToken, MaxAge: cfg.InitDataMaxAge, AllowDev: cfg.AllowDevAuth}
-	hub := ws.NewHub(st, engine, auth, ws.Options{AllowedOrigins: cfg.AllowedOrigins, Logger: logger})
+	bots := ws.BotOptions{Disabled: !cfg.BotsEnabled, MinDelay: cfg.BotDelayMin, MaxDelay: cfg.BotDelayMax, LLMTimeout: cfg.LLMTimeout}
+	switch {
+	case !cfg.BotsEnabled:
+		logger.Info("bots are disabled (BOTS=false)")
+	case cfg.LLMAPIKey != "":
+		bots.Brain = &bot.LLM{BaseURL: cfg.LLMBaseURL, APIKey: cfg.LLMAPIKey, Model: cfg.LLMModel, Timeout: cfg.LLMTimeout}
+		logger.Info("bots: LLM brain", "model", cfg.LLMModel, "base_url", cfg.LLMBaseURL)
+	default:
+		logger.Info("bots: rule-based brain only (set LLM_API_KEY for the LLM brain)")
+	}
+	hub := ws.NewHub(st, engine, auth, ws.Options{AllowedOrigins: cfg.AllowedOrigins, Logger: logger, Bots: bots})
 
 	mux := http.NewServeMux()
 	mux.Handle("/ws", hub)
 	mux.Handle("/healthz", ws.HealthHandler())
-	mux.Handle("/api/config", ws.ConfigHandler(cfg.AllowDevAuth))
+	mux.Handle("/api/config", ws.ConfigHandler(cfg.AllowDevAuth, cfg.BotsEnabled))
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,

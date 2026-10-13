@@ -61,6 +61,10 @@ TG_INITDATA_MAX_AGE=24h
 BOUT_RESOLVE_DELAY=3500ms               # пауза после кона, чтобы все увидели отбой
 STUMP_AUTO_DELAY=4s                     # сколько игрок может сам взять пенёк после кона, потом берёт сервер
 TURN_TIMEOUT=45s                        # таймер хода (0 — выключить)
+BOTS=true                               # кнопка «+ добавить бота» в лобби
+LLM_API_KEY=sk-or-...                   # ключ OpenRouter (или другого OpenAI-совместимого API); пусто — боты играют по правилам
+LLM_BASE_URL=https://openrouter.ai/api/v1
+LLM_MODEL=deepseek/deepseek-chat        # модель у провайдера (напр. qwen/qwen-plus)
 ```
 
 `PORT`, `REDIS_ADDR`, `ALLOWED_ORIGINS` в проде задаёт `docker-compose.prod.yml` (`ALLOWED_ORIGINS=https://$DOMAIN`).

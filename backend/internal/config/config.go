@@ -27,6 +27,16 @@ type Config struct {
 	StumpAutoDelay   time.Duration // how long players get to take their stump themselves
 	TurnTimeout      time.Duration // idle players get a default move after this (0 = off)
 	LogLevel         string
+
+	// Bots (spec v10 §2). The rule-based brain always works; the LLM brain
+	// is used when LLM_API_KEY is set (OpenRouter by default).
+	BotsEnabled bool
+	BotDelayMin time.Duration
+	BotDelayMax time.Duration
+	LLMBaseURL  string
+	LLMAPIKey   string
+	LLMModel    string
+	LLMTimeout  time.Duration
 }
 
 // LoadDotEnv loads KEY=VALUE pairs from path into the process environment
@@ -84,6 +94,10 @@ func FromEnv() (Config, error) {
 		AllowDevAuth:   parseBool(getenv("ALLOW_DEV_AUTH", "false")),
 		AllowedOrigins: splitList(getenv("ALLOWED_ORIGINS", "*")),
 		LogLevel:       getenv("LOG_LEVEL", "info"),
+		BotsEnabled:    parseBool(getenv("BOTS", "true")),
+		LLMBaseURL:     getenv("LLM_BASE_URL", "https://openrouter.ai/api/v1"),
+		LLMAPIKey:      strings.TrimSpace(os.Getenv("LLM_API_KEY")),
+		LLMModel:       getenv("LLM_MODEL", "deepseek/deepseek-chat"),
 	}
 	var err error
 	if c.RedisDB, err = strconv.Atoi(getenv("REDIS_DB", "0")); err != nil {
@@ -103,6 +117,15 @@ func FromEnv() (Config, error) {
 	}
 	if c.TurnTimeout, err = time.ParseDuration(getenv("TURN_TIMEOUT", "45s")); err != nil {
 		return c, fmt.Errorf("config: TURN_TIMEOUT: %w", err)
+	}
+	if c.BotDelayMin, err = time.ParseDuration(getenv("BOT_DELAY_MIN", "900ms")); err != nil {
+		return c, fmt.Errorf("config: BOT_DELAY_MIN: %w", err)
+	}
+	if c.BotDelayMax, err = time.ParseDuration(getenv("BOT_DELAY_MAX", "2200ms")); err != nil {
+		return c, fmt.Errorf("config: BOT_DELAY_MAX: %w", err)
+	}
+	if c.LLMTimeout, err = time.ParseDuration(getenv("LLM_TIMEOUT", "10s")); err != nil {
+		return c, fmt.Errorf("config: LLM_TIMEOUT: %w", err)
 	}
 	if c.BotToken == "" && !c.AllowDevAuth {
 		return c, errors.New("config: TELEGRAM_BOT_TOKEN is empty and ALLOW_DEV_AUTH is false: nobody could log in")

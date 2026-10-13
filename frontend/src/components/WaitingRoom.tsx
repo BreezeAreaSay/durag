@@ -18,7 +18,7 @@ function shareLink(room: string): string | null {
 }
 
 export function WaitingRoom({ state }: Props) {
-  const { selfId, setReady, leave } = useGame();
+  const { selfId, setReady, leave, addBot, removeBot, config } = useGame();
   const [copied, setCopied] = useState(false);
   const me = state.players.find((p) => p.id === selfId);
   const link = shareLink(state.room_id);
@@ -61,13 +61,26 @@ export function WaitingRoom({ state }: Props) {
             <li key={p.id} className={`players__item ${p.is_ready ? 'players__item--ready' : ''}`}>
               <Sticker name={p.name} avatarUrl={p.avatar_url} seed={p.id} />
               <span className="players__name">
+                {p.is_bot ? <span className="players__bot" aria-hidden="true">🤖 </span> : null}
                 {p.name}
                 {p.id === state.host_id ? <small> · {t('waiting.host')}</small> : null}
+                {p.is_bot ? <small> · {t('waiting.bot')}</small> : null}
               </span>
-              <span className="players__state">{p.is_ready ? t('waiting.ready') : t('waiting.notReady')}</span>
+              {p.is_bot ? (
+                <button type="button" className="players__remove" onClick={() => removeBot(p.id)} aria-label={t('waiting.removeBot')}>
+                  ✕
+                </button>
+              ) : (
+                <span className="players__state">{p.is_ready ? t('waiting.ready') : t('waiting.notReady')}</span>
+              )}
             </li>
           ))}
         </ul>
+        {config?.bots !== false && state.players.length < state.max_players ? (
+          <Button variant="paper" onClick={addBot}>
+            {t('waiting.addBot')}
+          </Button>
+        ) : null}
         {state.players.length < 2 ? <p className="muted">{t('waiting.needPlayers')}</p> : null}
         {state.players.length >= 2 && me?.is_ready ? <p className="muted">{t('waiting.waitingOthers')}</p> : null}
       </section>

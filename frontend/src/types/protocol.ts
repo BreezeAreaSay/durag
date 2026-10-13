@@ -20,6 +20,7 @@ export interface Player {
   out: boolean;
   hand_count: number;
   stump_count: number;
+  is_bot?: boolean; // seat driven by the server (v10 §2)
 }
 
 export interface LogEntry {
@@ -80,6 +81,7 @@ export interface ReactionPayload {
   player_id: string;
   emoji: string;
   ts: number;
+  text?: string; // a bot's short line (spec v10 §2)
 }
 
 export type ServerMessage =
@@ -110,6 +112,8 @@ export type ClientMessage =
   | { type: 'RESOLVE_BOUT' } // "nothing more to throw in" (alias PASS on the server)
   | { type: 'READY'; payload: { ready: boolean } }
   | { type: 'LEAVE_ROOM' }
+  | { type: 'ADD_BOT' } // lobby: seat a server-driven opponent
+  | { type: 'REMOVE_BOT'; payload: { player_id: string } }
   | { type: 'SEND_EMOJI'; payload: { emoji: string } } // alias REACT on the server
   | { type: 'PING' };
 
@@ -117,4 +121,5 @@ export interface ClientConfig {
   dev_auth: boolean;
   max_players: number;
   min_players: number;
+  bots?: boolean; // ADD_BOT is available on this server
 }
