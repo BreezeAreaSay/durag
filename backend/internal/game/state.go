@@ -91,6 +91,7 @@ type GameState struct {
 	ViewerID       string     `json:"viewer_id,omitempty"` // filled by Sanitized(): who this view belongs to
 	TransferCount  int        `json:"transfer_count"`      // transfers in the current bout (informational)
 	BoutNumber     int        `json:"bout_number"`
+	MaxAttacks     int        `json:"max_attacks"`     // attack cards per bout, 0 = only the defender's hand limits
 	Phase          string     `json:"phase"`           // "" or PhaseResolving
 	ResolveAt      int64      `json:"resolve_at"`      // unix milliseconds; when the resolving phase ends
 	ResolveOutcome string     `json:"resolve_outcome"` // OutcomeBito / OutcomeTook while resolving

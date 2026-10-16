@@ -117,4 +117,20 @@ describe('canThrowIn mirrors the defender-hand limit', () => {
     expect(canThrowIn(base(3, true), c('C_7'))).toBe(true);
     expect(canThrowIn(base(2, true), c('C_7'))).toBe(false);
   });
+  it('stops at the per-bout cap', () => {
+    const capped = { ...base(9), max_attacks: 2 };
+    expect(canThrowIn(capped, c('C_7'))).toBe(false);
+    expect(canThrowIn({ ...capped, max_attacks: 3 }, c('C_7'))).toBe(true);
+  });
+});
+
+describe('canTransferWith mirrors the special-card rules', () => {
+  const facing = (attackId: string) =>
+    state({ table_cards: { [attackId]: [] }, table_order: [attackId], defender_id: 'B', defender_taking: false });
+  it('a Joker never transfers, not even the other Joker', () => {
+    expect(canTransferWith(facing('RJ'), c('BJ'))).toBe(false);
+    expect(canTransferWith(facing('H_7'), c('RJ'))).toBe(false);
+    expect(canTransferWith(facing('H_7'), c('SC'))).toBe(false);
+    expect(canTransferWith(facing('H_7'), c('S_7'))).toBe(true);
+  });
 });

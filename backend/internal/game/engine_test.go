@@ -241,7 +241,7 @@ func TestThrowInsNeverExceedDefenderHand(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantErr(t, e.PlayCard(s, "C", "C_10", ""), ErrTooManyAttacks)
-	// a defender with a bigger hand can be piled on, no cap at six
+	// a defender with a bigger hand can be piled on up to the classic six
 	e2, s2 := newPlaying(t, "A", "B", "C")
 	setRoles(s2, "A", "B")
 	setHand(t, s2, "A", "H_7", "S_7", "D_7", "C_7")
@@ -256,13 +256,39 @@ func TestThrowInsNeverExceedDefenderHand(t *testing.T) {
 	if err := e2.PlayCard(s2, "B", "H_10", "H_7"); err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{"C_10", "D_10", "S_10"} {
+	for _, id := range []string{"C_10", "D_10"} {
 		if err := e2.PlayCard(s2, "C", id, ""); err != nil {
 			t.Fatalf("%s: %v", id, err)
 		}
 	}
-	if len(s2.TableOrder) != 7 {
-		t.Fatalf("seven attacks expected, got %d", len(s2.TableOrder))
+	wantErr(t, e2.PlayCard(s2, "C", "S_10", ""), ErrTooManyAttacks)
+	if len(s2.TableOrder) != DefaultMaxAttacks {
+		t.Fatalf("six attacks expected, got %d", len(s2.TableOrder))
+	}
+	// the cap is a setting: without it only the hand limits the table
+	e3, s3 := newPlaying(t, "A", "B", "C")
+	e3.MaxAttacks = 0
+	s3.MaxAttacks = 0
+	setRoles(s3, "A", "B")
+	setHand(t, s3, "A", "H_7", "S_7", "D_7", "C_7")
+	setHand(t, s3, "B", "H_10", "S_8", "D_4", "C_5", "H_6", "D_12", "C_13", "S_2")
+	setHand(t, s3, "C", "C_10", "D_10", "S_10")
+	setTrump(t, s3, "C_5", false)
+	for _, id := range []string{"H_7", "S_7", "D_7", "C_7"} {
+		if err := e3.PlayCard(s3, "A", id, ""); err != nil {
+			t.Fatalf("%s: %v", id, err)
+		}
+	}
+	if err := e3.PlayCard(s3, "B", "H_10", "H_7"); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"C_10", "D_10", "S_10"} {
+		if err := e3.PlayCard(s3, "C", id, ""); err != nil {
+			t.Fatalf("%s without a cap: %v", id, err)
+		}
+	}
+	if len(s3.TableOrder) != 7 {
+		t.Fatalf("seven attacks expected without a cap, got %d", len(s3.TableOrder))
 	}
 }
 
@@ -326,8 +352,8 @@ func TestSuperCardBeatsEverythingAndIsUnbeatable(t *testing.T) {
 			t.Fatalf("%s should not beat the super card, got %v", id, err)
 		}
 	}
-	if _, err := s.ValidateTransfer("B", "RJ"); err != ErrTransferRank {
-		t.Fatalf("got %v", err)
+	if _, err := s.ValidateTransfer("B", "RJ"); err != ErrJokerCannotTransfer {
+		t.Fatalf("a Joker never transfers, got %v", err)
 	}
 }
 

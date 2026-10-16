@@ -54,6 +54,7 @@ export function canThrowIn(state: GameState, card: Card): boolean {
   const defender = state.players.find((p) => p.id === state.defender_id);
   // classic limit (server: ThrowInAllowed): the defender must hold a card for
   // every attack still waiting, whether they are beating or taking
+  if (state.max_attacks && state.table_order.length >= state.max_attacks) return false;
   const undefended = tablePairs(state).filter((p) => !p.defense).length;
   if (!defender || defender.hand_count <= undefended) return false;
   return tableRanks(state).has(card.rank);
@@ -61,7 +62,8 @@ export function canThrowIn(state: GameState, card: Card): boolean {
 
 /** Whether the viewer (defender) could transfer with this card (hint only). */
 export function canTransferWith(state: GameState, card: Card): boolean {
-  if (state.table_order.length === 0 || state.defender_taking || isSuper(card)) return false;
+  // the Super card never transfers; a Joker neither beats nor passes on the other Joker
+  if (state.table_order.length === 0 || state.defender_taking || isSuper(card) || isJoker(card)) return false;
   const pairs = tablePairs(state);
   if (pairs.some((p) => p.defense)) return false;
   return pairs.every((p) => p.attack.rank === card.rank);

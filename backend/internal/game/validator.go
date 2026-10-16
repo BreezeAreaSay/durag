@@ -31,6 +31,7 @@ var (
 	ErrTableEmpty           = ruleErr("TABLE_EMPTY", "there is nothing on the table")
 	ErrTransferAfterDefense = ruleErr("TRANSFER_AFTER_DEFENSE", "cannot transfer once a card has been beaten")
 	ErrSuperCannotTransfer  = ruleErr("SUPER_CANNOT_TRANSFER", "the Super card cannot transfer the turn")
+	ErrJokerCannotTransfer  = ruleErr("JOKER_CANNOT_TRANSFER", "a Joker cannot transfer: a Joker is only beaten by the Super card")
 	ErrTransferRank         = ruleErr("TRANSFER_RANK", "a transfer card must match the rank of the attack")
 	ErrAlreadyTaking        = ruleErr("ALREADY_TAKING", "you are already taking the cards")
 	ErrDefenderCannotPass   = ruleErr("DEFENDER_CANNOT_PASS", "the defender cannot pass: beat, transfer or take")
@@ -44,6 +45,9 @@ var (
 	ErrNotResolving         = ruleErr("NOT_RESOLVING", "no bout is waiting to be resolved")
 	ErrTransferTooFewCards  = ruleErr("TRANSFER_TOO_FEW_CARDS", "the next player has too few cards to take over the defence")
 )
+
+// DefaultMaxAttacks is the classic cap on attack cards in one bout.
+const DefaultMaxAttacks = 6
 
 // AutoPassWhenNoLegalThrowIn makes the engine treat an attacker who holds no
 // card that could legally be thrown in as having passed. This keeps the game
@@ -136,6 +140,9 @@ func (s *GameState) ValidateTakeStump(playerID string) error {
 // card and leaves them "defending" with an empty hand.
 func (s *GameState) ThrowInAllowed() bool {
 	if s.TableEmpty() {
+		return false
+	}
+	if s.MaxAttacks > 0 && len(s.TableOrder) >= s.MaxAttacks {
 		return false
 	}
 	d := s.Defender()
@@ -249,6 +256,11 @@ func (s *GameState) ValidateTransfer(playerID, cardID string) (Card, error) {
 	if card.IsSuper() {
 		return Card{}, ErrSuperCannotTransfer
 	}
+	// A Joker attack can only be taken or beaten by the Super card: the
+	// other Joker neither beats it nor passes it on.
+	if card.IsJoker() {
+		return Card{}, ErrJokerCannotTransfer
+	}
 	attacks := s.TableAttackCards()
 	for _, a := range attacks {
 		if a.Rank != card.Rank {
@@ -261,6 +273,9 @@ func (s *GameState) ValidateTransfer(playerID, cardID string) (Card, error) {
 	next := s.Player(s.NextActive(p.ID))
 	if next == nil || len(next.Hand) < len(attacks)+1 {
 		return Card{}, ErrTransferTooFewCards
+	}
+	if s.MaxAttacks > 0 && len(attacks)+1 > s.MaxAttacks {
+		return Card{}, ErrTooManyAttacks
 	}
 	return card, nil
 }

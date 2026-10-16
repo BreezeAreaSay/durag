@@ -62,6 +62,7 @@ func main() {
 	engine.ResolveDelay = cfg.BoutResolveDelay
 	engine.StumpAutoDelay = cfg.StumpAutoDelay
 	engine.TurnTimeout = cfg.TurnTimeout
+	engine.MaxAttacks = cfg.MaxAttacks
 	auth := ws.TelegramAuth{BotToken: cfg.BotToken, MaxAge: cfg.InitDataMaxAge, AllowDev: cfg.AllowDevAuth}
 	bots := ws.BotOptions{Disabled: !cfg.BotsEnabled, MinDelay: cfg.BotDelayMin, MaxDelay: cfg.BotDelayMax, LLMTimeout: cfg.LLMTimeout}
 	switch {

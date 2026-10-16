@@ -198,6 +198,7 @@ def dotenv_text() -> str:
         f"BOUT_RESOLVE_DELAY={env('BOUT_RESOLVE_DELAY', '3500ms')}",
         f"STUMP_AUTO_DELAY={env('STUMP_AUTO_DELAY', '4s')}",
         f"TURN_TIMEOUT={env('TURN_TIMEOUT', '45s')}",
+        f"MAX_ATTACKS={env('MAX_ATTACKS', '6')}",
         f"BOTS={env('BOTS', 'true')}",
         f"LLM_API_KEY={env('LLM_API_KEY')}",
         f"LLM_BASE_URL={env('LLM_BASE_URL', 'https://openrouter.ai/api/v1')}",

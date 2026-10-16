@@ -22,6 +22,10 @@ type Engine struct {
 	// stump immediately at the end of the bout.
 	StumpAutoDelay time.Duration
 
+	// MaxAttacks caps the attack cards of one bout (classic: 6). 0 means no
+	// cap beyond the defender's hand. Copied into the state at Start.
+	MaxAttacks int
+
 	// TurnTimeout is the turn timer: when the players who have to act stay
 	// idle for this long, the server plays the default move for them
 	// (lowest card / take / pass). 0 disables the timer.
@@ -36,7 +40,7 @@ func NewEngine(rng *rand.Rand) *Engine {
 	if rng == nil {
 		rng = rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64()))
 	}
-	return &Engine{rng: rng, Now: time.Now}
+	return &Engine{rng: rng, Now: time.Now, MaxAttacks: DefaultMaxAttacks}
 }
 
 func (e *Engine) now() time.Time {
@@ -290,6 +294,7 @@ func (e *Engine) Start(s *GameState) error {
 	s.LoserID = ""
 	s.TransferCount = 0
 	s.BoutNumber = 1
+	s.MaxAttacks = e.MaxAttacks
 	s.Status = StatusPlaying
 
 	s.StumpPending = []string{}

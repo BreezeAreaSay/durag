@@ -59,6 +59,7 @@ export interface GameState {
   viewer_id: string;
   transfer_count: number;
   bout_number: number;
+  max_attacks?: number; // attack cards per bout (classic 6); 0/absent = only the defender's hand limits
   phase: '' | 'resolving'; // "resolving": the finished bout stays on the table until resolve_at
   resolve_at: number; // unix ms
   resolve_outcome: '' | 'bito' | 'took';

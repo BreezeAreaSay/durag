@@ -282,26 +282,25 @@ func TestValidateTransfer(t *testing.T) {
 	wantErr(t, err, ErrTransferAfterDefense)
 }
 
-func TestJokerTransfersJoker(t *testing.T) {
+func TestJokerCannotTransferOrBeatAJoker(t *testing.T) {
 	e, s := threePlayers(t)
-	setHand(t, s, "A", "RJ", "H_2")
-	setHand(t, s, "B", "BJ", "H_10")
+	setHand(t, s, "A", "RJ", "H_7")
+	setHand(t, s, "B", "BJ", "S_8", "D_4")
 	if err := e.PlayCard(s, "A", "RJ", ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.ValidateTransfer("B", "BJ"); err != nil {
-		t.Fatalf("a joker may transfer a joker: %v", err)
+	// the other Joker neither beats nor transfers a Joker attack
+	_, err := s.ValidatePlay("B", "BJ", "RJ")
+	wantErr(t, err, ErrCannotBeat)
+	_, err = s.ValidateTransfer("B", "BJ")
+	wantErr(t, err, ErrJokerCannotTransfer)
+	for _, m := range s.LegalMoves("B") {
+		if m.Type != MoveTake {
+			t.Fatalf("facing a Joker the defender can only take, got %s", m)
+		}
 	}
-	_, err := s.ValidateTransfer("B", "H_10")
-	wantErr(t, err, ErrTransferRank)
-	if err := e.TransferTurn(s, "B", "BJ"); err != nil {
+	if err := e.TakeCards(s, "B"); err != nil {
 		t.Fatal(err)
-	}
-	if s.DefenderID != "C" || s.CurrentTurn != "B" {
-		t.Fatalf("after transfer defender=%s attacker=%s", s.DefenderID, s.CurrentTurn)
-	}
-	if len(s.TableOrder) != 2 {
-		t.Fatalf("table should hold both jokers, got %v", s.TableOrder)
 	}
 }
 
