@@ -31,7 +31,6 @@ var (
 	ErrTableEmpty           = ruleErr("TABLE_EMPTY", "there is nothing on the table")
 	ErrTransferAfterDefense = ruleErr("TRANSFER_AFTER_DEFENSE", "cannot transfer once a card has been beaten")
 	ErrSuperCannotTransfer  = ruleErr("SUPER_CANNOT_TRANSFER", "the Super card cannot transfer the turn")
-	ErrJokerCannotTransfer  = ruleErr("JOKER_CANNOT_TRANSFER", "a Joker cannot transfer: a Joker is only beaten by the Super card")
 	ErrTransferRank         = ruleErr("TRANSFER_RANK", "a transfer card must match the rank of the attack")
 	ErrAlreadyTaking        = ruleErr("ALREADY_TAKING", "you are already taking the cards")
 	ErrDefenderCannotPass   = ruleErr("DEFENDER_CANNOT_PASS", "the defender cannot pass: beat, transfer or take")
@@ -46,8 +45,9 @@ var (
 	ErrTransferTooFewCards  = ruleErr("TRANSFER_TOO_FEW_CARDS", "the next player has too few cards to take over the defence")
 )
 
-// DefaultMaxAttacks is the classic cap on attack cards in one bout.
-const DefaultMaxAttacks = 6
+// DefaultMaxAttacks is the cap on attack cards in one bout: none by
+// default, only the defender's hand limits the table (set 6 for classic).
+const DefaultMaxAttacks = 0
 
 // AutoPassWhenNoLegalThrowIn makes the engine treat an attacker who holds no
 // card that could legally be thrown in as having passed. This keeps the game
@@ -61,9 +61,9 @@ const AutoPassWhenNoLegalThrowIn = true
 //
 // Rules:
 //   - the Super card beats absolutely anything and is beaten by nothing;
-//   - the Red Joker beats any red card, the Black Joker any black card;
-//     Jokers have no trump suit, so a trump never beats a Joker and a Joker
-//     never beats the other Joker;
+//   - the Red Joker beats any red card, the Black Joker any black card, and
+//     each Joker beats the Joker of the other colour; Jokers have no trump
+//     suit, so a trump never beats a Joker;
 //   - otherwise: same suit and higher rank, or a trump against a non-trump.
 func CanBeat(attack, defense Card, trumpSuit string) bool {
 	if defense.IsSuper() {
@@ -74,7 +74,7 @@ func CanBeat(attack, defense Card, trumpSuit string) bool {
 	}
 	if defense.IsJoker() {
 		if attack.IsJoker() {
-			return false
+			return attack.ID != defense.ID
 		}
 		if defense.ID == RedJokerID {
 			return attack.IsRed()
@@ -134,16 +134,20 @@ func (s *GameState) ValidateTakeStump(playerID string) error {
 // table: the bout must be open, and the defender must either still hold cards
 // or have announced that they take (then everything goes to them anyway).
 // ThrowInAllowed reports whether one more attack card may be put on the
-// table. Classic limit: the defender must hold a card for every attack still
-// waiting for a defence, whether they are beating or taking. It closes the
-// race where a throw-in slips in just before the defender plays their last
-// card and leaves them "defending" with an empty hand.
+// table. While the defender is beating, they must hold a card for every
+// attack still waiting for a defence (this closes the race where a throw-in
+// slips in just before the defender plays their last card). Once they have
+// said "I take", everything of a matching rank may be piled on, whatever
+// their hand holds.
 func (s *GameState) ThrowInAllowed() bool {
 	if s.TableEmpty() {
 		return false
 	}
 	if s.MaxAttacks > 0 && len(s.TableOrder) >= s.MaxAttacks {
 		return false
+	}
+	if s.DefenderTaking {
+		return true
 	}
 	d := s.Defender()
 	return d != nil && s.UndefendedCount() < len(d.Hand)
@@ -256,11 +260,8 @@ func (s *GameState) ValidateTransfer(playerID, cardID string) (Card, error) {
 	if card.IsSuper() {
 		return Card{}, ErrSuperCannotTransfer
 	}
-	// A Joker attack can only be taken or beaten by the Super card: the
-	// other Joker neither beats it nor passes it on.
-	if card.IsJoker() {
-		return Card{}, ErrJokerCannotTransfer
-	}
+	// A Joker transfers only a Joker attack: the rank check below enforces
+	// it, since both Jokers share RankJoker and nothing else does.
 	attacks := s.TableAttackCards()
 	for _, a := range attacks {
 		if a.Rank != card.Rank {

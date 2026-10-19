@@ -35,8 +35,8 @@ func TestCanBeat(t *testing.T) {
 		{"black joker beats clubs", "C_14", "BJ", "", true},
 		{"black joker beats black trump", "C_14", "BJ", SuitClubs, true},
 		{"black joker does not beat hearts", "H_2", "BJ", "", false},
-		{"joker never beats joker", "RJ", "BJ", "", false},
-		{"joker never beats joker 2", "BJ", "RJ", "", false},
+		{"black joker beats red joker", "RJ", "BJ", "", true},
+		{"red joker beats black joker", "BJ", "RJ", "", true},
 		{"base never beats joker", "RJ", "H_14", "", false},
 		{"trump never beats joker", "BJ", "H_14", SuitHearts, false},
 	}
@@ -168,24 +168,25 @@ func TestThrowInBlockedWhenDefenderHasNoCards(t *testing.T) {
 	setHand(t, s, "C", "C_7")
 	_, err := s.ValidatePlay("C", "C_7", "")
 	wantErr(t, err, ErrTooManyAttacks)
-	// a defender who is taking can be given cards only while they have a card
-	// for each of them; with three in hand that is three attacks in total
-	setHand(t, s, "B", "H_10", "D_2", "C_3")
+	// once the defender takes, the hand no longer limits: with one card in
+	// hand they still get every matching card thrown at them
 	if err := e.TakeCards(s, "B"); err != nil {
 		t.Fatal(err)
 	}
 	if !s.DefenderTaking {
 		t.Fatal("defender should be taking")
 	}
-	setHand(t, s, "C", "C_7", "D_7")
-	if err := e.PlayCard(s, "C", "C_7", ""); err != nil {
-		t.Fatalf("throw-in on a taking defender: %v", err)
+	setHand(t, s, "C", "C_7", "D_7", "S_7", "C_9")
+	for _, id := range []string{"C_7", "D_7", "S_7"} {
+		if err := e.PlayCard(s, "C", id, ""); err != nil {
+			t.Fatalf("throw-in %s on a taking defender: %v", id, err)
+		}
 	}
-	if err := e.PlayCard(s, "C", "D_7", ""); err != nil {
-		t.Fatalf("third attack on a defender holding three: %v", err)
+	if len(s.TableOrder) != 4 || !s.ThrowInAllowed() {
+		t.Fatalf("a taking defender takes everything of a matching rank: table %v", s.TableOrder)
 	}
-	if s.ThrowInAllowed() {
-		t.Fatal("three attacks on a defender holding three cards: the table is full")
+	if _, err := s.ValidatePlay("C", "C_9", ""); err != ErrRankMismatch {
+		t.Fatalf("only the rank limits throw-ins on a taking defender, got %v", err)
 	}
 }
 
@@ -282,21 +283,31 @@ func TestValidateTransfer(t *testing.T) {
 	wantErr(t, err, ErrTransferAfterDefense)
 }
 
-func TestJokerCannotTransferOrBeatAJoker(t *testing.T) {
+func TestJokerBeatsOrTransfersTheOtherJoker(t *testing.T) {
 	e, s := threePlayers(t)
 	setHand(t, s, "A", "RJ", "H_7")
 	setHand(t, s, "B", "BJ", "S_8", "D_4")
 	if err := e.PlayCard(s, "A", "RJ", ""); err != nil {
 		t.Fatal(err)
 	}
-	// the other Joker neither beats nor transfers a Joker attack
-	_, err := s.ValidatePlay("B", "BJ", "RJ")
-	wantErr(t, err, ErrCannotBeat)
-	_, err = s.ValidateTransfer("B", "BJ")
-	wantErr(t, err, ErrJokerCannotTransfer)
+	// the other Joker both beats and transfers a Joker attack
+	if _, err := s.ValidatePlay("B", "BJ", "RJ"); err != nil {
+		t.Fatalf("the Black Joker beats the Red Joker: %v", err)
+	}
+	if _, err := s.ValidateTransfer("B", "BJ"); err != nil {
+		t.Fatalf("the Black Joker transfers a Red Joker attack: %v", err)
+	}
+	// but a Joker never transfers an ordinary attack
+	setHand(t, s, "B", "BJ", "S_8", "D_4")
+	s2 := s.Clone()
+	s2.TableOrder = []string{"H_7"}
+	s2.TableCards = map[string][]Card{"H_7": {}}
+	if _, err := s2.ValidateTransfer("B", "BJ"); err != ErrTransferRank {
+		t.Fatalf("a Joker on a seven must be a rank mismatch, got %v", err)
+	}
 	for _, m := range s.LegalMoves("B") {
-		if m.Type != MoveTake {
-			t.Fatalf("facing a Joker the defender can only take, got %s", m)
+		if m.Type != MoveTake && m.CardID != "BJ" {
+			t.Fatalf("facing a Joker the defender takes or answers with the other Joker, got %s", m)
 		}
 	}
 	if err := e.TakeCards(s, "B"); err != nil {

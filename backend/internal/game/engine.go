@@ -22,7 +22,7 @@ type Engine struct {
 	// stump immediately at the end of the bout.
 	StumpAutoDelay time.Duration
 
-	// MaxAttacks caps the attack cards of one bout (classic: 6). 0 means no
+	// MaxAttacks caps the attack cards of one bout (classic: 6). 0 (default) means no
 	// cap beyond the defender's hand. Copied into the state at Start.
 	MaxAttacks int
 

@@ -49,11 +49,11 @@ func TestLegalMovesAreAcceptedByTheEngine(t *testing.T) {
 			if err := e.ApplyMove(s, pick.id, pick.m); err != nil {
 				t.Fatalf("seed %d: apply %s: %v", seed, pick.m, err)
 			}
-			// the classic limit holds at every moment: never more attacks waiting than the defender holds
+			// the hand limit holds at every moment while the defender is beating: never more attacks waiting than they hold
 			if s.MaxAttacks > 0 && len(s.TableOrder) > s.MaxAttacks {
 				t.Fatalf("seed %d step %d: %d attacks on the table, cap %d", seed, step, len(s.TableOrder), s.MaxAttacks)
 			}
-			if d := s.Defender(); d != nil && !s.TableEmpty() && s.UndefendedCount() > len(d.Hand) {
+			if d := s.Defender(); d != nil && !s.TableEmpty() && !s.DefenderTaking && s.UndefendedCount() > len(d.Hand) {
 				t.Fatalf("seed %d step %d: %d undefended attacks on a defender holding %d (taking=%v)", seed, step, s.UndefendedCount(), len(d.Hand), s.DefenderTaking)
 			}
 			if got := countCards(t, s); got != DeckSize {

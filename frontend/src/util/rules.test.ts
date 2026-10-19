@@ -22,12 +22,13 @@ describe('canBeat mirrors the server rules', () => {
       expect(canBeat(c('SC'), c(id), 'Spades')).toBe(false);
     }
   });
-  it('jokers beat by colour, never each other, never beaten by trumps', () => {
+  it('jokers beat by colour and the other joker, never beaten by trumps', () => {
     expect(canBeat(c('H_7'), c('RJ'), '')).toBe(true);
     expect(canBeat(c('S_7'), c('RJ'), '')).toBe(false);
     expect(canBeat(c('S_7'), c('BJ'), '')).toBe(true);
     expect(canBeat(c('D_7'), c('BJ'), '')).toBe(false);
-    expect(canBeat(c('RJ'), c('BJ'), '')).toBe(false);
+    expect(canBeat(c('RJ'), c('BJ'), '')).toBe(true);
+    expect(canBeat(c('BJ'), c('RJ'), '')).toBe(true);
     expect(canBeat(c('BJ'), c('H_14'), 'Hearts')).toBe(false);
   });
 });
@@ -113,9 +114,11 @@ describe('canThrowIn mirrors the defender-hand limit', () => {
     expect(canThrowIn(base(0), c('C_7'))).toBe(false);
     expect(canThrowIn(base(3), c('C_9'))).toBe(false); // rank not on the table
   });
-  it('applies while the defender is taking too', () => {
+  it('does not apply once the defender is taking: only the rank limits', () => {
     expect(canThrowIn(base(3, true), c('C_7'))).toBe(true);
-    expect(canThrowIn(base(2, true), c('C_7'))).toBe(false);
+    expect(canThrowIn(base(2, true), c('C_7'))).toBe(true);
+    expect(canThrowIn(base(0, true), c('C_7'))).toBe(true);
+    expect(canThrowIn(base(0, true), c('C_9'))).toBe(false);
   });
   it('stops at the per-bout cap', () => {
     const capped = { ...base(9), max_attacks: 2 };
@@ -127,8 +130,8 @@ describe('canThrowIn mirrors the defender-hand limit', () => {
 describe('canTransferWith mirrors the special-card rules', () => {
   const facing = (attackId: string) =>
     state({ table_cards: { [attackId]: [] }, table_order: [attackId], defender_id: 'B', defender_taking: false });
-  it('a Joker never transfers, not even the other Joker', () => {
-    expect(canTransferWith(facing('RJ'), c('BJ'))).toBe(false);
+  it('a Joker transfers only a Joker attack', () => {
+    expect(canTransferWith(facing('RJ'), c('BJ'))).toBe(true);
     expect(canTransferWith(facing('H_7'), c('RJ'))).toBe(false);
     expect(canTransferWith(facing('H_7'), c('SC'))).toBe(false);
     expect(canTransferWith(facing('H_7'), c('S_7'))).toBe(true);
