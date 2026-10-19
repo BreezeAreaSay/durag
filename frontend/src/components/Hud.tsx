@@ -1,4 +1,5 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { sound } from '../util/audio';
 import { Button } from './Button';
 import { Sticker } from './Sticker';
 import { TimerRing } from './TimerRing';
@@ -72,7 +73,8 @@ function statusLine(state: GameState, selfId: string): string {
 }
 
 export function Hud({ state, handTop, reactions, onAvatarClick, onTopHeight }: Props) {
-  const { selfId, take, pass, takeStump, leave, connection } = useGame();
+  const { selfId, take, pass, takeStump, leave, connection, theme, setTheme } = useGame();
+  const [soundOn, setSoundOn] = useState(sound.enabled);
   const topRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
@@ -114,6 +116,12 @@ export function Hud({ state, handTop, reactions, onAvatarClick, onTopHeight }: P
           <span className="chip chip--ghost">
             {t('game.bout')} {state.bout_number}
           </span>
+          <button className="chip chip--ghost chip--icon" onClick={() => setSoundOn(sound.toggle())} aria-label={t('ui.sound')} title={t('ui.sound')}>
+            {soundOn ? '🔊' : '🔇'}
+          </button>
+          <button className="chip chip--ghost chip--icon" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} aria-label={t('ui.theme')} title={t('ui.theme')}>
+            {theme === 'dark' ? '☀' : '☾'}
+          </button>
           <button className="chip chip--link" onClick={leave}>
             {t('game.leave')}
           </button>

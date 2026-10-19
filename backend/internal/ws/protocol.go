@@ -88,7 +88,9 @@ type ReactionPayload struct {
 }
 
 // AllowedEmoji is the whitelist of reactions; the client renders the same set.
-var AllowedEmoji = []string{"👍", "👎", "😂", "😡", "😎", "🤔", "🔥", "💀", "🤡", "❤️", "👏", "🙏"}
+// 👊 is a fist on the table (every client shakes its cards), 🚬 lights a
+// cigarette by the sender's avatar instead of flying to the table.
+var AllowedEmoji = []string{"👍", "👎", "😂", "😡", "😎", "🤔", "🔥", "💀", "🤡", "❤️", "👏", "🙏", "👊", "🚬"}
 
 var allowedEmojiSet = func() map[string]bool {
 	m := make(map[string]bool, len(AllowedEmoji))

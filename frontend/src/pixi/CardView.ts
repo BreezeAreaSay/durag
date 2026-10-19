@@ -8,6 +8,7 @@ import type { Card } from '../types/protocol';
 import { cardColor, isJoker, isSuper, rankLabel } from '../util/cards';
 import { drawSuit } from './suits';
 import type { SkinId } from '../util/progress';
+import { isDark } from '../util/theme';
 
 const INK = 0x0d0d0d;
 const PAPER = 0xece9e1;
@@ -108,8 +109,8 @@ export class CardView {
 
   private buildShadow(): void {
     const { w, h } = this;
-    // on dark paper the hard offset "shadow" is a pale misregistered double print
-    this.shadow.roundRect(-w / 2, -h / 2, w, h, CORNER).fill({ color: PAPER, alpha: 0.22 });
+    // on dark paper the hard offset "shadow" is a pale misregistered double print; on light paper it is ink
+    this.shadow.roundRect(-w / 2, -h / 2, w, h, CORNER).fill(isDark() ? { color: PAPER, alpha: 0.22 } : { color: INK, alpha: 0.3 });
     this.shadow.position.set(SHADOW_DX, SHADOW_DY);
   }
 

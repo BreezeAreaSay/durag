@@ -96,6 +96,27 @@ export function tableSlots(n: number, m: Metrics): { attack: Slot; defense: Slot
   return out;
 }
 
+/**
+ * A card's own sloppiness, derived from its id so every client sees the same
+ * table and a resync never makes a card twitch. A card's hash h in [0, 1)
+ * seeds three independent-looking numbers; one card in ten (h < 0.1) is
+ * thrown down carelessly and tilts up to 0.35 rad, the rest wobble ±0.08.
+ * `amount` scales it down for the hand (cards held, not thrown).
+ */
+export function jitterSlot(slot: Slot, id: string, amount = 1): Slot {
+  if (amount <= 0) return slot;
+  let h = 2166136261;
+  for (let i = 0; i < id.length; i++) h = Math.imul(h ^ id.charCodeAt(i), 16777619);
+  const u = ((h >>> 0) % 100000) / 100000;
+  const frac = (v: number) => v - Math.floor(v);
+  const careless = u < 0.1;
+  const amp = careless ? 0.35 : 0.08;
+  const rot = (frac(u * 7.31 + 0.17) - 0.5) * 2 * amp;
+  const dx = (frac(u * 13.7 + 0.43) - 0.5) * 8;
+  const dy = (frac(u * 3.3 + 0.71) - 0.5) * 8;
+  return { x: slot.x + dx * amount * slot.scale, y: slot.y + dy * amount * slot.scale, rotation: slot.rotation + rot * amount, scale: slot.scale };
+}
+
 /** Slot of the next attack card (where a dragged card snaps while pending). */
 export function nextAttackSlot(n: number, m: Metrics): Slot {
   const slots = tableSlots(n + 1, m);

@@ -147,8 +147,8 @@ func (h *Heuristic) Decide(_ context.Context, in Context) (Decision, error) {
 	case in.SpeakDue():
 		d.Say = Jab(h.rng, in.Event)
 	}
-	if d.Move.Type == game.MoveTake && h.rng.Float64() < 0.3 {
-		d.Emoji = []string{"💀", "😡", "🤔"}[h.rng.IntN(3)]
+	if d.Move.Type == game.MoveTake && h.rng.Float64() < 0.4 {
+		d.Emoji = []string{"💀", "😡", "🤔", "🚬", "🚬"}[h.rng.IntN(5)] // taking the table calls for a smoke
 	}
 	return d, nil
 }

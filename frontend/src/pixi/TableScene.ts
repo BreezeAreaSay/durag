@@ -17,12 +17,15 @@ import {
   stumpSlot,
   tableSlots,
   trumpSlot,
+  jitterSlot,
   type Metrics,
   type Slot,
 } from './layout';
 import { drawSuit } from './suits';
 import { canBeat } from '../util/rules';
-import { isSuper } from '../util/cards';
+import { isJoker, isSuper } from '../util/cards';
+import { sound } from '../util/audio';
+import { isDark } from '../util/theme';
 import type { Card, Suit } from '../types/protocol';
 import type { SceneModel } from './model';
 
@@ -33,7 +36,14 @@ export interface SceneHandlers {
   onTakeStump?(): void;
   /** the WebGL context was lost (iOS memory pressure): the host remounts the scene */
   onContextLost?(): void;
+  /** the viewer double-tapped the empty table: a fist slam, to be sent to the room */
+  onSlam?(): void;
+  /** a card wants an emoji to fly from a screen point (a Joker laughing) */
+  onCardEmoji?(emoji: string, x: number, y: number): void;
 }
+
+/** A per-frame effect; returns false when it is over. */
+type Effect = (dtMs: number) => boolean;
 
 export interface SceneLabels {
   trump: string;
@@ -107,6 +117,10 @@ export class TableScene {
   private destroyed = false;
   private lastOutcome: '' | 'bito' | 'took' = '';
   private timers = new Set<number>();
+  private effects: Effect[] = [];
+  /** where each card was last placed: table arrivals trigger the gags */
+  private kinds = new Map<string, Placement['kind']>();
+  private lastTap = 0;
 
   // piles
   private deckPile = new Container();
@@ -177,12 +191,14 @@ export class TableScene {
     stage.on('pointerupoutside', this.onPointerUp);
     // iOS / Telegram cancel a touch when a system gesture takes over: never leave a card stuck in the air
     stage.on('pointercancel', this.onPointerCancel);
+    stage.on('pointertap', this.onStageTap);
     document.addEventListener('visibilitychange', this.onVisibility);
 
     this.app.renderer.on('resize', this.onResize);
     this.app.ticker.add((ticker) => {
       this.time += ticker.deltaMS;
       this.tweener.update(ticker.deltaMS);
+      if (this.effects.length) this.effects = this.effects.filter((fx) => fx(ticker.deltaMS));
       this.glowAcc += ticker.deltaMS;
       if (this.glowAcc >= GLOW_STEP_MS) {
         this.glowAcc = 0;
@@ -245,6 +261,7 @@ export class TableScene {
     if (this.destroyed) return;
     this.destroyed = true;
     this.tweener.clear();
+    this.effects = [];
     for (const id of this.timers) window.clearTimeout(id);
     this.timers.clear();
     document.removeEventListener('visibilitychange', this.onVisibility);
@@ -368,8 +385,15 @@ export class TableScene {
       view.root.visible = this.revealHidden !== id;
       view.root.eventMode = p.kind === 'hand' && m.interactive ? 'static' : 'none';
       view.root.cursor = p.kind === 'hand' && m.interactive ? 'grab' : 'default';
-      this.moveTo(view, p.slot, immediate && !spawned);
+      this.moveTo(view, p.slot, immediate && !spawned, p.kind === 'hand' ? 0.3 : 1);
+      const was = this.kinds.get(id);
+      this.kinds.set(id, p.kind);
+      if (was !== p.kind && p.kind !== 'hand' && !immediate) {
+        if (p.kind === 'defense') sound.snap();
+        if (isJoker(p.card)) this.later(p.kind === 'attack' ? 420 : 520, () => (p.kind === 'attack' ? this.jokerWink(view!) : this.jokerLaugh(view!)));
+      }
     }
+    for (const id of [...this.kinds.keys()]) if (!wanted.has(id)) this.kinds.delete(id);
 
     // The Super card destroys the card it beats: coarse pixels, no card left.
     for (const pair of m.table) {
@@ -437,8 +461,9 @@ export class TableScene {
     return view;
   }
 
-  private moveTo(view: CardView, slot: Slot, immediate: boolean): void {
+  private moveTo(view: CardView, rawSlot: Slot, immediate: boolean, jitter = 1): void {
     const r = view.root;
+    const slot = jitterSlot(rawSlot, view.card.id, jitter);
     const same = Math.abs(r.x - slot.x) < 0.5 && Math.abs(r.y - slot.y) < 0.5 && Math.abs(r.rotation - slot.rotation) < 0.01 && Math.abs(r.scale.x - slot.scale) < 0.01;
     if (same) return;
     if (immediate) {
@@ -456,16 +481,123 @@ export class TableScene {
    * √distance, the card is lifted (long shadow) on the way and settles
    * with one soft overshoot (easings.land) as it touches the table.
    */
-  private land(view: CardView, slot: Slot, alpha: number): Promise<boolean> {
+  private land(view: CardView, rawSlot: Slot, alpha: number, jitter = 1): Promise<boolean> {
     const r = view.root;
+    const slot = jitterSlot(rawSlot, view.card.id, jitter);
     const d = Math.hypot(slot.x - r.x, slot.y - r.y);
     view.setLifted(true);
     const p = this.tweener.to(r, { x: slot.x, y: slot.y, rotation: slot.rotation, scale: slot.scale, alpha }, { duration: fallDuration(d), ease: easings.land });
     void p.then((done) => {
-      if (done) view.setLifted(false);
+      if (done) {
+        view.setLifted(false);
+        sound.snap();
+      }
     });
     return p;
   }
+
+  // --- gags ---------------------------------------------------------------
+
+  /**
+   * A Joker leading the attack winks: one slow turn about its vertical axis
+   * (scale.x = s·cos(πt)), showing its back at the half-way point.
+   */
+  private jokerWink(view: CardView): void {
+    if (this.destroyed || view.isDissolved) return;
+    const s = view.root.scale.x;
+    const total = 700;
+    let t = 0;
+    let flipped = false;
+    this.effects.push((dt) => {
+      t += dt;
+      const k = Math.min(1, t / total);
+      view.root.scale.x = s * Math.max(0.04, Math.abs(Math.cos(Math.PI * k)));
+      const back = k > 0.25 && k < 0.75;
+      if (back !== flipped) {
+        flipped = back;
+        view.setFaceUp(!back);
+      }
+      if (k >= 1) {
+        view.root.scale.x = s;
+        view.setFaceUp(true);
+        return false;
+      }
+      return true;
+    });
+  }
+
+  /**
+   * A Joker that just beat a card laughs: three hops with a dying amplitude,
+   * y = A·|sin(ωt)|·e^(−λt), a 😂 flying off the card and a wobble.
+   */
+  private jokerLaugh(view: CardView): void {
+    if (this.destroyed || view.isDissolved) return;
+    const y0 = view.root.y;
+    const rot0 = view.root.rotation;
+    const A = this.metrics.cardH * 0.18;
+    const total = 900;
+    let t = 0;
+    this.effects.push((dt) => {
+      t += dt;
+      const sec = t / 1000;
+      const env = Math.exp(-3.2 * sec);
+      view.root.y = y0 - A * Math.abs(Math.sin(Math.PI * 3.4 * sec)) * env;
+      view.root.rotation = rot0 + 0.12 * Math.sin(Math.PI * 6.8 * sec) * env;
+      if (t >= total) {
+        view.root.y = y0;
+        view.root.rotation = rot0;
+        return false;
+      }
+      return true;
+    });
+    const { x, y } = view.root.position;
+    this.handlers.onCardEmoji?.('😂', x, y - this.metrics.cardH * 0.3);
+  }
+
+  /**
+   * A fist on the table: every card jumps in a wave from the middle of the
+   * table, h = H·e^(−d/R) with a delay of d/v, and lands slightly askew; the
+   * next sync straightens the table again, which reads as the dust settling.
+   */
+  slam(): void {
+    if (!this.ready || this.destroyed) return;
+    const cx = this.metrics.width / 2;
+    const cy = (this.metrics.tableTop + this.metrics.tableBottom) / 2;
+    const H = this.metrics.cardH * 0.45;
+    const R = Math.max(200, this.metrics.height * 0.45);
+    sound.thud();
+    for (const view of this.views.values()) {
+      if (view.isDissolved || this.drag?.id === view.card.id) continue;
+      const r = view.root;
+      const d = Math.hypot(r.x - cx, r.y - cy);
+      const h = H * Math.exp(-d / R);
+      if (h < 2) continue;
+      const delay = d / 1.6; // ms: the wave travels 1.6 px per ms
+      const home = { x: r.x, y: r.y, rotation: r.rotation, scale: r.scale.x };
+      const settle = { ...home, rotation: home.rotation + (Math.random() - 0.5) * 0.12, x: home.x + (Math.random() - 0.5) * 6 };
+      this.later(delay, () => {
+        if (this.destroyed || this.tweener.active > 400) return;
+        view.setLifted(true);
+        void this.tweener.to(r, { y: home.y - h, rotation: home.rotation + (Math.random() - 0.5) * 0.2 }, { duration: 110 + h * 0.6, ease: easings.outQuad }).then((up) => {
+          if (!up) return;
+          void this.tweener.to(r, settle, { duration: fallDuration(h) + 60, ease: easings.land }).then((down) => {
+            if (down) view.setLifted(false);
+          });
+        });
+      });
+    }
+  }
+
+  private onStageTap = (e: FederatedPointerEvent): void => {
+    if (e.target !== this.app.stage) return; // a card or a pile handled it
+    const now = performance.now();
+    const twice = now - this.lastTap < 350;
+    this.lastTap = twice ? 0 : now;
+    if (!twice) return;
+    const m = this.metrics;
+    if (e.global.y < m.tableTop || e.global.y > m.handTop) return;
+    this.handlers.onSlam?.();
+  };
 
   private reparent(view: CardView, layer: Container): void {
     // All layers share the world transform, so coordinates carry over 1:1.
@@ -560,11 +692,12 @@ export class TableScene {
   // --- piles -----------------------------------------------------------------
 
   private buildPiles(): void {
-    this.deckLabel = new Text({ text: '', style: { fontFamily: FONT, fontWeight: '900', fontSize: 16, fill: PAPER } });
+    const labelInk = isDark() ? PAPER : INK;
+    this.deckLabel = new Text({ text: '', style: { fontFamily: FONT, fontWeight: '900', fontSize: 16, fill: labelInk } });
     this.deckLabel.anchor.set(0.5);
     this.discardLabel = new Text({ text: '', style: { fontFamily: FONT, fontWeight: '900', fontSize: 14, fill: 0x8a877f } });
     this.discardLabel.anchor.set(0.5);
-    this.stumpLabel = new Text({ text: '', style: { fontFamily: FONT, fontWeight: '900', fontSize: 13, fill: PAPER } });
+    this.stumpLabel = new Text({ text: '', style: { fontFamily: FONT, fontWeight: '900', fontSize: 13, fill: labelInk } });
     this.stumpLabel.anchor.set(1, 1); // right-aligned: the pile sits at the screen edge
     this.stumpPile.eventMode = 'none';
     this.stumpPile.cursor = 'pointer';
@@ -636,7 +769,7 @@ export class TableScene {
     this.trumpPlate.removeChildren().forEach((c) => c.destroy({ children: true }));
     const w = m.cardW * 0.82;
     const h = m.cardH * 0.82;
-    const shadow = new Graphics().rect(-w / 2 + 5, -h / 2 + 6, w, h).fill({ color: PAPER, alpha: 0.25 });
+    const shadow = new Graphics().rect(-w / 2 + 5, -h / 2 + 6, w, h).fill({ color: isDark() ? PAPER : INK, alpha: 0.25 });
     const plate = new Graphics().rect(-w / 2, -h / 2, w, h).fill({ color: ACID }).stroke({ width: 3, color: INK, alignment: 1 });
     const label = new Text({ text: this.labels.trump.toUpperCase(), style: { fontFamily: FONT, fontWeight: '900', fontSize: Math.max(7, Math.round(w * 0.13)), fill: INK } });
     label.anchor.set(0.5, 0);
@@ -826,7 +959,7 @@ export class TableScene {
       this.sync(false);
       return;
     }
-    const slot = handSlots(m.hand.length, this.metrics)[idx]!;
+    const slot = jitterSlot(handSlots(m.hand.length, this.metrics)[idx]!, view.card.id, 0.3);
     this.reparent(view, this.layers.hand);
     view.root.zIndex = idx;
     view.root.eventMode = m.interactive ? 'static' : 'none';

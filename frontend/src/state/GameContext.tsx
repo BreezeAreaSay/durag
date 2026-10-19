@@ -3,6 +3,7 @@ import type { ClientConfig, ClientMessage, GameState, ServerMessage } from '../t
 import { useTelegram } from '../telegram/useTelegram';
 import { setLang } from '../i18n';
 import { loadSkin, loadWins, saveSkin, saveWins, type SkinId } from '../util/progress';
+import { applyTheme, loadTheme, type Theme } from '../util/theme';
 
 export type Connection = 'connecting' | 'open' | 'closed';
 
@@ -44,6 +45,8 @@ export interface GameContextValue {
   /** The chosen card back. */
   skin: SkinId;
   setSkin(skin: SkinId): void;
+  theme: Theme;
+  setTheme(theme: Theme): void;
   react(emoji: string): void;
   join(roomId: string, create: boolean): void;
   leave(): void;
@@ -126,6 +129,15 @@ export function GameProvider({ children }: { children: ReactNode }) {
   const [reactions, setReactions] = useState<Record<string, Reaction>>({});
   const [wins, setWins] = useState<number>(loadWins);
   const [skin, setSkinState] = useState<SkinId>(() => loadSkin(loadWins()));
+  const [theme, setThemeState] = useState<Theme>(() => {
+    const t = loadTheme();
+    applyTheme(t);
+    return t;
+  });
+  const setTheme = useCallback((t: Theme) => {
+    applyTheme(t);
+    setThemeState(t);
+  }, []);
   const setSkin = useCallback((id: SkinId) => {
     saveSkin(id);
     setSkinState(id);
@@ -331,6 +343,8 @@ export function GameProvider({ children }: { children: ReactNode }) {
       wins,
       skin,
       setSkin,
+      theme,
+      setTheme,
       react: (emoji) => send({ type: 'SEND_EMOJI', payload: { emoji } }),
       join,
       leave,
@@ -345,7 +359,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
       setDevName,
       clearError: () => setLastError(null),
     }),
-    [connection, config, state, roomId, identity, lastError, replaced, reactions, wins, skin, setSkin, join, leave, send, setDevName],
+    [connection, config, state, roomId, identity, lastError, replaced, reactions, wins, skin, setSkin, theme, setTheme, join, leave, send, setDevName],
   );
 
   return <GameContext.Provider value={value}>{children}</GameContext.Provider>;
