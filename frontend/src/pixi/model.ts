@@ -40,11 +40,27 @@ function lastOutcomeOf(state: GameState): Outcome {
   return '';
 }
 
-export function toSceneModel(state: GameState, selfId: string, skin: SkinId = 'classic'): SceneModel {
+/** how the viewer likes the hand laid out */
+export type HandSort = 'rank' | 'suit';
+
+const SUIT_ORDER: Record<string, number> = { Hearts: 0, Diamonds: 1, Clubs: 2, Spades: 3, None: 4 };
+
+/** Specials go last either way; the rest by rank then suit, or by suit then rank. */
+export function sortHand(cards: Card[], mode: HandSort): Card[] {
+  const key = (c: Card): [number, number, number] =>
+    c.rank >= 15 ? [1, c.rank, 0] : mode === 'suit' ? [0, SUIT_ORDER[c.suit] ?? 4, c.rank] : [0, c.rank, SUIT_ORDER[c.suit] ?? 4];
+  return [...cards].sort((a, b) => {
+    const ka = key(a);
+    const kb = key(b);
+    return ka[0] - kb[0] || ka[1] - kb[1] || ka[2] - kb[2];
+  });
+}
+
+export function toSceneModel(state: GameState, selfId: string, skin: SkinId = 'classic', sort: HandSort = 'rank'): SceneModel {
   const me = state.players.find((p) => p.id === selfId);
   const role = roleOf(state, selfId);
   return {
-    hand: me?.hand ?? [],
+    hand: sortHand(me?.hand ?? [], sort),
     table: tablePairs(state),
     deckCount: state.deck_count,
     trumpCard: state.trump_card,

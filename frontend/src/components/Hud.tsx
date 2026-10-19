@@ -9,6 +9,7 @@ import { SUIT_SYMBOL } from '../util/cards';
 import { roleOf, tablePairs } from '../util/rules';
 import { lastMove } from '../util/moves';
 import type { GameState, Player } from '../types/protocol';
+import type { HandSort } from '../pixi/model';
 
 interface Props {
   state: GameState;
@@ -18,6 +19,10 @@ interface Props {
   onAvatarClick(playerId: string): void;
   /** Reports the rendered height of the top panel so the table can avoid it. */
   onTopHeight(height: number): void;
+  /** y (CSS px) of the middle of the hand: the player's sticker sits there, holding the cards */
+  handMiddle: number;
+  sort: HandSort;
+  onSort(next: HandSort): void;
 }
 
 type RoleKey = 'attack' | 'throw' | 'defend' | 'take' | 'pass' | 'wait' | 'out' | 'offline' | 'stump';
@@ -72,7 +77,7 @@ function statusLine(state: GameState, selfId: string): string {
   }
 }
 
-export function Hud({ state, handTop, reactions, onAvatarClick, onTopHeight }: Props) {
+export function Hud({ state, handTop, reactions, onAvatarClick, onTopHeight, handMiddle, sort, onSort }: Props) {
   const { selfId, take, pass, takeStump, leave, connection, theme, setTheme } = useGame();
   const [soundOn, setSoundOn] = useState(sound.enabled);
   const topRef = useRef<HTMLElement>(null);
@@ -126,7 +131,7 @@ export function Hud({ state, handTop, reactions, onAvatarClick, onTopHeight }: P
             {t('game.leave')}
           </button>
         </div>
-        <ul className="opponents">
+        <ul className={`opponents ${opponents.length > 3 ? 'opponents--many' : ''}`}>
           {opponents.map((p) => {
             const key = roleKey(state, p);
             const hot = HOT_ROLES.includes(key) && !resolving;
@@ -185,18 +190,25 @@ export function Hud({ state, handTop, reactions, onAvatarClick, onTopHeight }: P
         </div>
       </div>
 
+      {me ? (
+        <div className="me me__avatar" style={{ top: handMiddle - 20 }}>
+          <button type="button" className="avatar-btn" onClick={() => onAvatarClick(me.id)} aria-label={me.name}>
+            <Sticker name={me.name} avatarUrl={me.avatar_url} seed={me.id} size={34} wins={me.wins} playerId={me.id} />
+            {timerFor(me.id) ? <TimerRing deadline={timerFor(me.id)} timeoutMs={state.turn_timeout_ms} size={58} /> : null}
+          </button>
+        </div>
+      ) : null}
       <footer className="hud-bottom">
         {me ? (
-          <div className="me">
-            <button type="button" className="avatar-btn" onClick={() => onAvatarClick(me.id)} aria-label={me.name}>
-              <Sticker name={me.name} avatarUrl={me.avatar_url} seed={me.id} size={34} wins={me.wins} playerId={me.id} />
-              {timerFor(me.id) ? <TimerRing deadline={timerFor(me.id)} timeoutMs={state.turn_timeout_ms} size={58} /> : null}
-            </button>
+          <div className="me me__row">
             <span className={`roletag roletag--me ${HOT_ROLES.includes(myRole) && !resolving ? 'roletag--hot' : ''}`}>{roleLabel(myRole, true)}</span>
             <span className="me__meta">
               {me.name} · {me.hand_count}
               {me.stump_count ? ` · ${t('game.stump')} ${me.stump_count}` : ''}
             </span>
+            <button type="button" className="chip chip--ghost chip--sort" onClick={() => onSort(sort === 'rank' ? 'suit' : 'rank')} aria-label={t('ui.sort')} title={t('ui.sort')}>
+              {sort === 'rank' ? t('ui.sortRank') : t('ui.sortSuit')}
+            </button>
           </div>
         ) : null}
       </footer>

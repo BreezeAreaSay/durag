@@ -62,6 +62,24 @@ describe('lamp', () => {
     expect(Math.abs(away.x - plain.x)).toBeLessThan(0.5); // too far: the lamp alone
   });
 
+  it('flickers in short bursts and is steady in between', () => {
+    const lamp = new Lamp(0);
+    expect(lamp.intensity()).toBe(1);
+    lamp.flicker();
+    lamp.update(1);
+    let dimmed = 0;
+    for (let i = 0; i < 80; i++) {
+      lamp.update(10);
+      const v = lamp.intensity();
+      expect(v).toBeGreaterThanOrEqual(0.3);
+      expect(v).toBeLessThanOrEqual(1);
+      if (v < 0.95) dimmed++;
+    }
+    expect(dimmed).toBeGreaterThan(5);
+    lamp.update(2000);
+    expect(lamp.intensity()).toBe(1);
+  });
+
   it('is yellow at night and white by day', () => {
     expect(lampTint(2).sat).toBeGreaterThan(lampTint(14).sat);
     expect(lampTint(2).alpha).toBeGreaterThan(lampTint(14).alpha);

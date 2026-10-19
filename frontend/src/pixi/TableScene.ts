@@ -2,7 +2,7 @@
 // turned into a SceneModel and `sync()` moves cards to where the state says
 // they are. Drag-and-drop sends intents optimistically; an ERROR from the
 // server snaps the card back into the hand with a stop-motion rubber band.
-import { Application, Container, Graphics, Text, type FederatedPointerEvent } from 'pixi.js';
+import { Application, Container, Graphics, Sprite, Text, Texture, type FederatedPointerEvent } from 'pixi.js';
 import { CardView } from './CardView';
 import { Lamp, lampTint } from './lamp';
 import { StopMotionTweener, easings, fallDuration } from './tween';
@@ -111,7 +111,7 @@ export class TableScene {
   private skin: SkinId = 'classic';
 
   private world = new Container();
-  private layers = { piles: new Container(), table: new Container(), hand: new Container(), drag: new Container() };
+  private layers = { piles: new Container(), table: new Container(), hand: new Container(), light: new Container(), drag: new Container() };
   private views = new Map<string, CardView>();
   private pending = new Map<string, Pending>();
   private model: SceneModel | null = null;
@@ -132,6 +132,10 @@ export class TableScene {
   private shadowAcc = 0;
   private spotAcc = 0;
   private zooming = false;
+  /** the darkness outside the lamp's cone, the dip of a flicker, the Super card's glow */
+  private cone = new Sprite();
+  private dip = new Graphics();
+  private emberGlow = new Sprite();
 
   // piles
   private deckPile = new Container();
@@ -191,7 +195,9 @@ export class TableScene {
 
     const stage = this.app.stage;
     stage.addChild(this.world);
-    this.world.addChild(this.layers.piles, this.layers.table, this.layers.hand, this.layers.drag);
+    // the hand sits under the player's own nose: the lamp's darkness stops before it
+    this.world.addChild(this.layers.piles, this.layers.table, this.layers.light, this.layers.hand, this.layers.drag);
+    this.buildLight();
     this.layers.hand.sortableChildren = true;
     this.layers.table.sortableChildren = true;
     this.layers.drag.sortableChildren = true;
@@ -415,9 +421,8 @@ export class TableScene {
       if (was !== p.kind && p.kind !== 'hand' && !immediate) {
         if (p.kind === 'defense') {
           sound.snap();
-          // a look at the beat: always for a trump or a special card, now and then for anything else
-          const trump = m.trumpRevealed && p.card.suit === m.trumpSuit;
-          if (trump || isJoker(p.card) || p.card.id === 'SC' || Math.random() < 0.25) this.later(260, () => this.gaze(view!));
+          // a look at the beat
+          this.later(240, () => this.gaze(view!));
         }
         if (isJoker(p.card)) this.later(p.kind === 'attack' ? 420 : 520, () => (p.kind === 'attack' ? this.jokerWink(view!) : this.jokerToss(view!)));
       }
@@ -429,7 +434,10 @@ export class TableScene {
       if (pair.defense?.id === 'SC' && !this.dissolved.has(pair.attack.id)) {
         this.dissolved.add(pair.attack.id);
         const target = this.views.get(pair.attack.id);
+        const sc = this.views.get('SC');
         if (target) this.later(immediate ? 0 : 380, () => this.disintegrate(target));
+        // the blast throws the cards around it
+        if (sc && !immediate) this.later(420, () => this.wave(sc.root.x, sc.root.y, this.metrics.cardH * 0.4, this.metrics.cardH * 1.8, sc));
       }
     }
 
@@ -596,6 +604,7 @@ export class TableScene {
     const cy = (this.metrics.tableTop + this.metrics.tableBottom) / 2;
     sound.thud();
     this.lamp.kick();
+    this.lamp.flicker();
     this.wave(cx, cy, this.metrics.cardH * 0.45, Math.max(200, this.metrics.height * 0.45));
   }
 
@@ -624,8 +633,8 @@ export class TableScene {
   }
 
   /**
-   * A glance at a card: the lamp leans towards it, the view zooms in a
-   * little around it (a scale s about point P keeps P fixed when the world
+   * A glance at a card: the lamp leans towards it, the table zooms in a
+   * little around it (a scale s about point P keeps P fixed when the layer
    * is moved to (1−s)·P) and the HUD is told, so the player's sticker can
    * turn its head too.
    */
@@ -636,10 +645,10 @@ export class TableScene {
     this.lamp.look({ x: P.x / m.width, y: P.y / m.height });
     this.handlers.onGaze?.(P.x, P.y);
     this.zooming = true;
-    const inMs = 350;
-    const holdMs = 250;
-    const outMs = 320;
-    const peak = 1.06;
+    const inMs = 320;
+    const holdMs = 320;
+    const outMs = 360;
+    const peak = 1.1;
     let t = 0;
     this.effects.push((dt) => {
       t += dt;
@@ -647,11 +656,12 @@ export class TableScene {
       if (t < inMs) s = 1 + (peak - 1) * easings.outQuad(t / inMs);
       else if (t < inMs + holdMs) s = peak;
       else if (t < inMs + holdMs + outMs) s = 1 + (peak - 1) * (1 - easings.outQuad((t - inMs - holdMs) / outMs));
-      this.world.scale.set(s);
-      this.world.position.set((1 - s) * P.x, (1 - s) * P.y);
+      // only the table leans in: the hand and the piles stay where the thumbs expect them
+      this.layers.table.scale.set(s);
+      this.layers.table.position.set((1 - s) * P.x, (1 - s) * P.y);
       if (t >= inMs + holdMs + outMs) {
-        this.world.scale.set(1);
-        this.world.position.set(0, 0);
+        this.layers.table.scale.set(1);
+        this.layers.table.position.set(0, 0);
         this.zooming = false;
         return false;
       }
@@ -678,28 +688,83 @@ export class TableScene {
     }
   }
 
-  /** the CSS side of the lights: the lamp's spot, the vignette's centre, the Super card's glow */
+  /** A radial alpha texture drawn once: clear in the middle, solid past 40% of the radius. */
+  private static radial(stops: [number, number][], size = 512): Texture {
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d')!;
+    const g = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+    for (const [at, a] of stops) g.addColorStop(at, `rgba(255,255,255,${a})`);
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, size, size);
+    return Texture.from(canvas);
+  }
+
+  /**
+   * The light lives in the canvas (a DOM overlay with a blend mode over a
+   * WebGL canvas is exactly the thing mobile browsers get wrong): a dark
+   * sheet with a soft hole where the lamp hangs, a plain dip for the
+   * flicker, and a warm glow around the Super card drawn additively.
+   */
+  private buildLight(): void {
+    this.cone.texture = TableScene.radial([
+      [0, 0],
+      [0.14, 0.12],
+      [0.4, 1],
+      [1, 1],
+    ]);
+    this.cone.anchor.set(0.5);
+    this.cone.eventMode = 'none';
+    this.dip.eventMode = 'none';
+    this.emberGlow.texture = TableScene.radial([
+      [0, 0.9],
+      [0.35, 0.35],
+      [1, 0],
+    ]);
+    this.emberGlow.anchor.set(0.5);
+    this.emberGlow.blendMode = 'add';
+    this.emberGlow.eventMode = 'none';
+    this.emberGlow.visible = false;
+    this.layers.light.addChild(this.cone, this.dip, this.emberGlow);
+    this.layers.light.eventMode = 'none';
+  }
+
+  /** the lamp's cone, the flicker and the Super card's glow follow their sources */
   private lightSpot(): void {
+    const m = this.metrics;
     const l = this.lamp.position();
+    const dark = isDark();
+    const k = this.lamp.intensity();
+    // the sheet is three screens wide, so the hole can sit in a corner and the far corner stays dark
+    const side = Math.max(m.width, m.height) * 3;
+    this.cone.width = side;
+    this.cone.height = side;
+    this.cone.position.set(l.x * m.width, l.y * m.height);
+    this.cone.tint = dark ? 0x000000 : 0x2a1c0c;
+    this.cone.alpha = (dark ? 0.62 : 0.3) * (0.7 + 0.3 * k);
+    this.dip.clear().rect(-m.width, -m.height, m.width * 3, m.height * 3).fill({ color: 0x000000, alpha: (1 - k) * (dark ? 0.75 : 0.45) });
+    const e = this.ember();
+    this.emberGlow.visible = e !== null;
+    if (e) {
+      const d = m.cardH * 3.6 * (1 + 0.05 * Math.sin(this.time / 240));
+      this.emberGlow.width = d;
+      this.emberGlow.height = d;
+      this.emberGlow.position.set(e.x, e.y);
+      this.emberGlow.tint = 0xcf1fff;
+      this.emberGlow.alpha = dark ? 0.55 : 0.38;
+    }
+    // the DOM keeps the vignette's centre under the lamp
     const root = document.documentElement.style;
     root.setProperty('--lx', `${(l.x * 100).toFixed(1)}%`);
     root.setProperty('--ly', `${(l.y * 100).toFixed(1)}%`);
-    const e = this.ember();
-    root.setProperty('--sa', e ? '1' : '0');
-    if (e) {
-      root.setProperty('--sx', `${((e.x / this.metrics.width) * 100).toFixed(1)}%`);
-      root.setProperty('--sy', `${((e.y / this.metrics.height) * 100).toFixed(1)}%`);
-    }
   }
 
-  /** the lamp's colour by the hour on the phone */
+  /** the lamp's colour by the hour on the phone: the cone's tint warms up at night */
   private lampColour(): void {
     const now = new Date();
     const tint = lampTint(now.getHours() + now.getMinutes() / 60);
-    const root = document.documentElement.style;
-    root.setProperty('--lamp-h', tint.hue.toFixed(0));
-    root.setProperty('--lamp-s', `${tint.sat.toFixed(0)}%`);
-    root.setProperty('--lamp-a', tint.alpha.toFixed(2));
+    document.documentElement.style.setProperty('--lamp-a', tint.alpha.toFixed(2));
   }
 
   private onStageTap = (e: FederatedPointerEvent): void => {

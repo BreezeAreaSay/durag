@@ -35,9 +35,41 @@ export class Lamp {
     this.phase = seed * Math.PI * 2;
   }
 
+  // flicker: a burst of a few quick dips now and then, a bad contact somewhere
+  private burstAt = 0;
+  private burstMs = 0;
+  private burstDips = 3;
+  private burstAmp = 0.5;
+  private nextBurst = 8000 + Math.random() * 20000;
+
   /** advance the clock */
   update(dtMs: number): void {
     this.t += dtMs;
+    if (this.t >= this.nextBurst) {
+      this.burstAt = this.t;
+      this.burstMs = 250 + Math.random() * 500;
+      this.burstDips = 2 + Math.floor(Math.random() * 4);
+      this.burstAmp = 0.35 + Math.random() * 0.35;
+      // the next one in 15–75 s: an exponential wait, so bursts never feel scheduled
+      this.nextBurst = this.t + this.burstMs + 15000 + -Math.log(1 - Math.random()) * 30000;
+    }
+  }
+
+  /**
+   * How bright the lamp is, 0.3..1. Between bursts it is 1; in a burst of
+   * k dips over D ms the brightness is 1 − A·|sin(π·k·u)|·(1 − u/2) with
+   * u = t/D: quick dips that lose depth as the contact settles.
+   */
+  intensity(): number {
+    const l = this.t - this.burstAt;
+    if (this.burstMs <= 0 || l < 0 || l > this.burstMs) return 1;
+    const u = l / this.burstMs;
+    return Math.max(0.3, 1 - this.burstAmp * Math.abs(Math.sin(Math.PI * this.burstDips * u)) * (1 - u / 2));
+  }
+
+  /** force a burst now (tests, a fist on the table) */
+  flicker(): void {
+    this.nextBurst = this.t;
   }
 
   /** a fist on the table: the lamp swings, strength 1 = a quarter of the width */

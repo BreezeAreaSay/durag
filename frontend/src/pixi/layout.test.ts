@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { computeMetrics, deckSlot, discardSlot, handSlots, hitSlot, nextAttackSlot, tableSlots, trumpSlot, jitterSlot } from './layout';
+import { computeMetrics, deckSlot, discardSlot, handSlots, hitSlot, nextAttackSlot, tableSlots, trumpSlot, jitterSlot, HAND_INSET } from './layout';
 
 const phone = computeMetrics(390, 844);
 const tablet = computeMetrics(1024, 768);
@@ -33,8 +33,9 @@ describe('hand', () => {
       expect(slots).toHaveLength(n);
       const xs = slots.map((s) => s.x);
       const mid = (Math.min(...xs) + Math.max(...xs)) / 2;
-      expect(Math.abs(mid - phone.width / 2)).toBeLessThan(1);
-      expect(Math.min(...xs) - phone.cardW / 2).toBeGreaterThanOrEqual(0);
+      // centred in the room right of the player's sticker
+      expect(Math.abs(mid - (HAND_INSET + (phone.width - HAND_INSET) / 2))).toBeLessThan(1);
+      expect(Math.min(...xs) - phone.cardW / 2).toBeGreaterThanOrEqual(HAND_INSET);
       expect(Math.max(...xs) + phone.cardW / 2).toBeLessThanOrEqual(phone.width);
     }
     expect(handSlots(0, phone)).toEqual([]);

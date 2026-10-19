@@ -19,6 +19,8 @@ export interface Metrics {
 }
 
 const PILE_SCALE = 0.72;
+/** room on the left of the hand for the player's own sticker */
+export const HAND_INSET = 46;
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
@@ -49,10 +51,11 @@ export function computeMetrics(width: number, height: number, topInset = 0): Met
 export function handSlots(n: number, m: Metrics): Slot[] {
   if (n <= 0) return [];
   const maxSpacing = m.cardW * 0.74;
-  const available = Math.max(0, m.width - 28 - m.cardW);
+  // the player's sticker holds the fan from the left: the cards keep clear of it
+  const available = Math.max(0, m.width - 28 - m.cardW - HAND_INSET);
   const spacing = n > 1 ? Math.min(maxSpacing, available / (n - 1)) : 0;
   const total = spacing * (n - 1);
-  const x0 = m.width / 2 - total / 2;
+  const x0 = HAND_INSET + (m.width - HAND_INSET) / 2 - total / 2;
   const y = m.height - m.cardH / 2 - 58;
   const slots: Slot[] = [];
   for (let i = 0; i < n; i++) {

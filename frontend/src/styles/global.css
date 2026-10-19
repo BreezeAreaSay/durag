@@ -115,22 +115,6 @@ body::after {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='600' height='600'%3E%3Cfilter id='f'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.012 0.35' numOctaves='2' seed='7' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.9 0 0 0 0 0.88 0 0 0 0 0.8 0 0 0 0.5 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23f)'/%3E%3C/svg%3E"),
     radial-gradient(ellipse at var(--lx, 50%) var(--ly, 40%), transparent 55%, var(--vignette) 100%);
 }
-/* The lamp's spot on the paper and the Super card's own light: the scene
-   moves --lx/--ly ten times a second, the colour comes from the hour. */
-#root::before {
-  content: '';
-  position: fixed;
-  inset: 0;
-  z-index: 2;
-  pointer-events: none;
-  mix-blend-mode: var(--lamp-blend, soft-light);
-  background-image:
-    radial-gradient(circle at var(--lx, 50%) var(--ly, 40%), hsl(var(--lamp-h, 48) var(--lamp-s, 40%) 80% / var(--lamp-a, 0.3)), transparent 48%),
-    radial-gradient(circle at var(--sx, 50%) var(--sy, 50%), hsl(var(--toxic-h, 300) 90% 70% / calc(var(--sa, 0) * 0.45)), transparent 16%);
-}
-:root[data-theme='dark'] {
-  --lamp-blend: screen;
-}
 
 #root {
   position: relative;
@@ -500,13 +484,53 @@ body::after {
 
 .opponents {
   list-style: none;
-  /* the top padding keeps reaction bubbles inside the scroll container */
-  margin: -30px 0 0;
-  padding: 36px 0 0 4px;
+  margin: 0;
+  padding: 6px 0 0 4px;
   display: flex;
-  gap: 14px;
-  overflow-x: auto;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  overflow: visible; /* bubbles hang over the edge of the row, never clipped */
   pointer-events: none; /* only the player cards below take taps */
+}
+/* four or more opponents: stickers in a row, name hidden, count under each */
+.opponents--many {
+  gap: 4px 6px;
+}
+.opponents--many .opponent {
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 0 2px;
+  width: 68px;
+}
+.opponents--many .opponent__info {
+  align-items: center;
+  gap: 2px;
+  margin-top: 10px; /* clear of the sticker's outline */
+  max-width: 100%;
+}
+.opponents--many .opponent__name {
+  display: none;
+}
+.opponents--many .opponent__cards {
+  font-size: 12px;
+}
+.opponents--many .roletag {
+  font-size: 7px;
+  letter-spacing: 0.02em;
+  padding: 1px 3px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* a bubble on the right side of the row opens to the left, so it stays on screen */
+.opponent:not(:first-child) .reaction--text {
+  left: auto;
+  right: 0;
+}
+.opponents--many .opponent:not(:first-child) .reaction--text {
+  right: -8px;
 }
 .opponent {
   position: relative;
@@ -1220,4 +1244,51 @@ body::after {
 }
 .game--gaze .me .avatar-btn {
   transform: rotate(var(--gaze, 0deg)) translateY(var(--gaze-y, 0px));
+}
+
+/* --- the player's own sticker holds the hand ------------------------------- */
+.me__avatar {
+  position: absolute;
+  left: 8px;
+  z-index: 3;
+  pointer-events: auto;
+}
+/* alive: breathing, and every so often a glance to the side */
+.me__avatar .sticker {
+  animation: idle-breathe 3.4s ease-in-out infinite, idle-glance 13s ease-in-out infinite;
+}
+@keyframes idle-breathe {
+  0%, 100% { transform: rotate(var(--tilt)) translateY(0); }
+  50% { transform: rotate(var(--tilt)) translateY(-2px); }
+}
+@keyframes idle-glance {
+  0%, 60%, 100% { filter: none; }
+  63% { transform: rotate(calc(var(--tilt) + 9deg)) translateX(2px); }
+  66% { transform: rotate(calc(var(--tilt) + 9deg)) translateX(2px); }
+  70% { transform: rotate(var(--tilt)); }
+  86% { transform: rotate(calc(var(--tilt) - 6deg)) translateX(-2px); }
+  90% { transform: rotate(var(--tilt)); }
+}
+.me__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+.me__row .roletag--me {
+  font-size: 11px;
+  padding: 4px 8px;
+  flex: none;
+}
+.me__row .me__meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chip--sort {
+  margin-left: auto;
+  cursor: pointer;
+  pointer-events: auto;
 }

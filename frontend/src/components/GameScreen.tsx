@@ -6,7 +6,7 @@ import { ReactionLayer } from './ReactionLayer';
 import { SLAM_EMOJI } from '../util/emoji';
 import { sound } from '../util/audio';
 import { PixiTable } from '../pixi/PixiTable';
-import { toSceneModel } from '../pixi/model';
+import { toSceneModel, type HandSort } from '../pixi/model';
 import { computeMetrics } from '../pixi/layout';
 import { useGame } from '../state/GameContext';
 import { closingConfirmation, haptic } from '../telegram/useTelegram';
@@ -26,6 +26,21 @@ export function GameScreen({ state }: Props) {
   const [shaking, setShaking] = useState(false);
   const gameRef = useRef<HTMLDivElement>(null);
   const gazeTimer = useRef(0);
+  const [sort, setSortState] = useState<HandSort>(() => {
+    try {
+      return localStorage.getItem('durag.sort') === 'suit' ? 'suit' : 'rank';
+    } catch {
+      return 'rank';
+    }
+  });
+  const setSort = useCallback((next: HandSort) => {
+    setSortState(next);
+    try {
+      localStorage.setItem('durag.sort', next);
+    } catch {
+      /* private mode: the choice lives for the session */
+    }
+  }, []);
 
   // a fist on the table from anybody in the room: cards jump, the screen shakes
   useEffect(() => {
@@ -69,7 +84,7 @@ export function GameScreen({ state }: Props) {
   }, []);
 
   const metrics = useMemo(() => computeMetrics(size.w, size.h, hudTop), [size, hudTop]);
-  const model = useMemo(() => (selfId ? toSceneModel(state, selfId, skin) : null), [state, selfId, skin]);
+  const model = useMemo(() => (selfId ? toSceneModel(state, selfId, skin, sort) : null), [state, selfId, skin, sort]);
   const reject = useMemo(() => (lastError?.cardId ? { cardId: lastError.cardId, nonce: lastError.nonce } : null), [lastError]);
   const labels = useMemo(() => ({ trump: t('game.trump'), stump: t('game.stump').toUpperCase() }), []);
 
@@ -117,7 +132,7 @@ export function GameScreen({ state }: Props) {
           theme={theme}
         />
       ) : null}
-      <Hud state={state} handTop={metrics.handTop} reactions={reactions} onAvatarClick={onAvatarClick} onTopHeight={onTopHeight} />
+      <Hud state={state} handTop={metrics.handTop} handMiddle={metrics.height - metrics.cardH / 2 - 58} reactions={reactions} onAvatarClick={onAvatarClick} onTopHeight={onTopHeight} sort={sort} onSort={setSort} />
       <ReactionLayer reactions={reactions} host={gameRef} target={{ x: size.w / 2, y: (metrics.tableTop + metrics.tableBottom) / 2 }} />
       {resolving ? (
         <div className={`stamp ${state.resolve_outcome === 'took' ? 'stamp--took' : ''}`} key={`${state.bout_number}-${state.resolve_outcome}`}>
