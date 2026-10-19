@@ -35,9 +35,12 @@ func Due(turn, every int) bool {
 // Event is the last thing that happened on the table, seen from the bot:
 // what to tease somebody about.
 type Event struct {
-	Kind  string // took, bito, transfer, lonely, attack, defend, pass, ""
-	Name  string // the player it concerns (never the bot itself)
-	Count int    // cards: taken, left in hand...
+	Kind     string // took, bito, transfer, lonely, attack, defend, pass, ""
+	Name     string // the player it concerns (never the bot itself)
+	PlayerID string
+	Count    int    // cards: taken, left in hand...
+	Suit     string // the suit of an opening attack
+	Bot      bool   // the player is another bot
 }
 
 // String renders the event for the model's prompt ("" for nothing notable).
@@ -69,24 +72,35 @@ func LastEvent(s *game.GameState, botID string) Event {
 			return Event{Kind: "lonely", Name: p.Name}
 		}
 	}
-	for i := len(s.Log) - 1; i >= 0 && i >= len(s.Log)-6; i-- {
-		e := s.Log[i]
-		if e.PlayerID == "" || e.PlayerID == botID {
-			continue
-		}
-		p := s.Player(e.PlayerID)
-		if p == nil || p.IsBot {
-			continue
-		}
-		switch e.Type {
-		case "took":
-			n := 0
-			fmt.Sscan(e.Text, &n)
-			return Event{Kind: "took", Name: p.Name, Count: n}
-		case "bito":
-			return Event{Kind: "bito", Name: p.Name}
-		case "transfer", "pass", "attack", "defend":
-			return Event{Kind: e.Type, Name: p.Name}
+	// people first; another bot's doing only when no person did anything notable lately
+	for _, botsToo := range []bool{false, true} {
+		for i := len(s.Log) - 1; i >= 0 && i >= len(s.Log)-6; i-- {
+			e := s.Log[i]
+			if e.PlayerID == "" || e.PlayerID == botID {
+				continue
+			}
+			p := s.Player(e.PlayerID)
+			if p == nil || (p.IsBot && !botsToo) {
+				continue
+			}
+			ev := Event{Name: p.Name, PlayerID: p.ID, Bot: p.IsBot}
+			switch e.Type {
+			case "took":
+				fmt.Sscan(e.Text, &ev.Count)
+				ev.Kind = "took"
+			case "bito":
+				ev.Kind = "bito"
+			case "attack":
+				ev.Kind = "attack"
+				if c, ok := game.CardByID(e.CardID); ok && !c.IsSpecial() {
+					ev.Suit = c.Suit
+				}
+			case "transfer", "pass", "defend":
+				ev.Kind = e.Type
+			default:
+				continue
+			}
+			return ev
 		}
 	}
 	return Event{}

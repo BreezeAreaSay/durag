@@ -18,6 +18,7 @@ export function ResultOverlay({ state }: Props) {
       <div className="overlay__card">
         <h1 className="zine-title zine-title--result">{title}</h1>
         {state.finished_order[0] === selfId ? <p className="sticker-text result__win">{t('result.win', { n: wins })}</p> : null}
+        {state.loser_id === selfId ? <p className="sticker-text result__scar">{t('result.scar')}</p> : null}
         {winners.length ? (
           <p className="muted">
             {t('result.winners')}: {winners.join(' → ')}

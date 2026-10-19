@@ -20,7 +20,7 @@ function shareLink(room: string): string | null {
 }
 
 export function WaitingRoom({ state }: Props) {
-  const { selfId, setReady, leave, addBot, removeBot, config } = useGame();
+  const { selfId, setReady, leave, addBot, removeBot, config, reactions } = useGame();
   const [copied, setCopied] = useState(false);
   const [level, setLevel] = useState<BotLevel>('normal');
   const me = state.players.find((p) => p.id === selfId);
@@ -62,7 +62,12 @@ export function WaitingRoom({ state }: Props) {
         <ul className="players__list">
           {state.players.map((p) => (
             <li key={p.id} className={`players__item ${p.is_ready ? 'players__item--ready' : ''}`}>
-              <Sticker name={p.name} avatarUrl={p.avatar_url} seed={p.id} wins={p.wins} playerId={p.id} />
+              <Sticker name={p.name} avatarUrl={p.avatar_url} seed={p.id} wins={p.wins} playerId={p.id} scar={p.scar} />
+              {reactions[p.id]?.text ? (
+                <span className="reaction reaction--text reaction--lobby" key={reactions[p.id]!.nonce}>
+                  <span className="reaction__text">{reactions[p.id]!.text}</span>
+                </span>
+              ) : null}
               <span className="players__name">
                 {p.is_bot ? <span className="players__bot" aria-hidden="true">🤖 </span> : null}
                 {p.name}

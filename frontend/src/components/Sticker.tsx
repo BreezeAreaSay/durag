@@ -12,10 +12,12 @@ interface Props {
   wins?: number;
   /** lets the reaction layer find this avatar on screen */
   playerId?: string;
+  /** lost the last game: the fool's mark, until a win */
+  scar?: boolean;
 }
 
 /** A Telegram avatar cut out like a sloppily glued black & white sticker. */
-export function Sticker({ name, avatarUrl, size = 44, seed, muted, badge, wins = 0, playerId }: Props) {
+export function Sticker({ name, avatarUrl, size = 44, seed, muted, badge, wins = 0, playerId, scar }: Props) {
   const tilt = useMemo(() => {
     const s = seed ?? name;
     let h = 0;
@@ -37,6 +39,11 @@ export function Sticker({ name, avatarUrl, size = 44, seed, muted, badge, wins =
     >
       {avatarUrl ? <img src={avatarUrl} alt="" referrerPolicy="no-referrer" /> : <span className="sticker__initials">{initials || '?'}</span>}
       {badge ? <span className="sticker__badge">{badge}</span> : null}
+      {scar ? (
+        <span className="sticker__scar" title="Дурак прошлой игры" aria-label="клеймо дурака">
+          Д
+        </span>
+      ) : null}
     </span>
   );
 }

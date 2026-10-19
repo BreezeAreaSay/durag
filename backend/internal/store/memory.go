@@ -15,6 +15,7 @@ type Memory struct {
 	locks map[string]*sync.Mutex
 	subs  map[string]map[chan []byte]struct{}
 	wins  map[string]int
+	prof  map[string]Profile
 }
 
 // NewMemory creates an empty in-memory store.
@@ -135,6 +136,24 @@ func (m *Memory) Wins(_ context.Context, playerID string) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.wins[playerID], nil
+}
+
+// Profile implements Store.
+func (m *Memory) Profile(_ context.Context, playerID string) (Profile, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.prof[playerID], nil
+}
+
+// SaveProfile implements Store.
+func (m *Memory) SaveProfile(_ context.Context, playerID string, p Profile) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.prof == nil {
+		m.prof = map[string]Profile{}
+	}
+	m.prof[playerID] = p
+	return nil
 }
 
 // Close implements Store.

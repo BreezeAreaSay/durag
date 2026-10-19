@@ -16,6 +16,8 @@ export interface SceneModel {
   defenderTaking: boolean;
   interactive: boolean;
   lastEvent: string;
+  /** the player of the last log entry */
+  lastEventBy: string;
   /** The finished bout is still shown on the table (server-side pause). */
   resolving: boolean;
   resolveOutcome: Outcome;
@@ -72,6 +74,7 @@ export function toSceneModel(state: GameState, selfId: string, skin: SkinId = 'c
     defenderTaking: state.defender_taking,
     interactive: state.status === 'playing' && role !== 'spectator' && state.phase !== 'resolving' && state.stump_pending.length === 0,
     lastEvent: state.log[state.log.length - 1]?.type ?? '',
+    lastEventBy: state.log[state.log.length - 1]?.player_id ?? '',
     resolving: state.phase === 'resolving',
     resolveOutcome: state.resolve_outcome,
     lastOutcome: lastOutcomeOf(state),

@@ -410,6 +410,22 @@ func Prompt(in Context) string {
 			b.WriteString("\nКарты у тебя на руке, которые тебе подкидывали соперники: " + strings.Join(returned, ", ") + ".")
 		}
 	}
+	for _, p := range s.Players {
+		if p.IsBot || p.ID == in.BotID {
+			continue
+		}
+		if d, ok := in.Dossiers[p.ID]; ok {
+			if text := d.String(); text != "" {
+				fmt.Fprintf(&b, "\nДосье на %s (ты помнишь его с прошлых игр): %s.", p.Name, text)
+			}
+		}
+	}
+	if in.Overheard.Text != "" && in.Overheard.BotID != in.BotID {
+		fmt.Fprintf(&b, "\nДругой бот, %s, только что сказал: «%s». Можешь ответить ему в say, если есть что.", in.Overheard.Name, in.Overheard.Text)
+	}
+	if in.Promoted != "" {
+		b.WriteString("\nТы проиграл прошлую игру за этим столом и вернулся сильнее: скажи об этом в say одной фразой, с характером.")
+	}
 	if in.Hint != nil {
 		for i, m := range in.Moves {
 			if m == *in.Hint {

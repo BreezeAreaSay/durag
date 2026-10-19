@@ -292,6 +292,9 @@ func (e *Engine) Start(s *GameState) error {
 	s.DiscardCount = 0
 	s.FinishedOrder = []string{}
 	s.WinAwarded = false
+	for i := range s.Players {
+		s.Players[i].Stats = Stats{Leads: map[string]int{}}
+	}
 	s.LoserID = ""
 	s.TransferCount = 0
 	s.BoutNumber = 1
@@ -342,6 +345,11 @@ func (e *Engine) PlayCard(s *GameState, playerID, cardID, targetID string) error
 		kind := "attack"
 		if len(s.TableOrder) > 1 {
 			kind = "throw_in"
+		} else if !card.IsSpecial() {
+			if p.Stats.Leads == nil {
+				p.Stats.Leads = map[string]int{}
+			}
+			p.Stats.Leads[card.Suit]++
 		}
 		s.addLog(LogEntry{Type: kind, PlayerID: playerID, CardID: cardID})
 	}
@@ -674,6 +682,10 @@ func (e *Engine) endBout(s *GameState, took bool) {
 	d := s.Player(defenderID)
 	if took {
 		d.Hand = append(d.Hand, cards...)
+		d.Stats.Took += len(cards)
+		if len(cards) > d.Stats.WorstTake {
+			d.Stats.WorstTake = len(cards)
+		}
 		s.addLog(LogEntry{Type: "took", PlayerID: defenderID, Text: fmt.Sprint(len(cards))})
 	} else {
 		s.DiscardCount += len(cards)

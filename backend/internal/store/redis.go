@@ -77,6 +77,7 @@ func (r *Redis) roomKey(id string) string { return r.prefix + ":room:" + id }
 func (r *Redis) lockKey(id string) string { return r.prefix + ":lock:" + id }
 func (r *Redis) channel(id string) string { return r.prefix + ":events:" + id }
 func (r *Redis) winsKey(id string) string { return r.prefix + ":wins:" + id }
+func (r *Redis) profKey(id string) string { return r.prefix + ":profile:" + id }
 func (r *Redis) Client() *redis.Client    { return r.client }
 
 // Load implements Store.
@@ -224,6 +225,31 @@ func (r *Redis) Wins(ctx context.Context, playerID string) (int, error) {
 		return 0, nil
 	}
 	return n, err
+}
+
+// Profile implements Store.
+func (r *Redis) Profile(ctx context.Context, playerID string) (Profile, error) {
+	raw, err := r.client.Get(ctx, r.profKey(playerID)).Bytes()
+	if errors.Is(err, redis.Nil) {
+		return Profile{}, nil
+	}
+	if err != nil {
+		return Profile{}, err
+	}
+	var p Profile
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return Profile{}, err
+	}
+	return p, nil
+}
+
+// SaveProfile implements Store (no TTL: the table remembers for good).
+func (r *Redis) SaveProfile(ctx context.Context, playerID string, p Profile) error {
+	raw, err := json.Marshal(p)
+	if err != nil {
+		return err
+	}
+	return r.client.Set(ctx, r.profKey(playerID), raw, 0).Err()
 }
 
 // Close implements Store.

@@ -193,12 +193,17 @@ func (h *Hub) join(c *Client, raw json.RawMessage) {
 	if werr != nil {
 		h.log.Warn("ws: wins lookup failed", "player", id.ID, "err", werr)
 	}
+	prof, perr := h.store.Profile(h.ctx, id.ID)
+	if perr != nil {
+		h.log.Warn("ws: profile lookup failed", "player", id.ID, "err", perr)
+	}
 	state, err := h.store.Update(h.ctx, roomID, p.Create, func(s *game.GameState) error {
 		if err := h.engine.Join(s, id.ID, id.Name, id.AvatarURL); err != nil {
 			return err
 		}
 		if pl := s.Player(id.ID); pl != nil {
 			pl.Wins = wins
+			pl.Scar = prof.Scar
 		}
 		return nil
 	})
@@ -218,6 +223,9 @@ func (h *Hub) join(c *Client, raw json.RawMessage) {
 		old.close()
 	}
 	h.afterUpdate(roomID, state)
+	if len(replaced) == 0 && hasBots(state) {
+		h.botGreet(roomID, state, []string{id.ID}) // the bots know who just sat down
+	}
 }
 
 func (h *Hub) intent(c *Client, env Envelope) {
@@ -306,6 +314,15 @@ func (h *Hub) intent(c *Client, env Envelope) {
 		}
 	}
 	h.afterUpdate(roomID, state)
+	if env.Type == TypeAddBot {
+		var humans []string
+		for _, p := range state.Players {
+			if !p.IsBot && p.Connected {
+				humans = append(humans, p.ID)
+			}
+		}
+		h.botGreet(roomID, state, humans) // the new bot looks around the table
+	}
 }
 
 var (
@@ -362,7 +379,33 @@ func (h *Hub) awardWin(roomID string, state *game.GameState) *game.GameState {
 			return errStale
 		}
 		s.WinAwarded = true
-		winner := s.Player(s.Winner())
+		now := time.Now().Unix()
+		winnerID := s.Winner()
+		for i := range s.Players {
+			p := &s.Players[i]
+			if p.IsBot {
+				// a bot that lost at this table comes back a level stronger
+				if p.ID == s.LoserID {
+					next := bot.Promote(bot.ParseLevel(p.BotLevel))
+					if string(next) != p.BotLevel {
+						p.BotLevel = string(next)
+						h.botPromote(roomID, p.ID, next)
+					}
+				}
+				continue
+			}
+			prof, err := h.store.Profile(h.ctx, p.ID)
+			if err != nil {
+				return err
+			}
+			prof.Fold(p.Stats, p.ID == s.LoserID, p.ID == winnerID, now)
+			if err := h.store.SaveProfile(h.ctx, p.ID, prof); err != nil {
+				return err
+			}
+			p.Scar = prof.Scar
+			h.dossier(roomID, p) // refresh what the bots know
+		}
+		winner := s.Player(winnerID)
 		if winner == nil || winner.IsBot {
 			return nil
 		}

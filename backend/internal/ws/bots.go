@@ -44,13 +44,16 @@ type botRoom struct {
 	recent     []bot.EmojiEvent
 	jokeSaid   map[string]bool
 	lastStatus string
-	scheduled  map[string]int64 // bot id -> state version a timer is armed for
-	turns      map[string]int   // bot id -> moves made this game (banter cadence)
-	memory     *bot.Memory      // what the bots remember about the cards
+	scheduled  map[string]int64       // bot id -> state version a timer is armed for
+	turns      map[string]int         // bot id -> moves made this game (banter cadence)
+	memory     *bot.Memory            // what the bots remember about the cards
+	dossiers   map[string]bot.Dossier // what the table remembers about the people (by player id)
+	overheard  bot.Overheard          // the last line a bot said
+	promoted   map[string]bot.Level   // bots that lost here and came back stronger, until they say so
 }
 
 func newBotRoom() *botRoom {
-	return &botRoom{moods: map[string]bot.Mood{}, moodUntil: map[string]time.Time{}, jokeSaid: map[string]bool{}, scheduled: map[string]int64{}, turns: map[string]int{}, memory: bot.NewMemory()}
+	return &botRoom{moods: map[string]bot.Mood{}, moodUntil: map[string]time.Time{}, jokeSaid: map[string]bool{}, scheduled: map[string]int64{}, turns: map[string]int{}, memory: bot.NewMemory(), dossiers: map[string]bot.Dossier{}, promoted: map[string]bot.Level{}}
 }
 
 func (h *Hub) botRoomFor(roomID string) *botRoom {
@@ -194,6 +197,13 @@ func (h *Hub) botAct(roomID, botID string, version int64) {
 	br.turns[botID]++
 	turn := br.turns[botID]
 	memory := br.memory.Snapshot()
+	dossiers := make(map[string]bot.Dossier, len(br.dossiers))
+	for k, v := range br.dossiers {
+		dossiers[k] = v
+	}
+	overheard := br.overheard
+	promoted := br.promoted[botID]
+	delete(br.promoted, botID)
 	br.mu.Unlock()
 	view := state.Sanitized(botID)
 	level := bot.LevelNormal
@@ -212,6 +222,9 @@ func (h *Hub) botAct(roomID, botID string, version int64) {
 		Level:        level,
 		Memory:       memory,
 		Plan:         bot.ChoosePlan(view, botID),
+		Dossiers:     dossiers,
+		Overheard:    overheard,
+		Promoted:     promoted,
 	}
 	d, ok := h.decide(in)
 	if !ok {
@@ -350,8 +363,51 @@ func (h *Hub) botHearEmoji(roomID, from, emoji string) {
 	})
 }
 
-// botSay publishes a bot's line and/or emoji as a transient reaction.
+// botSay publishes a bot's line and/or emoji as a transient reaction. A
+// line (not a retort itself) may draw a retort from another bot at the
+// table a couple of seconds later; retorts never chain.
 func (h *Hub) botSay(roomID, botID, text, emoji string) {
+	h.botSayRaw(roomID, botID, text, emoji)
+	if text == "" || h.bots.Disabled {
+		return
+	}
+	state, err := h.store.Load(h.ctx, roomID)
+	if err != nil {
+		return
+	}
+	speaker := state.Player(botID)
+	if speaker == nil {
+		return
+	}
+	br := h.botRoomFor(roomID)
+	br.mu.Lock()
+	br.overheard = bot.Overheard{BotID: botID, Name: speaker.Name, Text: text}
+	br.mu.Unlock()
+	var others []string
+	for _, p := range state.Players {
+		if p.IsBot && !p.Out && p.ID != botID {
+			others = append(others, p.ID)
+		}
+	}
+	if len(others) == 0 || rand.Float64() > retortChance {
+		return
+	}
+	replier := others[rand.IntN(len(others))]
+	line := bot.Retort(rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64())), speaker.Name, len(speaker.Hand))
+	time.AfterFunc(1500*time.Millisecond+time.Duration(rand.Int64N(int64(2*time.Second))), func() {
+		select {
+		case <-h.ctx.Done():
+			return
+		default:
+		}
+		h.botSayRaw(roomID, replier, line, "")
+	})
+}
+
+// retortChance is how often a bot's line gets an answer from another bot.
+const retortChance = 0.35
+
+func (h *Hub) botSayRaw(roomID, botID, text, emoji string) {
 	raw, err := json.Marshal(pubMessage{Kind: "reaction", Reaction: &ReactionPayload{PlayerID: botID, Emoji: emoji, Text: text, TS: time.Now().UnixMilli()}})
 	if err != nil {
 		return
@@ -359,4 +415,61 @@ func (h *Hub) botSay(roomID, botID, text, emoji string) {
 	if err := h.store.Publish(h.ctx, roomID, raw); err != nil {
 		h.log.Error("bot: publish", "room", roomID, "err", err)
 	}
+}
+
+// dossier builds what the bots know about a person from the store and caches it for the room.
+func (h *Hub) dossier(roomID string, p *game.Player) bot.Dossier {
+	prof, err := h.store.Profile(h.ctx, p.ID)
+	if err != nil {
+		h.log.Warn("bot: profile lookup failed", "player", p.ID, "err", err)
+	}
+	d := bot.Dossier{Name: p.Name, Games: prof.Games, Losses: prof.Losses, WorstTake: prof.WorstTake, FavSuit: prof.FavouriteSuit(), Scar: prof.Scar}
+	br := h.botRoomFor(roomID)
+	br.mu.Lock()
+	br.dossiers[p.ID] = d
+	br.mu.Unlock()
+	return d
+}
+
+// botGreet has one bot greet a person who just sat down (or the people a
+// freshly seated bot finds at the table), from what the table remembers.
+func (h *Hub) botGreet(roomID string, state *game.GameState, humanIDs []string) {
+	if h.bots.Disabled || state.Status != game.StatusWaiting {
+		return
+	}
+	var bots []string
+	for _, p := range state.Players {
+		if p.IsBot {
+			bots = append(bots, p.ID)
+		}
+	}
+	if len(bots) == 0 {
+		return
+	}
+	for i, id := range humanIDs {
+		p := state.Player(id)
+		if p == nil || p.IsBot {
+			continue
+		}
+		d := h.dossier(roomID, p)
+		speaker := bots[rand.IntN(len(bots))]
+		line := bot.Greet(rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64())), d)
+		delay := 1200*time.Millisecond + time.Duration(i)*1800*time.Millisecond + time.Duration(rand.Int64N(int64(800*time.Millisecond)))
+		time.AfterFunc(delay, func() {
+			select {
+			case <-h.ctx.Done():
+				return
+			default:
+			}
+			h.botSayRaw(roomID, speaker, line, "")
+		})
+	}
+}
+
+// botPromote notes that a bot lost the game: it comes back a level stronger and says so.
+func (h *Hub) botPromote(roomID, botID string, to bot.Level) {
+	br := h.botRoomFor(roomID)
+	br.mu.Lock()
+	br.promoted[botID] = to
+	br.mu.Unlock()
 }

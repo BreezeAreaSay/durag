@@ -1311,3 +1311,42 @@ body::after {
 :root[data-fx='lite'] .fly {
   animation-duration: 700ms;
 }
+
+/* --- the fool's mark: lost the last game, washed off by a win ------------ */
+.sticker__scar {
+  position: absolute;
+  right: -9px;
+  bottom: -9px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--red, #d84a2a);
+  color: #fff;
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+  border: 2px solid var(--ink);
+  transform: rotate(14deg);
+  box-shadow: 2px 2px 0 var(--ink);
+}
+.result__scar {
+  color: var(--red, #d84a2a);
+}
+/* a bot's line in the lobby: beside the sticker of the person it talks to */
+.players__item {
+  position: relative;
+  overflow: visible;
+}
+.reaction--lobby {
+  top: -34px;
+  left: auto;
+  right: 10px;
+  z-index: 6; /* over the row above */
+  max-width: 250px;
+  font-size: 18px;
+}
+.reaction--lobby .reaction__text {
+  font-size: 12px;
+}

@@ -25,6 +25,7 @@ export interface Player {
   is_bot?: boolean; // seat driven by the server (v10 §2)
   wins?: number; // lifetime wins (first out of a finished game)
   bot_level?: BotLevel; // how well a bot seat plays
+  scar?: boolean; // lost the last finished game: the fool's mark until a win
 }
 
 export interface LogEntry {

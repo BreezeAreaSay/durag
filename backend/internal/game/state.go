@@ -50,6 +50,16 @@ type Player struct {
 	IsBot      bool   `json:"is_bot,omitempty"`    // seat driven by the server (v10 §2)
 	Wins       int    `json:"wins,omitempty"`      // lifetime wins (first out of the game), kept by the store
 	BotLevel   string `json:"bot_level,omitempty"` // easy / normal / hard for a bot seat
+	Scar       bool   `json:"scar,omitempty"`      // lost the last finished game: the fool's mark, washed off by a win
+	Stats      Stats  `json:"stats"`               // what this player did this game (folded into their profile at the end)
+}
+
+// Stats is what a seat did in the current game: the raw material of a
+// bot's memory of people.
+type Stats struct {
+	Took      int            `json:"took"`       // cards taken from the table
+	WorstTake int            `json:"worst_take"` // the biggest single take
+	Leads     map[string]int `json:"leads"`      // opening attacks by suit
 }
 
 // LogEntry is a compact description of something that happened. The client

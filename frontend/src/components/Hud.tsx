@@ -139,7 +139,7 @@ export function Hud({ state, handTop, reactions, onAvatarClick, onTopHeight, han
             return (
               <li key={p.id} className={`opponent ${p.out ? 'opponent--out' : ''}`}>
                 <button type="button" className="avatar-btn" onClick={() => onAvatarClick(p.id)} aria-label={p.name}>
-                  <Sticker name={p.name} avatarUrl={p.avatar_url} seed={p.id} size={40} muted={!p.connected || p.out} wins={p.wins} playerId={p.id} />
+                  <Sticker name={p.name} avatarUrl={p.avatar_url} seed={p.id} size={40} muted={!p.connected || p.out} wins={p.wins} playerId={p.id} scar={p.scar} />
                   {timerFor(p.id) ? <TimerRing deadline={timerFor(p.id)} timeoutMs={state.turn_timeout_ms} size={64} /> : null}
                 </button>
                 {reaction?.text ? (
@@ -193,7 +193,7 @@ export function Hud({ state, handTop, reactions, onAvatarClick, onTopHeight, han
       {me ? (
         <div className="me me__avatar" style={{ top: handMiddle - 20 }}>
           <button type="button" className="avatar-btn" onClick={() => onAvatarClick(me.id)} aria-label={me.name}>
-            <Sticker name={me.name} avatarUrl={me.avatar_url} seed={me.id} size={34} wins={me.wins} playerId={me.id} />
+            <Sticker name={me.name} avatarUrl={me.avatar_url} seed={me.id} size={34} wins={me.wins} playerId={me.id} scar={me.scar} />
             {timerFor(me.id) ? <TimerRing deadline={timerFor(me.id)} timeoutMs={state.turn_timeout_ms} size={58} /> : null}
           </button>
         </div>

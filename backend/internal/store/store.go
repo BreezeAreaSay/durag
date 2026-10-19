@@ -39,6 +39,60 @@ type Store interface {
 	AddWin(ctx context.Context, playerID string) (int, error)
 	// Wins returns a player's lifetime win counter (0 for an unknown player).
 	Wins(ctx context.Context, playerID string) (int, error)
+	// Profile returns what the table remembers about a player (zero for a stranger).
+	Profile(ctx context.Context, playerID string) (Profile, error)
+	// SaveProfile stores a player's profile.
+	SaveProfile(ctx context.Context, playerID string, p Profile) error
 	// Close releases resources.
 	Close() error
+}
+
+// Profile is what the table remembers about a person between games: the
+// bots read it to greet and to needle, the scar is shown on the sticker.
+type Profile struct {
+	Games     int            `json:"games"`
+	Losses    int            `json:"losses"`
+	Took      int            `json:"took"`       // cards taken, lifetime
+	WorstTake int            `json:"worst_take"` // the biggest single take ever
+	Leads     map[string]int `json:"leads"`      // opening attacks by suit, lifetime
+	Scar      bool           `json:"scar"`       // lost the last game they finished
+	LastSeen  int64          `json:"last_seen"`  // unix seconds
+}
+
+// Fold adds one finished game to the profile.
+func (p *Profile) Fold(stats game.Stats, lost, won bool, now int64) {
+	p.Games++
+	if lost {
+		p.Losses++
+		p.Scar = true
+	}
+	if won {
+		p.Scar = false
+	}
+	p.Took += stats.Took
+	if stats.WorstTake > p.WorstTake {
+		p.WorstTake = stats.WorstTake
+	}
+	if p.Leads == nil {
+		p.Leads = map[string]int{}
+	}
+	for suit, n := range stats.Leads {
+		p.Leads[suit] += n
+	}
+	p.LastSeen = now
+}
+
+// FavouriteSuit is the suit the player opens with most, "" when there is no clear habit.
+func (p Profile) FavouriteSuit() string {
+	best, n, total := "", 0, 0
+	for suit, c := range p.Leads {
+		total += c
+		if c > n {
+			best, n = suit, c
+		}
+	}
+	if total < 6 || n*2 < total { // a habit is at least half of a handful of leads
+		return ""
+	}
+	return best
 }

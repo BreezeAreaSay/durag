@@ -57,6 +57,19 @@ type Context struct {
 	// Hint is the move the rules would make, offered to the model; nil
 	// when the rules have not been asked.
 	Hint *game.Move
+	// Dossiers is what the table remembers about the people at it, by player id.
+	Dossiers map[string]Dossier
+	// Overheard is the last line another bot said (and who), for a retort.
+	Overheard Overheard
+	// Promoted is set on the first move after the bot came back a level stronger.
+	Promoted Level
+}
+
+// Overheard is another bot's last line.
+type Overheard struct {
+	BotID string
+	Name  string
+	Text  string
 }
 
 // level returns the effective level.
@@ -187,10 +200,18 @@ func (h *Heuristic) Decide(_ context.Context, in Context) (Decision, error) {
 	if p := in.State.Defender(); p != nil && p.ID != in.BotID {
 		defender = p.Name
 	}
+	habit := ""
+	if in.Event.Kind == "attack" && in.Event.Suit != "" && !in.Event.Bot {
+		habit = Habit(h.rng, in.Dossiers[in.Event.PlayerID], in.Event.Suit)
+	}
 	switch {
+	case in.Promoted != "":
+		d.Say = Promo(h.rng, in.Promoted)
 	case in.AdminJokeDue && h.rng.Float64() < 0.3:
 		d.Say = AdminJokes[h.rng.IntN(len(AdminJokes))]
 		d.AdminJoke = true
+	case habit != "" && h.rng.Float64() < 0.7:
+		d.Say = habit
 	case in.Memory != nil && in.Memory.TookFrom(d.Move.CardID) != "" && h.rng.Float64() < 0.8:
 		// returning a card the human threw at it: the memory speaks
 		d.Say = fill(ReturnLines[h.rng.IntN(len(ReturnLines))], nameOf(in.State, in.Memory.TookFrom(d.Move.CardID)), "")

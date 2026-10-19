@@ -134,6 +134,10 @@ export class TableScene {
   private shadowAcc = 0;
   private spotAcc = 0;
   private zooming = false;
+  /** the stump rite: the lamp goes out, the cards turn in the dark, the light comes back */
+  private blackout = 0;
+  private riteHold = new Set<string>();
+  private riteSeen = -1;
   /** the player's eye: sway and peering */
   private camera = new Camera();
   private stillCamera = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -244,7 +248,7 @@ export class TableScene {
           this.castShadows();
         }
         this.spotAcc += ticker.deltaMS;
-        if (this.spotAcc >= SPOT_STEP_MS) {
+        if (this.spotAcc >= SPOT_STEP_MS || this.blackout > 0) {
           this.spotAcc = 0;
           this.lightSpot();
         }
@@ -394,6 +398,12 @@ export class TableScene {
     // The reveal animation is over (or never ran to its end): nothing may stay hidden.
     if (this.revealHidden && !this.revealTemp) this.revealHidden = null;
 
+    // somebody took their stump: a small rite at the table (the cards above join it when they are ours)
+    if (m.lastEvent === 'stump' && m.version !== this.riteSeen && !immediate) {
+      this.riteSeen = m.version;
+      this.later(60, () => this.stumpRite());
+    }
+
     // Place every visible card.
     for (const [id, p] of wanted) {
       let view = this.views.get(id);
@@ -411,10 +421,11 @@ export class TableScene {
           const c = nextAttackSlot(0, metrics);
           view.root.position.set(c.x, c.y);
         } else if (p.kind === 'hand' && m.lastEvent === 'stump') {
-          // the stump was just picked up: cards come out of the viewer's stump pile
+          // the stump was just picked up: cards come out of the viewer's stump pile, face down until the rite turns them
           const sSlot = stumpSlot(metrics);
           view.root.position.set(sSlot.x, sSlot.y);
           view.root.scale.set(sSlot.scale);
+          if (!immediate) this.riteHold.add(id);
         }
         if (p.kind === 'attack' || p.kind === 'defense') this.flash(view);
       }
@@ -434,7 +445,7 @@ export class TableScene {
       view.setGlow((p.kind === 'defense' && m.trumpRevealed && p.card.suit === m.trumpSuit) || (p.card.id === 'SC' && p.faceUp));
       if (view.root.parent !== p.layer) this.reparent(view, p.layer);
       view.root.zIndex = p.z;
-      view.setFaceUp(p.faceUp);
+      view.setFaceUp(p.faceUp && !this.riteHold.has(id));
       // the freshly drawn trump card is shown by the reveal animation instead
       view.root.visible = this.revealHidden !== id;
       view.root.eventMode = p.kind === 'hand' && m.interactive ? 'static' : 'none';
@@ -721,6 +732,66 @@ export class TableScene {
     this.world.position.set(px - f.scale * (c * px - sn * py) + f.x, py - f.scale * (sn * px + c * py) + f.y);
   }
 
+  /**
+   * The stump rite. Taking the stump is the one moment this game has that
+   * plain durak has not, so it gets a ritual: the lamp goes out (250 ms),
+   * in the dark the stump cards turn face up (a quick flip about their
+   * vertical axis), and the light comes back (450 ms). In lite effects
+   * there is no lamp to put out: the cards still turn.
+   */
+  private stumpRite(): void {
+    if (this.destroyed) return;
+    const total = 1250;
+    const dark = 250;
+    const back = 800;
+    let t = 0;
+    let turned = false;
+    sound.snap();
+    this.effects.push((dt) => {
+      t += dt;
+      if (t < dark) this.blackout = easings.outQuad(t / dark);
+      else if (t < back) this.blackout = 1;
+      else this.blackout = 1 - easings.outQuad(Math.min(1, (t - back) / (total - back)));
+      if (!turned && t >= dark + 150) {
+        turned = true;
+        for (const id of this.riteHold) {
+          const v = this.views.get(id);
+          if (v && !v.isDissolved) this.turnOver(v);
+        }
+        this.riteHold.clear();
+      }
+      if (t >= back && t - dt < back) sound.snap(); // the switch clicks back on
+      if (t >= total) {
+        this.blackout = 0;
+        return false;
+      }
+      return true;
+    });
+  }
+
+  /** a card turning face up about its vertical axis: scale.x = |cos πt|, the face appears half-way */
+  private turnOver(view: CardView): void {
+    const s = view.root.scale.x;
+    const total = 320;
+    let t = 0;
+    let shown = false;
+    this.effects.push((dt) => {
+      t += dt;
+      const k = Math.min(1, t / total);
+      view.root.scale.x = s * Math.max(0.04, Math.abs(Math.cos(Math.PI * k)));
+      if (!shown && k >= 0.5) {
+        shown = true;
+        view.setFaceUp(true);
+      }
+      if (k >= 1) {
+        view.root.scale.x = s;
+        view.setFaceUp(true);
+        return false;
+      }
+      return true;
+    });
+  }
+
   /** the Super card showing its face is a second light on the table */
   private ember(): { x: number; y: number } | null {
     const sc = this.views.get('SC');
@@ -795,7 +866,8 @@ export class TableScene {
     this.cone.position.set(l.x * m.width, l.y * m.height);
     this.cone.tint = dark ? 0x000000 : 0x2a1c0c;
     this.cone.alpha = (dark ? 0.62 : 0.3) * (0.7 + 0.3 * k);
-    this.dip.clear().rect(-m.width, -m.height, m.width * 3, m.height * 3).fill({ color: 0x000000, alpha: (1 - k) * (dark ? 0.75 : 0.45) });
+    const dipAlpha = Math.max((1 - k) * (dark ? 0.75 : 0.45), this.blackout * (dark ? 0.92 : 0.82));
+    this.dip.clear().rect(-m.width, -m.height, m.width * 3, m.height * 3).fill({ color: 0x000000, alpha: dipAlpha });
     const e = this.ember();
     this.emberGlow.visible = e !== null;
     if (e) {
