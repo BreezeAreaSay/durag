@@ -5,6 +5,7 @@
 import { Application, Container, Graphics, Sprite, Text, Texture, type FederatedPointerEvent } from 'pixi.js';
 import { CardView } from './CardView';
 import { Lamp, lampTint } from './lamp';
+import { Camera } from './camera';
 import { StopMotionTweener, easings, fallDuration } from './tween';
 import type { SkinId } from '../util/progress';
 import {
@@ -132,6 +133,10 @@ export class TableScene {
   private shadowAcc = 0;
   private spotAcc = 0;
   private zooming = false;
+  /** the player's eye: sway, peering, blinking */
+  private camera = new Camera();
+  private lids = new Graphics();
+  private stillCamera = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
   /** the darkness outside the lamp's cone, the dip of a flicker, the Super card's glow */
   private cone = new Sprite();
   private dip = new Graphics();
@@ -198,6 +203,8 @@ export class TableScene {
     // the hand sits under the player's own nose: the lamp's darkness stops before it
     this.world.addChild(this.layers.piles, this.layers.table, this.layers.light, this.layers.hand, this.layers.drag);
     this.buildLight();
+    this.lids.eventMode = 'none';
+    stage.addChild(this.lids); // above the world: eyelids do not sway with the head
     this.layers.hand.sortableChildren = true;
     this.layers.table.sortableChildren = true;
     this.layers.drag.sortableChildren = true;
@@ -216,6 +223,10 @@ export class TableScene {
       this.time += ticker.deltaMS;
       this.tweener.update(ticker.deltaMS);
       this.lamp.update(ticker.deltaMS);
+      if (!this.stillCamera) {
+        this.camera.update(ticker.deltaMS, () => this.somethingToLookAt(), this.drag !== null || this.zooming);
+        this.applyCamera();
+      }
       this.shadowAcc += ticker.deltaMS;
       if (this.shadowAcc >= SHADOW_STEP_MS) {
         this.shadowAcc = 0;
@@ -669,6 +680,40 @@ export class TableScene {
     });
   }
 
+  /** a point on the table worth a closer look: a random table card, or the deck when the table is bare */
+  private somethingToLookAt(): { x: number; y: number } | null {
+    const m = this.model;
+    if (!m || !this.ready) return null;
+    const cards = m.table.flatMap((p) => (p.defense ? [p.attack, p.defense] : [p.attack]));
+    const pick = cards[Math.floor(Math.random() * cards.length)];
+    const v = pick ? this.views.get(pick.id) : null;
+    if (v) return { x: v.root.x, y: v.root.y };
+    return { x: this.metrics.width / 2, y: (this.metrics.tableTop + this.metrics.tableBottom) / 2 };
+  }
+
+  /** the head moves, the world moves the other way: offset, roll, a lean-in about a point, and the eyelids */
+  private applyCamera(): void {
+    const f = this.camera.frame();
+    const m = this.metrics;
+    const cx = m.width / 2;
+    const cy = m.height / 2;
+    // roll about the middle of the screen, zoom about the pivot, then the sway
+    this.world.scale.set(f.scale);
+    this.world.rotation = f.rotation;
+    const c = Math.cos(f.rotation);
+    const sn = Math.sin(f.rotation);
+    const px = f.scale > 1.0001 ? f.pivot.x : cx;
+    const py = f.scale > 1.0001 ? f.pivot.y : cy;
+    // position so that the pivot stays fixed: P − R·S·P
+    this.world.position.set(px - f.scale * (c * px - sn * py) + f.x, py - f.scale * (sn * px + c * py) + f.y);
+    this.lids.clear();
+    if (f.lids > 0.01) {
+      const h = (m.height / 2) * f.lids;
+      this.lids.rect(0, 0, m.width, h).fill({ color: 0x000000, alpha: 0.96 });
+      this.lids.rect(0, m.height - h, m.width, h).fill({ color: 0x000000, alpha: 0.96 });
+    }
+  }
+
   /** the Super card showing its face is a second light on the table */
   private ember(): { x: number; y: number } | null {
     const sc = this.views.get('SC');
@@ -1010,7 +1055,8 @@ export class TableScene {
   private onCardDown(view: CardView, e: FederatedPointerEvent): void {
     if (!this.model?.interactive || this.drag || this.pending.has(view.card.id)) return;
     e.stopPropagation();
-    const g = e.global;
+    this.camera.release();
+    const g = this.world.toLocal(e.global); // the head moves: pointer in world space
     this.tweener.cancel(view.root);
     this.reparent(view, this.layers.drag);
     view.setLifted(true);
@@ -1049,7 +1095,7 @@ export class TableScene {
   };
 
   private onPointerMove = (e: FederatedPointerEvent): void => {
-    const g = e.global;
+    const g = this.world.toLocal(e.global); // the head moves: pointer in world space
     const d = this.drag;
     if (!d) return;
     if (!d.moved && Math.hypot(g.x - d.startX, g.y - d.startY) > 7) d.moved = true;
@@ -1069,7 +1115,7 @@ export class TableScene {
       this.returnHome(d.view);
       return;
     }
-    const g = e.global;
+    const g = this.world.toLocal(e.global); // the head moves: pointer in world space
     // Any release without movement is a tap, however long the finger rested:
     // dropping a card back where it was would be a no-op anyway, and a slow
     // frame must not turn a tap into an ignored move.
