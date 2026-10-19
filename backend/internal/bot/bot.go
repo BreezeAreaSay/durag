@@ -44,6 +44,15 @@ type Context struct {
 	// AdminJokeDue is true while the bot still owes its once-per-game
 	// fourth-wall line.
 	AdminJokeDue bool
+	// Turn counts the bot's own moves this game; the banter cadence runs on it.
+	Turn int
+	// Event is the last notable thing a human did: the thing to tease about.
+	Event Event
+}
+
+// SpeakDue reports whether the bot is allowed a line on this move.
+func (c Context) SpeakDue() bool {
+	return Due(c.Turn, SpeakEvery)
 }
 
 // Decision is a legal move plus an optional short line and an optional
@@ -131,9 +140,12 @@ func NewHeuristic(rng *rand.Rand) *Heuristic {
 // always returns one of them.
 func (h *Heuristic) Decide(_ context.Context, in Context) (Decision, error) {
 	d := Decision{Move: h.pick(in)}
-	if in.AdminJokeDue && h.rng.Float64() < 0.3 {
+	switch {
+	case in.AdminJokeDue && h.rng.Float64() < 0.3:
 		d.Say = AdminJokes[h.rng.IntN(len(AdminJokes))]
 		d.AdminJoke = true
+	case in.SpeakDue():
+		d.Say = Jab(h.rng, in.Event)
 	}
 	if d.Move.Type == game.MoveTake && h.rng.Float64() < 0.3 {
 		d.Emoji = []string{"💀", "😡", "🤔"}[h.rng.IntN(3)]

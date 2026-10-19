@@ -14,6 +14,7 @@ type Memory struct {
 	rooms map[string]*game.GameState
 	locks map[string]*sync.Mutex
 	subs  map[string]map[chan []byte]struct{}
+	wins  map[string]int
 }
 
 // NewMemory creates an empty in-memory store.
@@ -22,6 +23,7 @@ func NewMemory() *Memory {
 		rooms: map[string]*game.GameState{},
 		locks: map[string]*sync.Mutex{},
 		subs:  map[string]map[chan []byte]struct{}{},
+		wins:  map[string]int{},
 	}
 }
 
@@ -118,6 +120,21 @@ func (m *Memory) Subscribe(ctx context.Context, roomID string) (<-chan []byte, e
 		m.mu.Unlock()
 	}()
 	return ch, nil
+}
+
+// AddWin implements Store.
+func (m *Memory) AddWin(_ context.Context, playerID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.wins[playerID]++
+	return m.wins[playerID], nil
+}
+
+// Wins implements Store.
+func (m *Memory) Wins(_ context.Context, playerID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.wins[playerID], nil
 }
 
 // Close implements Store.

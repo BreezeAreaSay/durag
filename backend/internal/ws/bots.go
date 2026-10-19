@@ -45,10 +45,11 @@ type botRoom struct {
 	jokeSaid   map[string]bool
 	lastStatus string
 	scheduled  map[string]int64 // bot id -> state version a timer is armed for
+	turns      map[string]int   // bot id -> moves made this game (banter cadence)
 }
 
 func newBotRoom() *botRoom {
-	return &botRoom{moods: map[string]bot.Mood{}, moodUntil: map[string]time.Time{}, jokeSaid: map[string]bool{}, scheduled: map[string]int64{}}
+	return &botRoom{moods: map[string]bot.Mood{}, moodUntil: map[string]time.Time{}, jokeSaid: map[string]bool{}, scheduled: map[string]int64{}, turns: map[string]int{}}
 }
 
 func (h *Hub) botRoomFor(roomID string) *botRoom {
@@ -147,6 +148,7 @@ func (h *Hub) scheduleBots(roomID string, state *game.GameState) {
 	defer br.mu.Unlock()
 	if state.Status == game.StatusPlaying && br.lastStatus != game.StatusPlaying {
 		br.jokeSaid = map[string]bool{} // a new game: the fourth wall is whole again
+		br.turns = map[string]int{}
 	}
 	br.lastStatus = state.Status
 	if state.Status != game.StatusPlaying {
@@ -185,13 +187,20 @@ func (h *Hub) botAct(roomID, botID string, version int64) {
 	}
 	br := h.botRoomFor(roomID)
 	mood, recent, jokeDue := br.view(botID, time.Now())
+	br.mu.Lock()
+	br.turns[botID]++
+	turn := br.turns[botID]
+	br.mu.Unlock()
+	view := state.Sanitized(botID)
 	in := bot.Context{
-		State:        state.Sanitized(botID),
+		State:        view,
 		BotID:        botID,
 		Moves:        moves,
 		Mood:         mood,
 		Recent:       recent,
 		AdminJokeDue: jokeDue && state.BoutNumber >= adminJokeFromBout,
+		Turn:         turn,
+		Event:        bot.LastEvent(view, botID),
 	}
 	d, ok := h.decide(in)
 	if !ok {

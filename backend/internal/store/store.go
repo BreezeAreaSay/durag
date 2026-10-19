@@ -35,6 +35,10 @@ type Store interface {
 	// Subscribe returns a channel of payloads published for the room. The
 	// channel is closed when ctx is cancelled.
 	Subscribe(ctx context.Context, roomID string) (<-chan []byte, error)
+	// AddWin increments a player's lifetime win counter and returns the new value.
+	AddWin(ctx context.Context, playerID string) (int, error)
+	// Wins returns a player's lifetime win counter (0 for an unknown player).
+	Wins(ctx context.Context, playerID string) (int, error)
 	// Close releases resources.
 	Close() error
 }

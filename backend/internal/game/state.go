@@ -48,6 +48,7 @@ type Player struct {
 	HandCount  int    `json:"hand_count"`       // filled by Sanitized()
 	StumpCount int    `json:"stump_count"`      // filled by Sanitized()
 	IsBot      bool   `json:"is_bot,omitempty"` // seat driven by the server (v10 §2)
+	Wins       int    `json:"wins,omitempty"`   // lifetime wins (first out of the game), kept by the store
 }
 
 // LogEntry is a compact description of something that happened. The client
@@ -84,7 +85,8 @@ type GameState struct {
 	HostID         string     `json:"host_id"`
 	MaxPlayers     int        `json:"max_players"`
 	LoserID        string     `json:"loser_id,omitempty"`
-	FinishedOrder  []string   `json:"finished_order"` // players who got rid of their cards, first to last
+	FinishedOrder  []string   `json:"finished_order"`        // players who got rid of their cards, first to last
+	WinAwarded     bool       `json:"win_awarded,omitempty"` // the winner of this finished game got their win counted
 	Version        int64      `json:"version"`
 	UpdatedAt      int64      `json:"updated_at"`
 	Log            []LogEntry `json:"log"`
@@ -159,6 +161,15 @@ func (s *GameState) PlayerIndex(id string) int {
 }
 
 // Player returns a pointer to the player with the given ID or nil.
+// Winner is the player who got rid of their cards first in a finished game,
+// or "" (nobody finished, or the game is still on).
+func (s *GameState) Winner() string {
+	if s.Status != StatusFinished || len(s.FinishedOrder) == 0 {
+		return ""
+	}
+	return s.FinishedOrder[0]
+}
+
 func (s *GameState) Player(id string) *Player {
 	i := s.PlayerIndex(id)
 	if i < 0 {

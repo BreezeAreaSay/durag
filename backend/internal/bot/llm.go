@@ -163,7 +163,7 @@ type answer struct {
 }
 
 const systemPrompt = `Ты играешь в «Дурака» (вариант DURAG) за одного из игроков. Правила кратко: атакующий кладёт карту, защищающийся бьёт её старшей картой той же масти или козырем (козырь известен только после вскрытия), может перевести картой того же достоинства или взять весь стол. Подкидывать можно карты тех достоинств, что уже на столе, но не больше, чем карт в руке у защищающегося. Джокер бьёт любую карту своего цвета, Супер-карта бьёт всё. Кто остался с картами последним — проиграл.
-Тебе дают твою руку, стол и ПРОНУМЕРОВАННЫЙ список легальных ходов. Выбери лучший ход и ответь СТРОГО одним JSON-объектом вида {"move": <номер хода>, "say": "<короткая реплика до 60 символов или пустая строка>", "emoji": "<один эмодзи из списка 👍 👎 😂 😡 😎 🤔 🔥 💀 🤡 ❤️ 👏 🙏 или пустая строка>"}. Реплика — по-русски, в характере дворового игрока, без оскорблений, не чаще чем в каждом третьем ходе. Никакого текста вне JSON.`
+Тебе дают твою руку, стол и ПРОНУМЕРОВАННЫЙ список легальных ходов. Выбери лучший ход и ответь СТРОГО одним JSON-объектом вида {"move": <номер хода>, "say": "<реплика до 40 символов или пустая строка>", "emoji": "<один эмодзи из списка 👍 👎 😂 😡 😎 🤔 🔥 💀 🤡 ❤️ 👏 🙏 или пустая строка>"}. Реплика — по-русски, одна короткая фраза в характере дворового игрока: подкалывай, провоцируй, шути про последний ход соперника, обращайся по имени, без мата и оскорблений. Говори только когда тебе разрешили в сообщении, иначе say — пустая строка. Никакого текста вне JSON.`
 
 // Decide implements Brain: the first model that answers with a legal move wins.
 func (l *LLM) Decide(ctx context.Context, in Context) (Decision, error) {
@@ -217,7 +217,7 @@ func (l *LLM) ask(ctx context.Context, model string, in Context, jsonMode bool) 
 		Model:       model,
 		Messages:    []chatMessage{{Role: "system", Content: systemPrompt}, {Role: "user", Content: Prompt(in)}},
 		Temperature: 0.7,
-		MaxTokens:   160,
+		MaxTokens:   120,
 	}
 	if jsonMode {
 		req.ResponseFormat = &respFormat{Type: "json_object"}
@@ -374,6 +374,14 @@ func Prompt(in Context) string {
 			fmt.Fprintf(&b, "%s %s", e.FromName, e.Emoji)
 		}
 	}
+	if ev := in.Event.String(); ev != "" {
+		b.WriteString("\nПоследнее: " + ev + ".")
+	}
+	if in.SpeakDue() {
+		b.WriteString("\nСейчас твоя очередь что-то сказать: одна колкая фраза в say.")
+	} else {
+		b.WriteString("\nСейчас молчи: say пустая.")
+	}
 	if in.AdminJokeDue {
 		b.WriteString("\nОдин раз за игру ты можешь сломать четвёртую стену — пошутить, что ты бот и привет админу. Можешь сделать это сейчас в поле say.")
 	}
@@ -414,8 +422,8 @@ func Parse(content string, in Context) (Decision, error) {
 func trimSay(s string) string {
 	s = strings.TrimSpace(s)
 	r := []rune(s)
-	if len(r) > 80 {
-		return string(r[:80]) + "…"
+	if len(r) > 48 {
+		return string(r[:48]) + "…"
 	}
 	return s
 }

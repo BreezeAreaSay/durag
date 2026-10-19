@@ -291,6 +291,7 @@ func (e *Engine) Start(s *GameState) error {
 	s.DefenderTaking = false
 	s.DiscardCount = 0
 	s.FinishedOrder = []string{}
+	s.WinAwarded = false
 	s.LoserID = ""
 	s.TransferCount = 0
 	s.BoutNumber = 1

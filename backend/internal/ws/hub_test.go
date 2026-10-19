@@ -566,3 +566,47 @@ func TestStumpStepOverTheWire(t *testing.T) {
 		}
 	}
 }
+
+func TestWinIsAwardedOnceToTheFirstOut(t *testing.T) {
+	_, h, st := newTestServerWithEngine(t, true, game.NewEngine(game.NewRand(7, 8)))
+	ctx := context.Background()
+	finished, err := st.Update(ctx, "W", true, func(s *game.GameState) error {
+		for _, id := range []string{"dev:A", "dev:B", "dev:C"} {
+			if err := h.engine.Join(s, id, id, ""); err != nil {
+				return err
+			}
+		}
+		s.Players[2].IsBot = true
+		s.Status = game.StatusFinished
+		s.FinishedOrder = []string{"dev:A", "dev:B"}
+		s.LoserID = "dev:C"
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.afterUpdate("W", finished)
+	h.afterUpdate("W", finished) // a duplicate publish of the same finished state
+	if n, _ := st.Wins(ctx, "dev:A"); n != 1 {
+		t.Fatalf("first out must have exactly one win, got %d", n)
+	}
+	if n, _ := st.Wins(ctx, "dev:B"); n != 0 {
+		t.Fatalf("second out gets nothing, got %d", n)
+	}
+	stored, _ := st.Load(ctx, "W")
+	if !stored.WinAwarded || stored.Player("dev:A").Wins != 1 {
+		t.Fatalf("state must carry the award: %+v", stored.Player("dev:A"))
+	}
+
+	// bots never collect wins
+	finished, _ = st.Update(ctx, "W", false, func(s *game.GameState) error {
+		s.WinAwarded = false
+		s.FinishedOrder = []string{"dev:C"}
+		return nil
+	})
+	h.afterUpdate("W", finished)
+	stored, _ = st.Load(ctx, "W")
+	if n, _ := st.Wins(ctx, "dev:C"); n != 0 || !stored.WinAwarded {
+		t.Fatalf("bot wins %d awarded %v", n, stored.WinAwarded)
+	}
+}

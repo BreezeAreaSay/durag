@@ -76,6 +76,7 @@ func NewRedisFromClient(client *redis.Client, prefix string, ttl time.Duration) 
 func (r *Redis) roomKey(id string) string { return r.prefix + ":room:" + id }
 func (r *Redis) lockKey(id string) string { return r.prefix + ":lock:" + id }
 func (r *Redis) channel(id string) string { return r.prefix + ":events:" + id }
+func (r *Redis) winsKey(id string) string { return r.prefix + ":wins:" + id }
 func (r *Redis) Client() *redis.Client    { return r.client }
 
 // Load implements Store.
@@ -207,6 +208,22 @@ func (r *Redis) Subscribe(ctx context.Context, roomID string) (<-chan []byte, er
 		}
 	}()
 	return out, nil
+}
+
+// AddWin implements Store. Win counters never expire: they are what a
+// player comes back for.
+func (r *Redis) AddWin(ctx context.Context, playerID string) (int, error) {
+	n, err := r.client.Incr(ctx, r.winsKey(playerID)).Result()
+	return int(n), err
+}
+
+// Wins implements Store.
+func (r *Redis) Wins(ctx context.Context, playerID string) (int, error) {
+	n, err := r.client.Get(ctx, r.winsKey(playerID)).Int()
+	if errors.Is(err, redis.Nil) {
+		return 0, nil
+	}
+	return n, err
 }
 
 // Close implements Store.

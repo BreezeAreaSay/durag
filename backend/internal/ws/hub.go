@@ -188,8 +188,18 @@ func (h *Hub) join(c *Client, raw json.RawMessage) {
 
 	c.setRoom(roomID, id.ID)
 	replaced := h.addToRoom(c)
+	wins, werr := h.store.Wins(h.ctx, id.ID)
+	if werr != nil {
+		h.log.Warn("ws: wins lookup failed", "player", id.ID, "err", werr)
+	}
 	state, err := h.store.Update(h.ctx, roomID, p.Create, func(s *game.GameState) error {
-		return h.engine.Join(s, id.ID, id.Name, id.AvatarURL)
+		if err := h.engine.Join(s, id.ID, id.Name, id.AvatarURL); err != nil {
+			return err
+		}
+		if pl := s.Player(id.ID); pl != nil {
+			pl.Wins = wins
+		}
+		return nil
 	})
 	if err != nil {
 		h.removeFromRoom(c)
@@ -322,9 +332,42 @@ func (h *Hub) react(c *Client, raw json.RawMessage) {
 // deadline of the room: the end of the resolving pause, the automatic stump
 // pickup or the turn timer, whichever comes first.
 func (h *Hub) afterUpdate(roomID string, state *game.GameState) {
+	if state.Status == game.StatusFinished && !state.WinAwarded {
+		state = h.awardWin(roomID, state)
+	}
 	h.publish(roomID, state)
 	h.scheduleTick(roomID, state)
 	h.scheduleBots(roomID, state)
+}
+
+// awardWin counts the win of a finished game exactly once: the first player
+// out of the game gets +1 on their lifetime counter (bots and draws get
+// nothing). The flag and the counter move together under the room lock, so
+// two backend instances cannot both count the same game.
+func (h *Hub) awardWin(roomID string, state *game.GameState) *game.GameState {
+	next, err := h.store.Update(h.ctx, roomID, false, func(s *game.GameState) error {
+		if s.Status != game.StatusFinished || s.WinAwarded {
+			return errStale
+		}
+		s.WinAwarded = true
+		winner := s.Player(s.Winner())
+		if winner == nil || winner.IsBot {
+			return nil
+		}
+		n, err := h.store.AddWin(h.ctx, winner.ID)
+		if err != nil {
+			return err
+		}
+		winner.Wins = n
+		return nil
+	})
+	if err != nil {
+		if !errors.Is(err, errStale) {
+			h.log.Warn("ws: award win failed", "room", roomID, "err", err)
+		}
+		return state
+	}
+	return next
 }
 
 // nextDeadline returns the earliest pending server deadline of a state (unix ms) or 0.
