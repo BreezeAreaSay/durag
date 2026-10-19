@@ -74,6 +74,15 @@ export class CardView {
     this.shadow.position.set(on ? SHADOW_DX * 2 : SHADOW_DX, on ? SHADOW_DY * 2.2 : SHADOW_DY);
   }
 
+  get isLifted(): boolean {
+    return this.lifted;
+  }
+
+  /** the lamp decides where the shadow falls */
+  setShadow(dx: number, dy: number): void {
+    this.shadow.position.set(dx, dy);
+  }
+
   /** A soft acid halo: the trump card you are beating with. */
   setGlow(on: boolean): void {
     if (this.glowOn === on) return;

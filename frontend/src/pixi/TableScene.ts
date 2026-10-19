@@ -4,6 +4,7 @@
 // server snaps the card back into the hand with a stop-motion rubber band.
 import { Application, Container, Graphics, Text, type FederatedPointerEvent } from 'pixi.js';
 import { CardView } from './CardView';
+import { Lamp, lampTint } from './lamp';
 import { StopMotionTweener, easings, fallDuration } from './tween';
 import type { SkinId } from '../util/progress';
 import {
@@ -39,7 +40,8 @@ export interface SceneHandlers {
   /** the viewer double-tapped the empty table: a fist slam, to be sent to the room */
   onSlam?(): void;
   /** a card wants an emoji to fly from a screen point (a Joker laughing) */
-  onCardEmoji?(emoji: string, x: number, y: number): void;
+  /** the table glanced at a card (a beat worth a look), CSS px inside the host */
+  onGaze?(x: number, y: number): void;
 }
 
 /** A per-frame effect; returns false when it is over. */
@@ -88,6 +90,10 @@ const PENDING_TTL = 15000;
 // No shader passes at all: WebKit on iPhones rendered filtered cards black.
 // Everything on the table is plain vector geometry, text and gradients.
 const GLOW_STEP_MS = 1000 / 12; // stop-motion cadence of the glow pulse
+/** shadows move in stop-motion steps too */
+const SHADOW_STEP_MS = 1000 / 12;
+/** the CSS light spot is slow and cheap: ten steps a second */
+const SPOT_STEP_MS = 100;
 const REVEAL_HOLD_MS = 1600; // the drawn trump card rests in the centre this long
 const REVEAL_GUARD_MS = 4000; // hard stop for the reveal animation (the hand card must never stay hidden)
 const INK = 0x0d0d0d;
@@ -121,6 +127,11 @@ export class TableScene {
   /** where each card was last placed: table arrivals trigger the gags */
   private kinds = new Map<string, Placement['kind']>();
   private lastTap = 0;
+  /** the lamp over the table: shadows, the light spot, the swing after a fist */
+  private lamp = new Lamp();
+  private shadowAcc = 0;
+  private spotAcc = 0;
+  private zooming = false;
 
   // piles
   private deckPile = new Container();
@@ -198,6 +209,17 @@ export class TableScene {
     this.app.ticker.add((ticker) => {
       this.time += ticker.deltaMS;
       this.tweener.update(ticker.deltaMS);
+      this.lamp.update(ticker.deltaMS);
+      this.shadowAcc += ticker.deltaMS;
+      if (this.shadowAcc >= SHADOW_STEP_MS) {
+        this.shadowAcc = 0;
+        this.castShadows();
+      }
+      this.spotAcc += ticker.deltaMS;
+      if (this.spotAcc >= SPOT_STEP_MS) {
+        this.spotAcc = 0;
+        this.lightSpot();
+      }
       if (this.effects.length) this.effects = this.effects.filter((fx) => fx(ticker.deltaMS));
       this.glowAcc += ticker.deltaMS;
       if (this.glowAcc >= GLOW_STEP_MS) {
@@ -210,6 +232,7 @@ export class TableScene {
     this.metrics = computeMetrics(this.app.screen.width, this.app.screen.height, this.topInset);
     this.buildPiles();
     this.ready = true;
+    this.lampColour();
     if (this.model) this.sync(true);
   }
 
@@ -377,7 +400,8 @@ export class TableScene {
       // a card the Super card blew apart came back (the defender took the table): it is whole again
       if (view.isDissolved && p.kind === 'hand') view.setDissolved(false);
       // the trump card you beat with glows softly
-      view.setGlow(p.kind === 'defense' && m.trumpRevealed && p.card.suit === m.trumpSuit);
+      // the Super card is a light of its own wherever it shows its face
+      view.setGlow((p.kind === 'defense' && m.trumpRevealed && p.card.suit === m.trumpSuit) || (p.card.id === 'SC' && p.faceUp));
       if (view.root.parent !== p.layer) this.reparent(view, p.layer);
       view.root.zIndex = p.z;
       view.setFaceUp(p.faceUp);
@@ -389,8 +413,13 @@ export class TableScene {
       const was = this.kinds.get(id);
       this.kinds.set(id, p.kind);
       if (was !== p.kind && p.kind !== 'hand' && !immediate) {
-        if (p.kind === 'defense') sound.snap();
-        if (isJoker(p.card)) this.later(p.kind === 'attack' ? 420 : 520, () => (p.kind === 'attack' ? this.jokerWink(view!) : this.jokerLaugh(view!)));
+        if (p.kind === 'defense') {
+          sound.snap();
+          // a look at the beat: always for a trump or a special card, now and then for anything else
+          const trump = m.trumpRevealed && p.card.suit === m.trumpSuit;
+          if (trump || isJoker(p.card) || p.card.id === 'SC' || Math.random() < 0.25) this.later(260, () => this.gaze(view!));
+        }
+        if (isJoker(p.card)) this.later(p.kind === 'attack' ? 420 : 520, () => (p.kind === 'attack' ? this.jokerWink(view!) : this.jokerToss(view!)));
       }
     }
     for (const id of [...this.kinds.keys()]) if (!wanted.has(id)) this.kinds.delete(id);
@@ -527,31 +556,33 @@ export class TableScene {
   }
 
   /**
-   * A Joker that just beat a card laughs: three hops with a dying amplitude,
-   * y = A·|sin(ωt)|·e^(−λt), a 😂 flying off the card and a wobble.
+   * A Joker that just beat a card shows off: a full turn with a little
+   * swell, and the cards next to it jump as if it had slapped the table.
+   * The jump is the slam wave with a short reach, centred on the Joker.
    */
-  private jokerLaugh(view: CardView): void {
+  private jokerToss(view: CardView): void {
     if (this.destroyed || view.isDissolved) return;
-    const y0 = view.root.y;
     const rot0 = view.root.rotation;
-    const A = this.metrics.cardH * 0.18;
-    const total = 900;
+    const s0 = view.root.scale.x;
+    const total = 480;
     let t = 0;
+    view.setLifted(true);
     this.effects.push((dt) => {
       t += dt;
-      const sec = t / 1000;
-      const env = Math.exp(-3.2 * sec);
-      view.root.y = y0 - A * Math.abs(Math.sin(Math.PI * 3.4 * sec)) * env;
-      view.root.rotation = rot0 + 0.12 * Math.sin(Math.PI * 6.8 * sec) * env;
-      if (t >= total) {
-        view.root.y = y0;
+      const k = Math.min(1, t / total);
+      view.root.rotation = rot0 + Math.PI * 2 * easings.outQuad(k);
+      view.root.scale.set(s0 * (1 + 0.18 * Math.sin(Math.PI * k)));
+      if (k >= 1) {
         view.root.rotation = rot0;
+        view.root.scale.set(s0);
+        view.setLifted(false);
         return false;
       }
       return true;
     });
     const { x, y } = view.root.position;
-    this.handlers.onCardEmoji?.('😂', x, y - this.metrics.cardH * 0.3);
+    this.later(120, () => this.wave(x, y, this.metrics.cardH * 0.35, this.metrics.cardH * 1.5, view));
+    this.lamp.look({ x: x / this.metrics.width, y: y / this.metrics.height });
   }
 
   /**
@@ -563,11 +594,15 @@ export class TableScene {
     if (!this.ready || this.destroyed) return;
     const cx = this.metrics.width / 2;
     const cy = (this.metrics.tableTop + this.metrics.tableBottom) / 2;
-    const H = this.metrics.cardH * 0.45;
-    const R = Math.max(200, this.metrics.height * 0.45);
     sound.thud();
+    this.lamp.kick();
+    this.wave(cx, cy, this.metrics.cardH * 0.45, Math.max(200, this.metrics.height * 0.45));
+  }
+
+  /** the jump wave: cards within reach R of (cx, cy) hop by H·e^(−d/R), later the further away */
+  private wave(cx: number, cy: number, H: number, R: number, except?: CardView): void {
     for (const view of this.views.values()) {
-      if (view.isDissolved || this.drag?.id === view.card.id) continue;
+      if (view === except || view.isDissolved || this.drag?.id === view.card.id) continue;
       const r = view.root;
       const d = Math.hypot(r.x - cx, r.y - cy);
       const h = H * Math.exp(-d / R);
@@ -586,6 +621,85 @@ export class TableScene {
         });
       });
     }
+  }
+
+  /**
+   * A glance at a card: the lamp leans towards it, the view zooms in a
+   * little around it (a scale s about point P keeps P fixed when the world
+   * is moved to (1−s)·P) and the HUD is told, so the player's sticker can
+   * turn its head too.
+   */
+  private gaze(view: CardView): void {
+    if (this.destroyed || view.isDissolved || this.zooming || this.drag) return;
+    const P = { x: view.root.x, y: view.root.y };
+    const m = this.metrics;
+    this.lamp.look({ x: P.x / m.width, y: P.y / m.height });
+    this.handlers.onGaze?.(P.x, P.y);
+    this.zooming = true;
+    const inMs = 350;
+    const holdMs = 250;
+    const outMs = 320;
+    const peak = 1.06;
+    let t = 0;
+    this.effects.push((dt) => {
+      t += dt;
+      let s = 1;
+      if (t < inMs) s = 1 + (peak - 1) * easings.outQuad(t / inMs);
+      else if (t < inMs + holdMs) s = peak;
+      else if (t < inMs + holdMs + outMs) s = 1 + (peak - 1) * (1 - easings.outQuad((t - inMs - holdMs) / outMs));
+      this.world.scale.set(s);
+      this.world.position.set((1 - s) * P.x, (1 - s) * P.y);
+      if (t >= inMs + holdMs + outMs) {
+        this.world.scale.set(1);
+        this.world.position.set(0, 0);
+        this.zooming = false;
+        return false;
+      }
+      return true;
+    });
+  }
+
+  /** the Super card showing its face is a second light on the table */
+  private ember(): { x: number; y: number } | null {
+    const sc = this.views.get('SC');
+    if (!sc || sc.isDissolved || !sc.faceUp || !sc.root.visible) return null;
+    return { x: sc.root.x, y: sc.root.y };
+  }
+
+  /** every card's shadow falls away from the lamp, and from the Super card nearby */
+  private castShadows(): void {
+    const m = this.metrics;
+    const ember = this.ember() ?? undefined;
+    for (const view of this.views.values()) {
+      if (view.isDissolved) continue;
+      const r = view.root;
+      const sh = this.lamp.shadow({ x: r.x, y: r.y }, m.width, m.height, view.isLifted ? 1 : 0, 7, ember, m.cardH * 1.4);
+      view.setShadow(sh.x, sh.y);
+    }
+  }
+
+  /** the CSS side of the lights: the lamp's spot, the vignette's centre, the Super card's glow */
+  private lightSpot(): void {
+    const l = this.lamp.position();
+    const root = document.documentElement.style;
+    root.setProperty('--lx', `${(l.x * 100).toFixed(1)}%`);
+    root.setProperty('--ly', `${(l.y * 100).toFixed(1)}%`);
+    const e = this.ember();
+    root.setProperty('--sa', e ? '1' : '0');
+    if (e) {
+      root.setProperty('--sx', `${((e.x / this.metrics.width) * 100).toFixed(1)}%`);
+      root.setProperty('--sy', `${((e.y / this.metrics.height) * 100).toFixed(1)}%`);
+    }
+  }
+
+  /** the lamp's colour by the hour on the phone */
+  private lampColour(): void {
+    const now = new Date();
+    const tint = lampTint(now.getHours() + now.getMinutes() / 60);
+    const root = document.documentElement.style;
+    root.setProperty('--lamp-h', tint.hue.toFixed(0));
+    root.setProperty('--lamp-s', `${tint.sat.toFixed(0)}%`);
+    root.setProperty('--lamp-a', tint.alpha.toFixed(2));
   }
 
   private onStageTap = (e: FederatedPointerEvent): void => {

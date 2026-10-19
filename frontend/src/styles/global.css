@@ -113,7 +113,23 @@ body::after {
   opacity: 0.35;
   mix-blend-mode: soft-light;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='600' height='600'%3E%3Cfilter id='f'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.012 0.35' numOctaves='2' seed='7' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.9 0 0 0 0 0.88 0 0 0 0 0.8 0 0 0 0.5 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23f)'/%3E%3C/svg%3E"),
-    radial-gradient(ellipse at 50% 40%, transparent 55%, var(--vignette) 100%);
+    radial-gradient(ellipse at var(--lx, 50%) var(--ly, 40%), transparent 55%, var(--vignette) 100%);
+}
+/* The lamp's spot on the paper and the Super card's own light: the scene
+   moves --lx/--ly ten times a second, the colour comes from the hour. */
+#root::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  mix-blend-mode: var(--lamp-blend, soft-light);
+  background-image:
+    radial-gradient(circle at var(--lx, 50%) var(--ly, 40%), hsl(var(--lamp-h, 48) var(--lamp-s, 40%) 80% / var(--lamp-a, 0.3)), transparent 48%),
+    radial-gradient(circle at var(--sx, 50%) var(--sy, 50%), hsl(var(--toxic-h, 300) 90% 70% / calc(var(--sa, 0) * 0.45)), transparent 16%);
+}
+:root[data-theme='dark'] {
+  --lamp-blend: screen;
 }
 
 #root {
@@ -1197,3 +1213,11 @@ body::after {
 }
 .chip--level-easy { background: var(--acid, #d6f24a); }
 .chip--level-hard { background: var(--ink); color: var(--paper); }
+
+/* --- the sticker looks at a card the table zoomed on ---------------------- */
+.me .avatar-btn {
+  transition: transform 320ms cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+.game--gaze .me .avatar-btn {
+  transform: rotate(var(--gaze, 0deg)) translateY(var(--gaze-y, 0px));
+}

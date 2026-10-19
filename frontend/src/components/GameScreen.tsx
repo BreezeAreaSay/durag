@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Hud } from './Hud';
 import { ResultOverlay } from './ResultOverlay';
 import { EmojiPanel } from './EmojiPanel';
-import { ReactionLayer, type Flight } from './ReactionLayer';
+import { ReactionLayer } from './ReactionLayer';
 import { SLAM_EMOJI } from '../util/emoji';
 import { sound } from '../util/audio';
 import { PixiTable } from '../pixi/PixiTable';
@@ -24,9 +24,8 @@ export function GameScreen({ state }: Props) {
   const [size, setSize] = useState({ w: window.innerWidth, h: window.innerHeight });
   const [slam, setSlam] = useState(0);
   const [shaking, setShaking] = useState(false);
-  const [extra, setExtra] = useState<Flight[]>([]);
   const gameRef = useRef<HTMLDivElement>(null);
-  const flightNonce = useRef(0);
+  const gazeTimer = useRef(0);
 
   // a fist on the table from anybody in the room: cards jump, the screen shakes
   useEffect(() => {
@@ -39,11 +38,21 @@ export function GameScreen({ state }: Props) {
     return () => window.clearTimeout(id);
   }, [reactions]);
 
-  const onCardEmoji = useCallback((emoji: string, x: number, y: number) => {
-    flightNonce.current += 1;
-    const key = `card:${flightNonce.current}`;
-    setExtra((prev) => [...prev, { key, emoji, x, y }]);
-    window.setTimeout(() => setExtra((prev) => prev.filter((f) => f.key !== key)), 1300);
+  // the table glanced at a card: the player's sticker turns its head that way for a moment
+  const onGaze = useCallback((x: number, y: number) => {
+    const el = gameRef.current;
+    const me = el?.querySelector<HTMLElement>('.me .avatar-btn');
+    if (!el || !me) return;
+    const base = el.getBoundingClientRect();
+    const r = me.getBoundingClientRect();
+    const cx = r.left + r.width / 2 - base.left;
+    const cy = r.top + r.height / 2 - base.top;
+    const angle = Math.atan2(y - cy, x - cx); // 0 = to the right
+    el.style.setProperty('--gaze', `${(Math.cos(angle) * 5).toFixed(1)}deg`); // lean towards the card, at most 5°
+    el.style.setProperty('--gaze-y', `${(Math.sin(angle) * 3).toFixed(1)}px`);
+    el.classList.add('game--gaze');
+    window.clearTimeout(gazeTimer.current);
+    gazeTimer.current = window.setTimeout(() => el.classList.remove('game--gaze'), 900);
   }, []);
 
   const onTopHeight = useCallback((h: number) => setHudTop((prev) => (Math.abs(prev - h) < 1 ? prev : Math.round(h))), []);
@@ -103,13 +112,13 @@ export function GameScreen({ state }: Props) {
             transfer(cardId);
           }}
           onSlam={() => react(SLAM_EMOJI)}
-          onCardEmoji={onCardEmoji}
+          onGaze={onGaze}
           slam={slam}
           theme={theme}
         />
       ) : null}
       <Hud state={state} handTop={metrics.handTop} reactions={reactions} onAvatarClick={onAvatarClick} onTopHeight={onTopHeight} />
-      <ReactionLayer reactions={reactions} extra={extra} host={gameRef} target={{ x: size.w / 2, y: (metrics.tableTop + metrics.tableBottom) / 2 }} />
+      <ReactionLayer reactions={reactions} host={gameRef} target={{ x: size.w / 2, y: (metrics.tableTop + metrics.tableBottom) / 2 }} />
       {resolving ? (
         <div className={`stamp ${state.resolve_outcome === 'took' ? 'stamp--took' : ''}`} key={`${state.bout_number}-${state.resolve_outcome}`}>
           {state.resolve_outcome === 'took' ? t('game.takesStamp', { name: defenderName }) : t('game.bitoStamp')}
