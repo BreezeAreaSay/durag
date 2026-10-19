@@ -40,6 +40,8 @@
   --toxic: #cf1fff;
   --grey: #6b685f;
   --text: #0d0d0d;
+  --plate: rgba(236, 233, 225, 0.85); /* small info plates: paper by day */
+  --plate-border: rgba(13, 13, 13, 0.45);
   --muted: #5e5b53;
   --shadow: 6px 6px 0 var(--ink);
   --shadow-small: 3px 3px 0 var(--ink);
@@ -60,6 +62,8 @@
   --bg: #07070b;
   --grey: #8a877f;
   --text: #ece9e1;
+  --plate: rgba(13, 13, 13, 0.7); /* and ink at night */
+  --plate-border: rgba(236, 233, 225, 0.5);
   --muted: #8a877f;
   --grain-blend: screen;
   --grain-alpha: 0.5;
@@ -577,7 +581,7 @@ body::after {
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--grey);
-  background: rgba(13, 13, 13, 0.7);
+  background: var(--plate);
   border: 2px solid var(--grey);
   padding: 2px 6px;
   width: max-content;
@@ -812,8 +816,8 @@ body::after {
   color: var(--toxic);
 }
 .me__meta {
-  background: rgba(13, 13, 13, 0.7);
-  border: 1px dashed rgba(236, 233, 225, 0.5);
+  background: var(--plate);
+  border: 1px dashed var(--plate-border);
   padding: 2px 6px;
   color: var(--text);
 }
