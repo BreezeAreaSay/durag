@@ -133,9 +133,8 @@ export class TableScene {
   private shadowAcc = 0;
   private spotAcc = 0;
   private zooming = false;
-  /** the player's eye: sway, peering, blinking */
+  /** the player's eye: sway and peering */
   private camera = new Camera();
-  private lids = new Graphics();
   private stillCamera = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
   /** the darkness outside the lamp's cone, the dip of a flicker, the Super card's glow */
   private cone = new Sprite();
@@ -203,8 +202,7 @@ export class TableScene {
     // the hand sits under the player's own nose: the lamp's darkness stops before it
     this.world.addChild(this.layers.piles, this.layers.table, this.layers.light, this.layers.hand, this.layers.drag);
     this.buildLight();
-    this.lids.eventMode = 'none';
-    stage.addChild(this.lids); // above the world: eyelids do not sway with the head
+
     this.layers.hand.sortableChildren = true;
     this.layers.table.sortableChildren = true;
     this.layers.drag.sortableChildren = true;
@@ -691,7 +689,7 @@ export class TableScene {
     return { x: this.metrics.width / 2, y: (this.metrics.tableTop + this.metrics.tableBottom) / 2 };
   }
 
-  /** the head moves, the world moves the other way: offset, roll, a lean-in about a point, and the eyelids */
+  /** the head moves, the world moves the other way: offset, roll and a lean-in about a point */
   private applyCamera(): void {
     const f = this.camera.frame();
     const m = this.metrics;
@@ -706,12 +704,6 @@ export class TableScene {
     const py = f.scale > 1.0001 ? f.pivot.y : cy;
     // position so that the pivot stays fixed: P − R·S·P
     this.world.position.set(px - f.scale * (c * px - sn * py) + f.x, py - f.scale * (sn * px + c * py) + f.y);
-    this.lids.clear();
-    if (f.lids > 0.01) {
-      const h = (m.height / 2) * f.lids;
-      this.lids.rect(0, 0, m.width, h).fill({ color: 0x000000, alpha: 0.96 });
-      this.lids.rect(0, m.height - h, m.width, h).fill({ color: 0x000000, alpha: 0.96 });
-    }
   }
 
   /** the Super card showing its face is a second light on the table */

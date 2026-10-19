@@ -1,12 +1,13 @@
 // The player's eye. The table is seen from a head, not from a tripod:
 //
 //   sway    the head never holds still: two slow sines on each axis with
-//           incommensurable periods, a few pixels, and a hair of roll;
+//           incommensurable periods (12–20 s), a few pixels, and a hair
+//           of roll;
 //   peer    now and then the eye leans in to look closer at something on
 //           the table: scale 1 → 1.035 about that point over ~0.9 s, a
-//           short hold, back;
-//   blink   eyelids: every 3–9 s (an exponential wait), a 160 ms close
-//           and open, sometimes twice.
+//           short hold, back.
+//
+// No blinking: it read as a glitch, not as an eye.
 //
 // Everything is a function of the clock, so a frame can be computed for
 // any time and nothing accumulates error.
@@ -25,14 +26,11 @@ export interface CameraFrame {
   /** zoom about `pivot` */
   scale: number;
   pivot: Point;
-  /** how closed the eyelids are, 0 = open, 1 = shut */
-  lids: number;
 }
 
 const PEER_IN_MS = 900;
 const PEER_HOLD_MS = 650;
 const PEER_OUT_MS = 900;
-const BLINK_MS = 160;
 
 function easeInOut(t: number): number {
   return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
@@ -49,14 +47,9 @@ export class Camera {
   private peerScale = 1.035;
   private nextPeer: number;
 
-  private blinkAt = -Infinity;
-  private blinkTwice = false;
-  private nextBlink: number;
-
   constructor(seed = Math.random()) {
     this.phase = seed * Math.PI * 2;
-    this.nextPeer = 12000 + Camera.exp(25000);
-    this.nextBlink = 2000 + Camera.exp(4000);
+    this.nextPeer = 20000 + Camera.exp(40000);
   }
 
   /** an exponential wait with the given mean */
@@ -70,11 +63,6 @@ export class Camera {
    */
   update(dtMs: number, lookAt: () => Point | null, busy = false): void {
     this.t += dtMs;
-    if (this.t >= this.nextBlink) {
-      this.blinkAt = this.t;
-      this.blinkTwice = Math.random() < 0.18;
-      this.nextBlink = this.t + 3000 + Camera.exp(4000);
-    }
     if (this.t >= this.nextPeer) {
       const p = busy ? null : lookAt();
       if (p) {
@@ -82,7 +70,7 @@ export class Camera {
         this.peerPivot = p;
         this.peerScale = 1.025 + Math.random() * 0.02;
       }
-      this.nextPeer = this.t + 15000 + Camera.exp(25000);
+      this.nextPeer = this.t + 25000 + Camera.exp(40000);
     }
   }
 
@@ -107,30 +95,15 @@ export class Camera {
     return 0;
   }
 
-  /** eyelids, 0..1: a 160 ms blink, maybe a second one 220 ms later */
-  lids(): number {
-    const one = (at: number): number => {
-      const l = this.t - at;
-      if (l < 0 || l > BLINK_MS) return 0;
-      return Math.sin((Math.PI * l) / BLINK_MS);
-    };
-    return Math.max(one(this.blinkAt), this.blinkTwice ? one(this.blinkAt + BLINK_MS + 220) : 0);
-  }
-
   frame(): CameraFrame {
     const s = this.t / 1000;
     const a = this.amplitude;
-    const x = a * (2.2 * Math.sin((2 * Math.PI * s) / 5.3 + this.phase) + 1.3 * Math.sin((2 * Math.PI * s) / 3.37));
-    const y = a * (2.6 * Math.sin((2 * Math.PI * s) / 4.1 + this.phase * 0.7) + 1.1 * Math.sin((2 * Math.PI * s) / 2.71));
-    const rotation = 0.0035 * Math.sin((2 * Math.PI * s) / 7.9 + this.phase);
+    // slow: the longest period is 20 s, the shortest 9 s
+    const x = a * (2.2 * Math.sin((2 * Math.PI * s) / 17.3 + this.phase) + 1.3 * Math.sin((2 * Math.PI * s) / 9.7));
+    const y = a * (2.6 * Math.sin((2 * Math.PI * s) / 13.1 + this.phase * 0.7) + 1.1 * Math.sin((2 * Math.PI * s) / 8.9));
+    const rotation = 0.0035 * Math.sin((2 * Math.PI * s) / 20.3 + this.phase);
     const w = this.peerWeight();
-    return { x, y, rotation, scale: 1 + (this.peerScale - 1) * w, pivot: this.peerPivot, lids: this.lids() };
-  }
-
-  /** force a blink now (tests) */
-  blink(twice = false): void {
-    this.blinkAt = this.t;
-    this.blinkTwice = twice;
+    return { x, y, rotation, scale: 1 + (this.peerScale - 1) * w, pivot: this.peerPivot };
   }
 
   /** force a look now (tests) */
