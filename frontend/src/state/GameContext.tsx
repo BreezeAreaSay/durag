@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { ClientConfig, ClientMessage, GameState, ServerMessage } from '../types/protocol';
 import { useTelegram } from '../telegram/useTelegram';
 import { setLang } from '../i18n';
+import { loadSkin, loadWins, saveSkin, saveWins, type SkinId } from '../util/progress';
 
 export type Connection = 'connecting' | 'open' | 'closed';
 
@@ -38,6 +39,11 @@ export interface GameContextValue {
   replaced: boolean;
   /** Live emoji reactions by player id (cleared automatically). */
   reactions: Record<string, Reaction>;
+  /** Lifetime wins of the viewer: counted by the server, remembered locally. */
+  wins: number;
+  /** The chosen card back. */
+  skin: SkinId;
+  setSkin(skin: SkinId): void;
   react(emoji: string): void;
   join(roomId: string, create: boolean): void;
   leave(): void;
@@ -118,6 +124,12 @@ export function GameProvider({ children }: { children: ReactNode }) {
   const [lastError, setLastError] = useState<GameError | null>(null);
   const [replaced, setReplaced] = useState(false);
   const [reactions, setReactions] = useState<Record<string, Reaction>>({});
+  const [wins, setWins] = useState<number>(loadWins);
+  const [skin, setSkinState] = useState<SkinId>(() => loadSkin(loadWins()));
+  const setSkin = useCallback((id: SkinId) => {
+    saveSkin(id);
+    setSkinState(id);
+  }, []);
   const reactionTimers = useRef(new Map<string, number>());
 
   const socketRef = useRef<WebSocket | null>(null);
@@ -200,6 +212,12 @@ export function GameProvider({ children }: { children: ReactNode }) {
         }
         if (msg.type === 'STATE_UPDATE') {
           setState(msg.payload);
+          const mine = msg.payload.players.find((p) => p.id === msg.payload.viewer_id)?.wins ?? 0;
+          setWins((prev) => {
+            if (mine <= prev) return prev;
+            saveWins(mine);
+            return mine;
+          });
           setRoomId(msg.payload.room_id);
           roomRef.current = { roomId: msg.payload.room_id, create: false };
           sessionStorage.setItem(ROOM_KEY, msg.payload.room_id);
@@ -310,6 +328,9 @@ export function GameProvider({ children }: { children: ReactNode }) {
       lastError,
       replaced,
       reactions,
+      wins,
+      skin,
+      setSkin,
       react: (emoji) => send({ type: 'SEND_EMOJI', payload: { emoji } }),
       join,
       leave,
@@ -324,7 +345,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
       setDevName,
       clearError: () => setLastError(null),
     }),
-    [connection, config, state, roomId, identity, lastError, replaced, reactions, join, leave, send, setDevName],
+    [connection, config, state, roomId, identity, lastError, replaced, reactions, wins, skin, setSkin, join, leave, send, setDevName],
   );
 
   return <GameContext.Provider value={value}>{children}</GameContext.Provider>;

@@ -7,6 +7,7 @@ import { Container, FillGradient, Graphics, Text } from 'pixi.js';
 import type { Card } from '../types/protocol';
 import { cardColor, isJoker, isSuper, rankLabel } from '../util/cards';
 import { drawSuit } from './suits';
+import type { SkinId } from '../util/progress';
 
 const INK = 0x0d0d0d;
 const PAPER = 0xece9e1;
@@ -33,14 +34,15 @@ export class CardView {
   private _faceUp = true;
   private dissolved = false;
 
-  constructor(card: Card, w: number, h: number, faceUp = true) {
+  constructor(card: Card, w: number, h: number, faceUp = true, skin: SkinId = 'classic') {
     this.card = card;
     this.w = w;
     this.h = h;
     this.buildGlow();
     this.buildShadow();
     this.buildFace();
-    this.buildBack();
+    if (skin === 'dots') this.buildDotsBack();
+    else this.buildBack();
     this.buildHighlight();
     this.root.addChild(this.glow, this.shadow, this.back, this.face, this.highlight);
     this.setFaceUp(faceUp);
@@ -247,6 +249,30 @@ export class CardView {
     bg.position.set(0, h * 0.34);
     bg.rotation = word.rotation = -0.06;
     this.face.addChild(bg, word);
+  }
+
+  /**
+   * The "dots" skin (10 wins): black, no word, pale dots on a hexagonal
+   * lattice. Point (i, j) sits at x = (i + (j mod 2)/2)·p, y = j·p·√3/2:
+   * the densest, most even packing of circles there is, drawn once.
+   */
+  private buildDotsBack(): void {
+    const { w, h } = this;
+    const plate = new Graphics().roundRect(-w / 2, -h / 2, w, h, CORNER).fill({ color: INK }).stroke({ width: 2, color: PAPER, alpha: 0.9 });
+    const inset = 7;
+    const p = Math.max(6, w / 7); // lattice pitch
+    const r = p * 0.22;
+    const dots = new Graphics();
+    const rowH = (p * Math.sqrt(3)) / 2;
+    for (let j = 0, y = -h / 2 + inset + r; y <= h / 2 - inset - r; j++, y += rowH) {
+      const shift = (j % 2) * (p / 2);
+      for (let x = -w / 2 + inset + r + shift; x <= w / 2 - inset - r; x += p) {
+        dots.circle(x, y, r);
+      }
+    }
+    dots.fill({ color: PAPER, alpha: 0.9 });
+    const frame = new Graphics().rect(-w / 2 + inset - 2, -h / 2 + inset - 2, w - 2 * inset + 4, h - 2 * inset + 4).stroke({ width: 1.5, color: PAPER, alpha: 0.5 });
+    this.back.addChild(plate, frame, dots);
   }
 
   private buildBack(): void {

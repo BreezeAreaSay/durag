@@ -898,3 +898,190 @@ body::after {
 .timer-ring__arc--hot {
   stroke: var(--toxic);
 }
+
+/* --- progression: frames by wins ------------------------------------------- */
+/* The sticker's white outline takes the tier colour (--frame, set inline from
+   util/progress). From tier 10 (50 wins) a conic ring spins behind it; --fx
+   (0..10) drives both the speed (--spin) and the glow (--glow). */
+.sticker--framed {
+  outline-color: var(--frame);
+  box-shadow: 0 0 0 6px var(--frame), 4px 4px 0 6px var(--ink);
+}
+.sticker--fx::before {
+  content: '';
+  position: absolute;
+  inset: -11px;
+  z-index: -1;
+  border-radius: 2px;
+  background: conic-gradient(from 0deg, var(--frame), #fff 25%, var(--frame) 50%, var(--acid) 75%, var(--frame));
+  box-shadow: 0 0 var(--glow) var(--frame);
+  animation: frame-spin var(--spin) linear infinite;
+}
+@keyframes frame-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sticker--fx::before {
+    animation: none;
+  }
+}
+
+/* --- reactions flying to the middle of the table ---------------------------- */
+.fx-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  pointer-events: none;
+  overflow: hidden;
+}
+/* X is linear, Y eases out: two easings on two axes draw an arc for free.
+   The opacity fades on its own linear clock, in parallel with the flight. */
+.fly {
+  position: absolute;
+  font-size: 30px;
+  line-height: 1;
+  transform: translate(-50%, -50%);
+  animation: fly-x 1100ms linear both, fly-fade 1100ms linear both;
+}
+.fly__y {
+  display: block;
+  animation: fly-y 1100ms cubic-bezier(0.2, 0.9, 0.3, 1) both;
+}
+@keyframes fly-x {
+  to {
+    transform: translate(calc(-50% + var(--dx)), -50%);
+  }
+}
+@keyframes fly-y {
+  from {
+    transform: translateY(0) scale(0.8);
+  }
+  to {
+    transform: translateY(var(--dy)) scale(1.9);
+  }
+}
+@keyframes fly-fade {
+  0% {
+    opacity: 0;
+  }
+  12% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* --- lobby extras, skins, rules --------------------------------------------- */
+.lobby__extras {
+  margin-top: 0;
+}
+.overlay--fixed {
+  position: fixed;
+  overflow-y: auto;
+  align-items: flex-start;
+  padding-top: calc(24px + var(--safe-top));
+  padding-bottom: calc(24px + var(--safe-bottom));
+}
+.overlay__card--tall {
+  text-align: left;
+  transform: none;
+}
+.overlay__card--tall .zine-title--result {
+  text-align: center;
+}
+.skins__h {
+  font-family: var(--display);
+  font-size: 13px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  margin: 22px 0 10px;
+  border-bottom: 3px solid var(--ink);
+}
+.skins {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.skin {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+}
+.skin--locked .back {
+  opacity: 0.45;
+  filter: grayscale(1);
+}
+.skin--on .back {
+  outline: 4px solid var(--acid);
+}
+.skin__info {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+  font-family: var(--mono);
+  font-size: 13px;
+}
+.frames {
+  display: flex;
+  gap: 22px;
+  align-items: center;
+  padding: 14px 6px 14px 18px;
+}
+/* card backs in CSS, the same two designs CardView draws */
+.back {
+  flex: none;
+  width: 58px;
+  height: 84px;
+  border-radius: 4px;
+  border: 2px solid var(--paper);
+  background: var(--ink);
+  box-shadow: 4px 4px 0 var(--paper);
+  position: relative;
+}
+.back--classic::after {
+  content: '';
+  position: absolute;
+  inset: 5px;
+  background: repeating-linear-gradient(-42deg, var(--ink) 0 1.5px, var(--paper) 1.5px 7px);
+}
+/* a hexagonal lattice from two offset dot grids: the second is shifted by half a pitch in both axes */
+.back--dots::after {
+  content: '';
+  position: absolute;
+  inset: 6px;
+  border: 1.5px solid rgba(236, 233, 225, 0.5);
+  background-image: radial-gradient(circle, var(--paper) 1.8px, transparent 2px), radial-gradient(circle, var(--paper) 1.8px, transparent 2px);
+  background-size: 9px 15.6px;
+  background-position: 0 0, 4.5px 7.8px;
+}
+.meter {
+  display: block;
+  width: 150px;
+  height: 10px;
+  border: 2px solid var(--ink);
+  background: var(--paper);
+}
+.meter i {
+  display: block;
+  height: 100%;
+  width: calc(var(--p, 0) * 100%);
+  background: var(--acid);
+}
+.result__win {
+  display: inline-block;
+  margin: 6px 0 10px;
+  background: var(--acid);
+}
+.rules p {
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.45;
+  margin: 0 0 8px;
+}

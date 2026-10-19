@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { StopMotionTweener, easings, type Animatable } from './tween';
+import { StopMotionTweener, easings, fallDuration, type Animatable } from './tween';
 
 function obj(): Animatable {
   const o = {
@@ -52,5 +52,22 @@ describe('StopMotionTweener', () => {
     expect(o.position.x).toBe(0);
     tw.update(200);
     expect(o.position.x).toBeGreaterThan(0);
+  });
+});
+
+describe('landing physics', () => {
+  it('land() starts at 0, ends at 1 and overshoots once', () => {
+    expect(easings.land(0)).toBe(0);
+    expect(easings.land(1)).toBe(1);
+    expect(easings.land(2 / 3)).toBeCloseTo(1.111, 2);
+    expect(easings.land(1 / 3)).toBeCloseTo(1, 3); // crosses the slot
+    expect(easings.land(0.9)).toBeGreaterThan(1); // still settling
+    expect(easings.land(0.9)).toBeLessThan(1.02);
+  });
+  it('fallDuration grows with the square root of the distance, clamped', () => {
+    expect(fallDuration(0)).toBe(180);
+    expect(fallDuration(100)).toBe(250);
+    expect(fallDuration(400)).toBe(340);
+    expect(fallDuration(1e6)).toBe(460);
   });
 });

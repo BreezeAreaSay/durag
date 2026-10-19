@@ -1,5 +1,6 @@
 import type { Card, GameState, Outcome, Suit } from '../types/protocol';
 import { roleOf, tablePairs, type Role, type TablePair } from '../util/rules';
+import type { SkinId } from '../util/progress';
 
 /** Everything the PixiJS scene needs, derived from the sanitized state. */
 export interface SceneModel {
@@ -27,6 +28,8 @@ export interface SceneModel {
   /** the viewer is one of the players who must take their stump now */
   mustTakeStump: boolean;
   version: number;
+  /** the viewer's chosen card back (piles, stump, hidden trump) */
+  skin: SkinId;
 }
 
 function lastOutcomeOf(state: GameState): Outcome {
@@ -37,7 +40,7 @@ function lastOutcomeOf(state: GameState): Outcome {
   return '';
 }
 
-export function toSceneModel(state: GameState, selfId: string): SceneModel {
+export function toSceneModel(state: GameState, selfId: string, skin: SkinId = 'classic'): SceneModel {
   const me = state.players.find((p) => p.id === selfId);
   const role = roleOf(state, selfId);
   return {
@@ -60,5 +63,6 @@ export function toSceneModel(state: GameState, selfId: string): SceneModel {
     stumpStep: state.stump_pending.length > 0,
     mustTakeStump: state.stump_pending.includes(selfId),
     version: state.version,
+    skin,
   };
 }

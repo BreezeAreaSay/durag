@@ -21,6 +21,7 @@ export interface Player {
   hand_count: number;
   stump_count: number;
   is_bot?: boolean; // seat driven by the server (v10 §2)
+  wins?: number; // lifetime wins (first out of a finished game)
 }
 
 export interface LogEntry {

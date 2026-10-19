@@ -2,6 +2,8 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { Button } from './Button';
 import { useGame } from '../state/GameContext';
 import { t } from '../i18n';
+import { SkinsScreen } from './SkinsScreen';
+import { RulesScreen } from './RulesScreen';
 
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 
@@ -29,6 +31,7 @@ export function Lobby({ prefillCode }: Props) {
   const { identity, setDevName, join, connection, config } = useGame();
   const [name, setName] = useState(identity.name);
   const [code, setCode] = useState(prefillCode ?? '');
+  const [panel, setPanel] = useState<'' | 'skins' | 'rules'>('');
   useEffect(() => {
     if (prefillCode) setCode(prefillCode);
   }, [prefillCode]);
@@ -125,6 +128,17 @@ export function Lobby({ prefillCode }: Props) {
         </Button>
       </form>
       {connection !== 'open' ? <p className="muted">{t('lobby.connecting')}</p> : null}
+
+      <div className="row lobby__extras">
+        <Button variant="ink" onClick={() => setPanel('skins')}>
+          {t('lobby.skins')}
+        </Button>
+        <Button variant="paper" onClick={() => setPanel('rules')}>
+          {t('lobby.rules')}
+        </Button>
+      </div>
+      {panel === 'skins' ? <SkinsScreen onClose={() => setPanel('')} /> : null}
+      {panel === 'rules' ? <RulesScreen onClose={() => setPanel('')} /> : null}
     </main>
   );
 }

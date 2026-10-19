@@ -126,13 +126,12 @@ export function Hud({ state, handTop, reactions, onAvatarClick, onTopHeight }: P
             return (
               <li key={p.id} className={`opponent ${p.out ? 'opponent--out' : ''}`}>
                 <button type="button" className="avatar-btn" onClick={() => onAvatarClick(p.id)} aria-label={p.name}>
-                  <Sticker name={p.name} avatarUrl={p.avatar_url} seed={p.id} size={40} muted={!p.connected || p.out} />
+                  <Sticker name={p.name} avatarUrl={p.avatar_url} seed={p.id} size={40} muted={!p.connected || p.out} wins={p.wins} playerId={p.id} />
                   {timerFor(p.id) ? <TimerRing deadline={timerFor(p.id)} timeoutMs={state.turn_timeout_ms} size={64} /> : null}
                 </button>
-                {reaction ? (
-                  <span className={`reaction ${reaction.text ? 'reaction--text' : ''}`} key={reaction.nonce}>
-                    {reaction.emoji}
-                    {reaction.text ? <span className="reaction__text">{reaction.text}</span> : null}
+                {reaction?.text ? (
+                  <span className="reaction reaction--text" key={reaction.nonce}>
+                    <span className="reaction__text">{reaction.text}</span>
                   </span>
                 ) : null}
                 <div className="opponent__info">
@@ -182,14 +181,9 @@ export function Hud({ state, handTop, reactions, onAvatarClick, onTopHeight }: P
         {me ? (
           <div className="me">
             <button type="button" className="avatar-btn" onClick={() => onAvatarClick(me.id)} aria-label={me.name}>
-              <Sticker name={me.name} avatarUrl={me.avatar_url} seed={me.id} size={34} />
+              <Sticker name={me.name} avatarUrl={me.avatar_url} seed={me.id} size={34} wins={me.wins} playerId={me.id} />
               {timerFor(me.id) ? <TimerRing deadline={timerFor(me.id)} timeoutMs={state.turn_timeout_ms} size={58} /> : null}
             </button>
-            {reactions[me.id] ? (
-              <span className="reaction reaction--me" key={reactions[me.id]!.nonce}>
-                {reactions[me.id]!.emoji}
-              </span>
-            ) : null}
             <span className={`roletag roletag--me ${HOT_ROLES.includes(myRole) && !resolving ? 'roletag--hot' : ''}`}>{roleLabel(myRole, true)}</span>
             <span className="me__meta">
               {me.name} · {me.hand_count}

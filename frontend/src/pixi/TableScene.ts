@@ -4,7 +4,8 @@
 // server snaps the card back into the hand with a stop-motion rubber band.
 import { Application, Container, Graphics, Text, type FederatedPointerEvent } from 'pixi.js';
 import { CardView } from './CardView';
-import { StopMotionTweener, easings } from './tween';
+import { StopMotionTweener, easings, fallDuration } from './tween';
+import type { SkinId } from '../util/progress';
 import {
   computeMetrics,
   deckSlot,
@@ -91,6 +92,7 @@ export class TableScene {
   private topInset: number;
   private labels: SceneLabels;
   private readonly tweener: StopMotionTweener;
+  private skin: SkinId = 'classic';
 
   private world = new Container();
   private layers = { piles: new Container(), table: new Container(), hand: new Container(), drag: new Container() };
@@ -198,6 +200,10 @@ export class TableScene {
   update(model: SceneModel): void {
     const first = this.model === null;
     this.model = model;
+    if (model.skin !== this.skin) {
+      this.skin = model.skin;
+      if (this.ready) this.rebuildPiles(); // the backs of the piles wear the viewer's skin
+    }
     if (model.resolving && model.resolveOutcome) this.lastOutcome = model.resolveOutcome;
     if (!first && this.prevRevealed === false && model.trumpRevealed && model.trumpCard) {
       this.playTrumpReveal(model.trumpCard, model.hand.some((c) => c.id === model.trumpCard!.id));
@@ -442,7 +448,23 @@ export class TableScene {
       r.scale.set(slot.scale);
       return;
     }
-    void this.tweener.to(r, { x: slot.x, y: slot.y, rotation: slot.rotation, scale: slot.scale, alpha: 1 }, { duration: 340, ease: easings.outBack });
+    this.land(view, slot, 1);
+  }
+
+  /**
+   * Moves a card to a slot like something with weight: the flight lasts
+   * √distance, the card is lifted (long shadow) on the way and settles
+   * with one soft overshoot (easings.land) as it touches the table.
+   */
+  private land(view: CardView, slot: Slot, alpha: number): Promise<boolean> {
+    const r = view.root;
+    const d = Math.hypot(slot.x - r.x, slot.y - r.y);
+    view.setLifted(true);
+    const p = this.tweener.to(r, { x: slot.x, y: slot.y, rotation: slot.rotation, scale: slot.scale, alpha }, { duration: fallDuration(d), ease: easings.land });
+    void p.then((done) => {
+      if (done) view.setLifted(false);
+    });
+    return p;
   }
 
   private reparent(view: CardView, layer: Container): void {
@@ -562,14 +584,14 @@ export class TableScene {
 
     const d = deckSlot(m);
     for (let i = 2; i >= 0; i--) {
-      const back = new CardView({ id: `deck-${i}`, suit: 'None', rank: 0 }, m.cardW, m.cardH, false);
+      const back = new CardView({ id: `deck-${i}`, suit: 'None', rank: 0 }, m.cardW, m.cardH, false, this.skin);
       back.root.scale.set(d.scale);
       back.root.position.set(d.x + i * 2, d.y - i * 2);
       back.root.rotation = d.rotation + i * 0.02;
       this.deckPile.addChild(back.root);
     }
     const t = trumpSlot(m);
-    const hidden = new CardView({ id: 'trump-hidden', suit: 'None', rank: 0 }, m.cardW, m.cardH, false);
+    const hidden = new CardView({ id: 'trump-hidden', suit: 'None', rank: 0 }, m.cardW, m.cardH, false, this.skin);
     hidden.root.scale.set(t.scale);
     hidden.root.position.set(t.x, t.y);
     hidden.root.rotation = t.rotation;
@@ -580,7 +602,7 @@ export class TableScene {
 
     const ds = discardSlot(m);
     for (let i = 2; i >= 0; i--) {
-      const back = new CardView({ id: `discard-${i}`, suit: 'None', rank: 0 }, m.cardW, m.cardH, false);
+      const back = new CardView({ id: `discard-${i}`, suit: 'None', rank: 0 }, m.cardW, m.cardH, false, this.skin);
       back.root.scale.set(ds.scale);
       back.root.position.set(ds.x - i * 3, ds.y + i * 2);
       back.root.rotation = ds.rotation - i * 0.12;
@@ -600,7 +622,7 @@ export class TableScene {
     this.stumpPile.removeChildren().forEach((c) => c.destroy({ children: true }));
     const st = stumpSlot(m);
     for (let i = count - 1; i >= 0; i--) {
-      const back = new CardView({ id: `stump-${i}`, suit: 'None', rank: 0 }, m.cardW, m.cardH, false);
+      const back = new CardView({ id: `stump-${i}`, suit: 'None', rank: 0 }, m.cardW, m.cardH, false, this.skin);
       back.root.scale.set(st.scale);
       back.root.position.set(st.x - i * 2, st.y - i * 3);
       back.root.rotation = st.rotation + (i % 2 ? -0.06 : 0.05);
@@ -793,7 +815,7 @@ export class TableScene {
     view.root.zIndex = 1000;
     view.root.eventMode = 'none';
     view.setPending(true);
-    void this.tweener.to(view.root, { x: slot.x, y: slot.y, rotation: slot.rotation, scale: slot.scale }, { duration: 160, ease: easings.outQuad });
+    void this.land(view, slot, view.root.alpha);
     send();
   }
 
@@ -808,6 +830,7 @@ export class TableScene {
     this.reparent(view, this.layers.hand);
     view.root.zIndex = idx;
     view.root.eventMode = m.interactive ? 'static' : 'none';
+    view.setLifted(false);
     void this.tweener.to(view.root, { x: slot.x, y: slot.y, rotation: slot.rotation, scale: slot.scale, alpha: 1 }, { duration, ease });
   }
 

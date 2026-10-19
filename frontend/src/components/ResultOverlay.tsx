@@ -8,7 +8,7 @@ interface Props {
 }
 
 export function ResultOverlay({ state }: Props) {
-  const { selfId, setReady, leave } = useGame();
+  const { selfId, setReady, leave, wins } = useGame();
   const loser = state.players.find((p) => p.id === state.loser_id);
   const me = state.players.find((p) => p.id === selfId);
   const title = !state.loser_id ? t('result.draw') : state.loser_id === selfId ? t('result.you') : t('result.durak', { name: loser?.name ?? '?' });
@@ -17,6 +17,7 @@ export function ResultOverlay({ state }: Props) {
     <div className="overlay">
       <div className="overlay__card">
         <h1 className="zine-title zine-title--result">{title}</h1>
+        {state.finished_order[0] === selfId ? <p className="sticker-text result__win">{t('result.win', { n: wins })}</p> : null}
         {winners.length ? (
           <p className="muted">
             {t('result.winners')}: {winners.join(' → ')}

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Hud } from './Hud';
 import { ResultOverlay } from './ResultOverlay';
 import { EmojiPanel } from './EmojiPanel';
+import { ReactionLayer } from './ReactionLayer';
 import { PixiTable } from '../pixi/PixiTable';
 import { toSceneModel } from '../pixi/model';
 import { computeMetrics } from '../pixi/layout';
@@ -15,7 +16,7 @@ interface Props {
 }
 
 export function GameScreen({ state }: Props) {
-  const { selfId, playCard, transfer, takeStump, lastError, reactions, react, connection } = useGame();
+  const { selfId, playCard, transfer, takeStump, lastError, reactions, react, connection, skin } = useGame();
   const [panelOpen, setPanelOpen] = useState(false);
   const [hudTop, setHudTop] = useState(150);
   const [size, setSize] = useState({ w: window.innerWidth, h: window.innerHeight });
@@ -35,7 +36,7 @@ export function GameScreen({ state }: Props) {
   }, []);
 
   const metrics = useMemo(() => computeMetrics(size.w, size.h, hudTop), [size, hudTop]);
-  const model = useMemo(() => (selfId ? toSceneModel(state, selfId) : null), [state, selfId]);
+  const model = useMemo(() => (selfId ? toSceneModel(state, selfId, skin) : null), [state, selfId, skin]);
   const reject = useMemo(() => (lastError?.cardId ? { cardId: lastError.cardId, nonce: lastError.nonce } : null), [lastError]);
   const labels = useMemo(() => ({ trump: t('game.trump'), stump: t('game.stump').toUpperCase() }), []);
 
@@ -78,6 +79,7 @@ export function GameScreen({ state }: Props) {
         />
       ) : null}
       <Hud state={state} handTop={metrics.handTop} reactions={reactions} onAvatarClick={onAvatarClick} onTopHeight={onTopHeight} />
+      <ReactionLayer reactions={reactions} host={gameRef} target={{ x: size.w / 2, y: (metrics.tableTop + metrics.tableBottom) / 2 }} />
       {resolving ? (
         <div className={`stamp ${state.resolve_outcome === 'took' ? 'stamp--took' : ''}`} key={`${state.bout_number}-${state.resolve_outcome}`}>
           {state.resolve_outcome === 'took' ? t('game.takesStamp', { name: defenderName }) : t('game.bitoStamp')}
