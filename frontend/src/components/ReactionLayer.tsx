@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type RefObject } from 'react';
+import { useCallback, useEffect, useRef, useState, type Dispatch, type RefObject, type SetStateAction } from 'react';
 import type { Reaction } from '../state/GameContext';
 import { SMOKE_EMOJI } from '../util/emoji';
 
@@ -47,6 +47,24 @@ export function ReactionLayer({ reactions, extra = [], host, target }: Props) {
   const seen = useRef(new Map<string, number>());
   const targetRef = useRef(target);
   targetRef.current = target;
+  const timers = useRef(new Set<number>());
+
+  // Every effect lives exactly its own time. The removal timers are not tied
+  // to the effects that start them: an effect cleanup would cancel them as
+  // soon as the next reaction arrived, and a looping smoke would then stay
+  // on screen for good. They are cleared only when the layer unmounts.
+  const later = useCallback(<T extends { key: string }>(keys: string[], ms: number, set: Dispatch<SetStateAction<T[]>>) => {
+    const gone = new Set(keys);
+    const id = window.setTimeout(() => {
+      timers.current.delete(id);
+      set((prev) => prev.filter((item) => !gone.has(item.key)));
+    }, ms);
+    timers.current.add(id);
+  }, []);
+  useEffect(() => {
+    const pending = timers.current;
+    return () => pending.forEach((id) => window.clearTimeout(id));
+  }, []);
 
   useEffect(() => {
     const el = host.current;
@@ -70,19 +88,15 @@ export function ReactionLayer({ reactions, extra = [], host, target }: Props) {
       const t = targetRef.current;
       fresh.push({ key: `${playerId}:${r.nonce}`, emoji: r.emoji, x, y, dx: t.x - x, dy: t.y - y });
     }
-    const timers: number[] = [];
     if (fresh.length) {
       setFlights((prev) => [...prev, ...fresh]);
-      const keys = new Set(fresh.map((f) => f.key));
-      timers.push(window.setTimeout(() => setFlights((prev) => prev.filter((f) => !keys.has(f.key))), FLIGHT_MS + 100));
+      later(fresh.map((f) => f.key), FLIGHT_MS + 100, setFlights);
     }
     if (puffs.length) {
       setSmokes((prev) => [...prev, ...puffs]);
-      const keys = new Set(puffs.map((p) => p.key));
-      timers.push(window.setTimeout(() => setSmokes((prev) => prev.filter((p) => !keys.has(p.key))), SMOKE_MS));
+      later(puffs.map((p) => p.key), SMOKE_MS, setSmokes);
     }
-    return () => timers.forEach((id) => window.clearTimeout(id));
-  }, [reactions, host]);
+  }, [reactions, host, later]);
 
   // a card's own emoji (a Joker laughing) starts where the card lies and sails up a little
   useEffect(() => {
@@ -94,10 +108,8 @@ export function ReactionLayer({ reactions, extra = [], host, target }: Props) {
     }
     if (fresh.length === 0) return;
     setFlights((prev) => [...prev, ...fresh]);
-    const keys = new Set(fresh.map((f) => f.key));
-    const id = window.setTimeout(() => setFlights((prev) => prev.filter((f) => !keys.has(f.key))), FLIGHT_MS + 100);
-    return () => window.clearTimeout(id);
-  }, [extra]);
+    later(fresh.map((f) => f.key), FLIGHT_MS + 100, setFlights);
+  }, [extra, later]);
 
   if (flights.length === 0 && smokes.length === 0) return null;
   return (
