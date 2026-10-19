@@ -6,6 +6,7 @@ import { Application, Container, Graphics, Sprite, Text, Texture, type Federated
 import { CardView } from './CardView';
 import { Lamp, lampTint } from './lamp';
 import { Camera } from './camera';
+import { FX_EVENT, FrameJudge, isLite, judgeLite, loadFx, verdict } from '../util/fx';
 import { StopMotionTweener, easings, fallDuration } from './tween';
 import type { SkinId } from '../util/progress';
 import {
@@ -136,6 +137,10 @@ export class TableScene {
   /** the player's eye: sway and peering */
   private camera = new Camera();
   private stillCamera = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  /** lite effects: no lamp, no shadows that move, no camera */
+  private lite = isLite();
+  /** in auto mode the first game judges the phone */
+  private judge: FrameJudge | null = loadFx() === 'auto' && verdict() === null ? new FrameJudge() : null;
   /** the darkness outside the lamp's cone, the dip of a flicker, the Super card's glow */
   private cone = new Sprite();
   private dip = new Graphics();
@@ -215,25 +220,34 @@ export class TableScene {
     stage.on('pointercancel', this.onPointerCancel);
     stage.on('pointertap', this.onStageTap);
     document.addEventListener('visibilitychange', this.onVisibility);
+    window.addEventListener(FX_EVENT, this.onFx);
+    this.layers.light.visible = !this.lite;
 
     this.app.renderer.on('resize', this.onResize);
     this.app.ticker.add((ticker) => {
       this.time += ticker.deltaMS;
       this.tweener.update(ticker.deltaMS);
-      this.lamp.update(ticker.deltaMS);
-      if (!this.stillCamera) {
-        this.camera.update(ticker.deltaMS, () => this.somethingToLookAt(), this.drag !== null || this.zooming);
-        this.applyCamera();
+      // elapsedMS is the real frame time (deltaMS is capped): a 3 fps phone must read as 3 fps
+      if (this.judge?.feed(ticker.elapsedMS)) {
+        this.judge = null;
+        judgeLite(); // broadcasts: onFx below switches this scene too
       }
-      this.shadowAcc += ticker.deltaMS;
-      if (this.shadowAcc >= SHADOW_STEP_MS) {
-        this.shadowAcc = 0;
-        this.castShadows();
-      }
-      this.spotAcc += ticker.deltaMS;
-      if (this.spotAcc >= SPOT_STEP_MS) {
-        this.spotAcc = 0;
-        this.lightSpot();
+      if (!this.lite) {
+        this.lamp.update(ticker.deltaMS);
+        if (!this.stillCamera) {
+          this.camera.update(ticker.deltaMS, () => this.somethingToLookAt(), this.drag !== null || this.zooming);
+          this.applyCamera();
+        }
+        this.shadowAcc += ticker.deltaMS;
+        if (this.shadowAcc >= SHADOW_STEP_MS) {
+          this.shadowAcc = 0;
+          this.castShadows();
+        }
+        this.spotAcc += ticker.deltaMS;
+        if (this.spotAcc >= SPOT_STEP_MS) {
+          this.spotAcc = 0;
+          this.lightSpot();
+        }
       }
       if (this.effects.length) this.effects = this.effects.filter((fx) => fx(ticker.deltaMS));
       this.glowAcc += ticker.deltaMS;
@@ -302,6 +316,7 @@ export class TableScene {
     this.effects = [];
     for (const id of this.timers) window.clearTimeout(id);
     this.timers.clear();
+    window.removeEventListener(FX_EVENT, this.onFx);
     document.removeEventListener('visibilitychange', this.onVisibility);
     if (this.ready) {
       this.app.renderer.off('resize', this.onResize);
@@ -803,6 +818,20 @@ export class TableScene {
     const tint = lampTint(now.getHours() + now.getMinutes() / 60);
     document.documentElement.style.setProperty('--lamp-a', tint.alpha.toFixed(2));
   }
+
+  /** the effects mode changed under a live table: drop or pick up the lamp and the camera */
+  private onFx = (): void => {
+    const lite = isLite();
+    if (lite === this.lite) return;
+    this.lite = lite;
+    this.layers.light.visible = !lite;
+    if (lite) {
+      this.world.scale.set(1);
+      this.world.rotation = 0;
+      this.world.position.set(0, 0);
+      for (const view of this.views.values()) view.resetShadow();
+    }
+  };
 
   private onStageTap = (e: FederatedPointerEvent): void => {
     if (e.target !== this.app.stage) return; // a card or a pile handled it

@@ -1,9 +1,10 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { ClientConfig, ClientMessage, GameState, ServerMessage, BotLevel } from '../types/protocol';
 import { useTelegram } from '../telegram/useTelegram';
-import { setLang } from '../i18n';
+import { setLang, t } from '../i18n';
 import { loadSkin, loadWins, saveSkin, saveWins, type SkinId } from '../util/progress';
 import { applyTheme, loadTheme, type Theme } from '../util/theme';
+import { FX_EVENT, applyFx, effectiveFx, loadFx, type FxLevel, type FxMode } from '../util/fx';
 
 export type Connection = 'connecting' | 'open' | 'closed';
 
@@ -47,6 +48,13 @@ export interface GameContextValue {
   setSkin(skin: SkinId): void;
   theme: Theme;
   setTheme(theme: Theme): void;
+  /** effects: auto / full / lite, and what actually runs */
+  fx: FxMode;
+  fxLevel: FxLevel;
+  setFx(mode: FxMode): void;
+  /** a one-line notice for the toast (not an error) */
+  notice: string | null;
+  clearNotice(): void;
   react(emoji: string): void;
   join(roomId: string, create: boolean): void;
   leave(): void;
@@ -137,6 +145,29 @@ export function GameProvider({ children }: { children: ReactNode }) {
   const setTheme = useCallback((t: Theme) => {
     applyTheme(t);
     setThemeState(t);
+  }, []);
+  const [fx, setFxState] = useState<FxMode>(() => {
+    const m = loadFx();
+    document.documentElement.dataset.fx = effectiveFx(m);
+    return m;
+  });
+  const [fxLevel, setFxLevel] = useState<FxLevel>(() => effectiveFx());
+  const [notice, setNotice] = useState<string | null>(null);
+  const setFx = useCallback((m: FxMode) => {
+    applyFx(m);
+    setFxState(m);
+  }, []);
+  useEffect(() => {
+    // the table judged the phone (or the mode changed): follow, and say so once when it was automatic
+    const onFx = (e: Event) => {
+      const level = (e as CustomEvent<FxLevel>).detail;
+      setFxLevel((prev) => {
+        if (prev !== level && loadFx() === 'auto' && level === 'lite') setNotice(t('ui.fxAuto'));
+        return level;
+      });
+    };
+    window.addEventListener(FX_EVENT, onFx);
+    return () => window.removeEventListener(FX_EVENT, onFx);
   }, []);
   const setSkin = useCallback((id: SkinId) => {
     saveSkin(id);
@@ -345,6 +376,11 @@ export function GameProvider({ children }: { children: ReactNode }) {
       setSkin,
       theme,
       setTheme,
+      fx,
+      fxLevel,
+      setFx,
+      notice,
+      clearNotice: () => setNotice(null),
       react: (emoji) => send({ type: 'SEND_EMOJI', payload: { emoji } }),
       join,
       leave,
@@ -359,7 +395,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
       setDevName,
       clearError: () => setLastError(null),
     }),
-    [connection, config, state, roomId, identity, lastError, replaced, reactions, wins, skin, setSkin, theme, setTheme, join, leave, send, setDevName],
+    [connection, config, state, roomId, identity, lastError, replaced, reactions, wins, skin, setSkin, theme, setTheme, fx, fxLevel, setFx, notice, join, leave, send, setDevName],
   );
 
   return <GameContext.Provider value={value}>{children}</GameContext.Provider>;

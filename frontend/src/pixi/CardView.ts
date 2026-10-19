@@ -83,6 +83,12 @@ export class CardView {
     this.shadow.position.set(dx, dy);
   }
 
+  /** no lamp (lite effects): the printed offset shadow */
+  resetShadow(): void {
+    const on = this.lifted;
+    this.shadow.position.set(on ? SHADOW_DX * 2 : SHADOW_DX, on ? SHADOW_DY * 2.2 : SHADOW_DY);
+  }
+
   /** A soft acid halo: the trump card you are beating with. */
   setGlow(on: boolean): void {
     if (this.glowOn === on) return;

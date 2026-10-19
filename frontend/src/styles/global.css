@@ -1296,3 +1296,18 @@ body::after {
   cursor: pointer;
   pointer-events: auto;
 }
+
+/* --- lite effects: a weak phone, or the owner's choice ---------------------- */
+:root[data-fx='lite'] body::before,
+:root[data-fx='lite'] body::after {
+  display: none; /* the two procedural grain layers are the dearest thing on the page */
+}
+:root[data-fx='lite'] .me__avatar .sticker {
+  animation: none;
+}
+:root[data-fx='lite'] .smoke__puff {
+  filter: none;
+}
+:root[data-fx='lite'] .fly {
+  animation-duration: 700ms;
+}

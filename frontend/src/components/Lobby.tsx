@@ -28,7 +28,7 @@ function botLink(): string | null {
 }
 
 export function Lobby({ prefillCode }: Props) {
-  const { identity, setDevName, join, connection, config, theme, setTheme } = useGame();
+  const { identity, setDevName, join, connection, config, theme, setTheme, fx, setFx } = useGame();
   const [name, setName] = useState(identity.name);
   const [code, setCode] = useState(prefillCode ?? '');
   const [panel, setPanel] = useState<'' | 'skins' | 'rules'>('');
@@ -138,6 +138,9 @@ export function Lobby({ prefillCode }: Props) {
         </Button>
         <Button variant="paper" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} aria-label={t('ui.theme')}>
           {theme === 'dark' ? '☀' : '☾'}
+        </Button>
+        <Button variant="paper" onClick={() => setFx(fx === 'auto' ? 'full' : fx === 'full' ? 'lite' : 'auto')} aria-label={t('ui.fx')}>
+          {t(`ui.fx.${fx}`)}
         </Button>
       </div>
       {panel === 'skins' ? <SkinsScreen onClose={() => setPanel('')} /> : null}
