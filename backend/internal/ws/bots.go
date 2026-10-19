@@ -46,10 +46,11 @@ type botRoom struct {
 	lastStatus string
 	scheduled  map[string]int64 // bot id -> state version a timer is armed for
 	turns      map[string]int   // bot id -> moves made this game (banter cadence)
+	memory     *bot.Memory      // what the bots remember about the cards
 }
 
 func newBotRoom() *botRoom {
-	return &botRoom{moods: map[string]bot.Mood{}, moodUntil: map[string]time.Time{}, jokeSaid: map[string]bool{}, scheduled: map[string]int64{}, turns: map[string]int{}}
+	return &botRoom{moods: map[string]bot.Mood{}, moodUntil: map[string]time.Time{}, jokeSaid: map[string]bool{}, scheduled: map[string]int64{}, turns: map[string]int{}, memory: bot.NewMemory()}
 }
 
 func (h *Hub) botRoomFor(roomID string) *botRoom {
@@ -149,8 +150,10 @@ func (h *Hub) scheduleBots(roomID string, state *game.GameState) {
 	if state.Status == game.StatusPlaying && br.lastStatus != game.StatusPlaying {
 		br.jokeSaid = map[string]bool{} // a new game: the fourth wall is whole again
 		br.turns = map[string]int{}
+		br.memory.Reset()
 	}
 	br.lastStatus = state.Status
+	br.memory.Observe(state)
 	if state.Status != game.StatusPlaying {
 		return
 	}
@@ -190,8 +193,13 @@ func (h *Hub) botAct(roomID, botID string, version int64) {
 	br.mu.Lock()
 	br.turns[botID]++
 	turn := br.turns[botID]
+	memory := br.memory.Snapshot()
 	br.mu.Unlock()
 	view := state.Sanitized(botID)
+	level := bot.LevelNormal
+	if p := state.Player(botID); p != nil && p.BotLevel != "" {
+		level = bot.ParseLevel(p.BotLevel)
+	}
 	in := bot.Context{
 		State:        view,
 		BotID:        botID,
@@ -201,11 +209,17 @@ func (h *Hub) botAct(roomID, botID string, version int64) {
 		AdminJokeDue: jokeDue && state.BoutNumber >= adminJokeFromBout,
 		Turn:         turn,
 		Event:        bot.LastEvent(view, botID),
+		Level:        level,
+		Memory:       memory,
+		Plan:         bot.ChoosePlan(view, botID),
 	}
 	d, ok := h.decide(in)
 	if !ok {
 		return
 	}
+	br.mu.Lock()
+	br.memory.SetPlan(botID, in.Plan)
+	br.mu.Unlock()
 	if d.Emoji != "" && !allowedEmojiSet[d.Emoji] {
 		d.Emoji = ""
 	}
@@ -248,7 +262,13 @@ func worthAsking(moves []game.Move) bool {
 
 // decide asks the model when there is one and falls back to the rules.
 func (h *Hub) decide(in bot.Context) (bot.Decision, bool) {
+	rules, err := bot.NewHeuristic(rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64()))).Decide(h.ctx, in)
+	if err != nil {
+		return rules, false
+	}
 	if h.bots.Brain != nil && worthAsking(in.Moves) {
+		hint := rules.Move
+		in.Hint = &hint
 		timeout := h.bots.LLMTimeout
 		if timeout <= 0 {
 			timeout = 10 * time.Second
@@ -257,6 +277,7 @@ func (h *Hub) decide(in bot.Context) (bot.Decision, bool) {
 		d, err := h.bots.Brain.Decide(ctx, in)
 		cancel()
 		if err == nil && legalMove(in.Moves, d.Move) {
+			d.Plan = in.Plan
 			h.log.Debug("bot: model move", "bot", in.BotID, "model", d.Model, "move", d.Move.String())
 			return d, true
 		}
@@ -266,8 +287,7 @@ func (h *Hub) decide(in bot.Context) (bot.Decision, bool) {
 			h.log.Warn("bot: model failed, rule-based fallback", "bot", in.BotID, "err", err)
 		}
 	}
-	d, err := bot.NewHeuristic(rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64()))).Decide(h.ctx, in)
-	return d, err == nil
+	return rules, true
 }
 
 // botHearEmoji is called for every reaction a person sends: it colours the

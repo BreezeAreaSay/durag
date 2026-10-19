@@ -43,12 +43,13 @@ type Player struct {
 	// Extensions (not in the original data model).
 	AvatarURL  string `json:"avatar_url,omitempty"`
 	Connected  bool   `json:"connected"`
-	Passed     bool   `json:"passed"`           // "бито" said in the current bout
-	Out        bool   `json:"out"`              // got rid of all cards, left the game as a non-loser
-	HandCount  int    `json:"hand_count"`       // filled by Sanitized()
-	StumpCount int    `json:"stump_count"`      // filled by Sanitized()
-	IsBot      bool   `json:"is_bot,omitempty"` // seat driven by the server (v10 §2)
-	Wins       int    `json:"wins,omitempty"`   // lifetime wins (first out of the game), kept by the store
+	Passed     bool   `json:"passed"`              // "бито" said in the current bout
+	Out        bool   `json:"out"`                 // got rid of all cards, left the game as a non-loser
+	HandCount  int    `json:"hand_count"`          // filled by Sanitized()
+	StumpCount int    `json:"stump_count"`         // filled by Sanitized()
+	IsBot      bool   `json:"is_bot,omitempty"`    // seat driven by the server (v10 §2)
+	Wins       int    `json:"wins,omitempty"`      // lifetime wins (first out of the game), kept by the store
+	BotLevel   string `json:"bot_level,omitempty"` // easy / normal / hard for a bot seat
 }
 
 // LogEntry is a compact description of something that happened. The client

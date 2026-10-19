@@ -14,6 +14,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/breezeareasay/durag/backend/internal/bot"
 	"github.com/breezeareasay/durag/backend/internal/game"
 	"github.com/breezeareasay/durag/backend/internal/store"
 )
@@ -265,7 +266,18 @@ func (h *Hub) intent(c *Client, env Envelope) {
 			if h.bots.Disabled {
 				return errBotsDisabled
 			}
-			return h.engine.AddBot(s, newBotID(), pickBotName(s))
+			var p AddBotPayload
+			if len(env.Payload) > 0 {
+				_ = json.Unmarshal(env.Payload, &p) // a bad payload is just a normal bot
+			}
+			id := newBotID()
+			if err := h.engine.AddBot(s, id, pickBotName(s)); err != nil {
+				return err
+			}
+			if seat := s.Player(id); seat != nil {
+				seat.BotLevel = string(bot.ParseLevel(p.Level))
+			}
+			return nil
 		case TypeRemoveBot:
 			var p RemoveBotPayload
 			if err := json.Unmarshal(env.Payload, &p); err != nil {

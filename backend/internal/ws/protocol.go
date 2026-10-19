@@ -68,6 +68,11 @@ type ReadyPayload struct {
 	Ready bool `json:"ready"`
 }
 
+// AddBotPayload is the (optional) payload of ADD_BOT.
+type AddBotPayload struct {
+	Level string `json:"level"` // easy / normal / hard; empty = normal
+}
+
 // RemoveBotPayload is the payload of REMOVE_BOT.
 type RemoveBotPayload struct {
 	PlayerID string `json:"player_id"`

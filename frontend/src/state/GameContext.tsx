@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { ClientConfig, ClientMessage, GameState, ServerMessage } from '../types/protocol';
+import type { ClientConfig, ClientMessage, GameState, ServerMessage, BotLevel } from '../types/protocol';
 import { useTelegram } from '../telegram/useTelegram';
 import { setLang } from '../i18n';
 import { loadSkin, loadWins, saveSkin, saveWins, type SkinId } from '../util/progress';
@@ -50,7 +50,7 @@ export interface GameContextValue {
   react(emoji: string): void;
   join(roomId: string, create: boolean): void;
   leave(): void;
-  addBot(): void;
+  addBot(level?: BotLevel): void;
   removeBot(playerId: string): void;
   setReady(ready: boolean): void;
   playCard(cardId: string, targetCardId?: string): void;
@@ -349,7 +349,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
       join,
       leave,
       setReady: (ready) => send({ type: 'READY', payload: { ready } }),
-      addBot: () => send({ type: 'ADD_BOT' }),
+      addBot: (level = 'normal') => send({ type: 'ADD_BOT', payload: { level } }),
       removeBot: (playerId) => send({ type: 'REMOVE_BOT', payload: { player_id: playerId } }),
       playCard: (cardId, targetCardId) => send({ type: 'PLAY_CARD', payload: { card_id: cardId, target_card_id: targetCardId } }),
       transfer: (cardId) => send({ type: 'TRANSFER_TURN', payload: { card_id: cardId } }),

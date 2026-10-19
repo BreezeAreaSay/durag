@@ -1183,3 +1183,17 @@ body::after {
   padding: 2px 7px;
   line-height: 1.3;
 }
+
+/* --- bot level picker in the lobby ---------------------------------------- */
+.players__add {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.chip--level {
+  cursor: pointer;
+  transform: rotate(-1.5deg);
+}
+.chip--level-easy { background: var(--acid, #d6f24a); }
+.chip--level-hard { background: var(--ink); color: var(--paper); }

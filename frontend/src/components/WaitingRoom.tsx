@@ -3,7 +3,9 @@ import { Button } from './Button';
 import { Sticker } from './Sticker';
 import { useGame } from '../state/GameContext';
 import { t } from '../i18n';
-import type { GameState } from '../types/protocol';
+import type { BotLevel, GameState } from '../types/protocol';
+
+const LEVELS: BotLevel[] = ['easy', 'normal', 'hard'];
 
 interface Props {
   state: GameState;
@@ -20,6 +22,7 @@ function shareLink(room: string): string | null {
 export function WaitingRoom({ state }: Props) {
   const { selfId, setReady, leave, addBot, removeBot, config } = useGame();
   const [copied, setCopied] = useState(false);
+  const [level, setLevel] = useState<BotLevel>('normal');
   const me = state.players.find((p) => p.id === selfId);
   const link = shareLink(state.room_id);
   const copy = async () => {
@@ -64,7 +67,7 @@ export function WaitingRoom({ state }: Props) {
                 {p.is_bot ? <span className="players__bot" aria-hidden="true">🤖 </span> : null}
                 {p.name}
                 {p.id === state.host_id ? <small> · {t('waiting.host')}</small> : null}
-                {p.is_bot ? <small> · {t('waiting.bot')}</small> : null}
+                {p.is_bot ? <small> · {t(`waiting.level.${p.bot_level ?? 'normal'}`).toLowerCase()}</small> : null}
               </span>
               {p.is_bot ? (
                 <button type="button" className="players__remove" onClick={() => removeBot(p.id)} aria-label={t('waiting.removeBot')}>
@@ -77,9 +80,20 @@ export function WaitingRoom({ state }: Props) {
           ))}
         </ul>
         {config?.bots !== false && state.players.length < state.max_players ? (
-          <Button variant="paper" onClick={addBot}>
-            {t('waiting.addBot')}
-          </Button>
+          <div className="players__add">
+            <Button variant="paper" onClick={() => addBot(level)}>
+              {t('waiting.addBot')}
+            </Button>
+            <button
+              type="button"
+              className={`chip chip--level chip--level-${level}`}
+              aria-label={t('waiting.level')}
+              title={t('waiting.level')}
+              onClick={() => setLevel(LEVELS[(LEVELS.indexOf(level) + 1) % LEVELS.length] ?? 'normal')}
+            >
+              {t(`waiting.level.${level}`)}
+            </button>
+          </div>
         ) : null}
         {state.players.length < 2 ? <p className="muted">{t('waiting.needPlayers')}</p> : null}
         {state.players.length >= 2 && me?.is_ready ? <p className="muted">{t('waiting.waitingOthers')}</p> : null}
