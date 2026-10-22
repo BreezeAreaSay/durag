@@ -14,7 +14,7 @@ arguments, so nothing secret ends up in shell history or logs):
   DEPLOY_SSH_KEY_PATH    path to a private key file
   DEPLOY_PATH            checkout path on the server                  (default: /opt/durag)
   DEPLOY_REPO            git URL                                      (default: https://github.com/BreezeAreaSay/durag.git)
-  DEPLOY_BRANCH          branch to deploy                             (default: claude/ecstatic-maxwell-h3azwt)
+  DEPLOY_BRANCH          branch to deploy                             (default: main)
 
   DOMAIN                 public domain pointing at the server         (required for bootstrap)
   CERTBOT_EMAIL          Let's Encrypt e-mail                         (required for bootstrap)
@@ -53,7 +53,7 @@ def _paramiko():
     return paramiko
 
 REPO_DEFAULT = "https://github.com/BreezeAreaSay/durag.git"
-BRANCH_DEFAULT = "claude/ecstatic-maxwell-h3azwt"
+BRANCH_DEFAULT = "main"
 
 
 def env(name: str, default: str | None = None, required: bool = False) -> str:

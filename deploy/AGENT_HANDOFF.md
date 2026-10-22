@@ -6,7 +6,7 @@
 
 ## 0. Что ты деплоишь
 
-* Репозиторий: `https://github.com/BreezeAreaSay/durag`, ветка `claude/ecstatic-maxwell-h3azwt`.
+* Репозиторий: `https://github.com/BreezeAreaSay/durag`, ветка `main` (релизная; рабочие ветки `claude/*` сливаются в неё).
 * Прод-стек: `docker-compose.prod.yml` — Nginx (TLS, WebSocket-прокси, статика), Certbot, Go-бэкенд, Redis.
 * Всё необходимое уже в репозитории: `deploy/server-setup.sh`, `deploy/init-letsencrypt.sh`, `deploy/deploy.sh`
   и драйвер `deploy/remote.py`, который выполняет эти шаги по SSH.
@@ -85,7 +85,7 @@ curl -s -o /dev/null -w '%{http_code}\n' -N \
 
 ```bash
 apt-get update && apt-get install -y git
-git clone -b claude/ecstatic-maxwell-h3azwt https://github.com/BreezeAreaSay/durag.git /opt/durag
+git clone -b main https://github.com/BreezeAreaSay/durag.git /opt/durag
 cd /opt/durag && ./deploy/server-setup.sh
 cp .env.example .env && nano .env         # TELEGRAM_BOT_TOKEN, DOMAIN, CERTBOT_EMAIL, VITE_*, ALLOW_DEV_AUTH=false
 ./deploy/init-letsencrypt.sh
