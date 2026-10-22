@@ -288,17 +288,19 @@ body::after {
 }
 
 .lobby__head {
-  padding-top: 6vh;
+  padding-top: 2vh;
 }
-.lobby {
-  position: relative;
+.lobby__bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: -8px;
+}
+.lobby__bar .chip {
+  cursor: pointer;
 }
 .lobby__admin {
-  position: absolute;
-  top: calc(14px + var(--safe-top));
-  right: 16px;
-  z-index: 2;
-  cursor: pointer;
+  margin-left: auto;
 }
 .waiting__top {
   display: flex;

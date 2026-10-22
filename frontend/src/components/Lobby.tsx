@@ -79,11 +79,20 @@ export function Lobby({ prefillCode }: Props) {
 
   return (
     <main className="screen lobby">
-      {isAdmin ? (
-        <button type="button" className="chip chip--acid lobby__admin" onClick={() => setAdminOpen(true)}>
-          {t('admin.open')}
+      {/* top bar: theme and effects on the left, the admin chip on the right */}
+      <div className="lobby__bar">
+        <button type="button" className="chip chip--ghost" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} aria-label={t('ui.theme')} title={t('ui.theme')}>
+          {theme === 'dark' ? '☀' : '☾'}
         </button>
-      ) : null}
+        <button type="button" className="chip chip--ghost" onClick={() => setFx(fx === 'auto' ? 'full' : fx === 'full' ? 'lite' : 'auto')} aria-label={t('ui.fx')}>
+          {t(`ui.fx.${fx}`)}
+        </button>
+        {isAdmin ? (
+          <button type="button" className="chip chip--acid lobby__admin" onClick={() => setAdminOpen(true)}>
+            {t('admin.open')}
+          </button>
+        ) : null}
+      </div>
       <header className="lobby__head">
         <h1 className="zine-title">
           DU
@@ -92,6 +101,16 @@ export function Lobby({ prefillCode }: Props) {
         </h1>
         <p className="tape">{t('tagline')}</p>
       </header>
+
+      {/* skins and rules sit right under the title so a short screen still shows them */}
+      <div className="row lobby__extras">
+        <Button variant="ink" onClick={() => setPanel('skins')}>
+          {t('lobby.skins')}
+        </Button>
+        <Button variant="paper" onClick={() => setPanel('rules')}>
+          {t('lobby.rules')}
+        </Button>
+      </div>
 
       {identity.kind === 'dev' ? (
         <label className="field">
@@ -133,21 +152,6 @@ export function Lobby({ prefillCode }: Props) {
         </Button>
       </form>
       {connection !== 'open' ? <p className="muted">{t('lobby.connecting')}</p> : null}
-
-      <div className="row lobby__extras">
-        <Button variant="ink" onClick={() => setPanel('skins')}>
-          {t('lobby.skins')}
-        </Button>
-        <Button variant="paper" onClick={() => setPanel('rules')}>
-          {t('lobby.rules')}
-        </Button>
-        <Button variant="paper" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} aria-label={t('ui.theme')}>
-          {theme === 'dark' ? '☀' : '☾'}
-        </Button>
-        <Button variant="paper" onClick={() => setFx(fx === 'auto' ? 'full' : fx === 'full' ? 'lite' : 'auto')} aria-label={t('ui.fx')}>
-          {t(`ui.fx.${fx}`)}
-        </Button>
-      </div>
       {panel === 'skins' ? <SkinsScreen onClose={() => setPanel('')} /> : null}
       {panel === 'rules' ? <RulesScreen onClose={() => setPanel('')} /> : null}
     </main>

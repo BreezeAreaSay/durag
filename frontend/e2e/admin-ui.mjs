@@ -32,7 +32,25 @@ try {
   const joinBtn = p.locator('button:has-text("Войти")');
   log('lobby: admin chip in view', await inView(p.locator('.lobby__admin'), H), '· create in view', await inView(create, H), '· join in view', await inView(joinBtn, H));
   if (!(await inView(create, H)) || !(await inView(p.locator('.lobby__admin'), H))) problems.push('lobby: the create button or the admin chip is off-screen at 360x600');
+  const skinsBtn = p.locator('button:has-text("СКИНЫ")');
+  const rulesBtn = p.locator('button:has-text("ПРАВИЛА")');
+  log('lobby: skins in view', await inView(skinsBtn, H), '· rules in view', await inView(rulesBtn, H));
+  if (!(await inView(skinsBtn, H)) || !(await inView(rulesBtn, H))) problems.push('lobby: skins or rules button off-screen at 360x600');
   await p.screenshot({ path: join(here, 'shot-admin-lobby-small.png') });
+  await rulesBtn.click();
+  await p.locator('.rules').waitFor({ timeout: 5000 });
+  log('rules screen opened; sections:', await p.locator('.rules__section').count());
+  await p.screenshot({ path: join(here, 'shot-rules-small.png') });
+  await p.locator('.overlay .btn').last().click();
+  await p.locator('.rules').waitFor({ state: 'detached', timeout: 5000 });
+  await skinsBtn.click();
+  await p.locator('.skins').waitFor({ timeout: 5000 });
+  const lockedSkins = await p.locator('.skin--locked').count();
+  log('skins screen opened; locked skins for the admin:', lockedSkins);
+  if (lockedSkins !== 0) problems.push(`the admin must own every skin, ${lockedSkins} locked`);
+  await p.screenshot({ path: join(here, 'shot-skins-small.png') });
+  await p.locator('.overlay .btn').last().click();
+  await p.locator('.skins').waitFor({ state: 'detached', timeout: 5000 });
 
   await create.click();
   await p.locator('.zine-title--code').waitFor({ timeout: 5000 });
