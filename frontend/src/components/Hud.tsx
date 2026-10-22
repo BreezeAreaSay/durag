@@ -130,7 +130,7 @@ export function Hud({ state, handTop, reactions, onAvatarClick, onTopHeight }: P
                   {timerFor(p.id) ? <TimerRing deadline={timerFor(p.id)} timeoutMs={state.turn_timeout_ms} size={64} /> : null}
                 </button>
                 {reaction ? (
-                  <span className={`reaction ${reaction.text ? 'reaction--text' : ''}`} key={reaction.nonce}>
+                  <span className={`reaction ${reaction.text ? 'reaction--text' : ''} ${reaction.effect ? `reaction--fx reaction--fx-${reaction.effect}` : ''}`} key={reaction.nonce}>
                     {reaction.emoji}
                     {reaction.text ? <span className="reaction__text">{reaction.text}</span> : null}
                   </span>
@@ -186,7 +186,7 @@ export function Hud({ state, handTop, reactions, onAvatarClick, onTopHeight }: P
               {timerFor(me.id) ? <TimerRing deadline={timerFor(me.id)} timeoutMs={state.turn_timeout_ms} size={58} /> : null}
             </button>
             {reactions[me.id] ? (
-              <span className="reaction reaction--me" key={reactions[me.id]!.nonce}>
+              <span className={`reaction reaction--me ${reactions[me.id]!.effect ? `reaction--fx reaction--fx-${reactions[me.id]!.effect}` : ''}`} key={reactions[me.id]!.nonce}>
                 {reactions[me.id]!.emoji}
               </span>
             ) : null}
@@ -194,6 +194,7 @@ export function Hud({ state, handTop, reactions, onAvatarClick, onTopHeight }: P
             <span className="me__meta">
               {me.name} · {me.hand_count}
               {me.stump_count ? ` · ${t('game.stump')} ${me.stump_count}` : ''}
+              {` · XP ${me.xp ?? 0}`}
             </span>
           </div>
         ) : null}

@@ -84,15 +84,44 @@ type ReactionPayload struct {
 	PlayerID string `json:"player_id"`
 	Emoji    string `json:"emoji"`
 	Text     string `json:"text,omitempty"`
-	TS       int64  `json:"ts"` // unix milliseconds
+	Effect   string `json:"effect,omitempty"` // premium reaction: the effect (and sound) to play
+	TS       int64  `json:"ts"`               // unix milliseconds
 }
 
-// AllowedEmoji is the whitelist of reactions; the client renders the same set.
+// AllowedEmoji is the whitelist of free reactions; the client renders the same set.
 var AllowedEmoji = []string{"👍", "👎", "😂", "😡", "😎", "🤔", "🔥", "💀", "🤡", "❤️", "👏", "🙏"}
 
+// Premium is a reaction with an effect (and a sound) that experience unlocks.
+type Premium struct {
+	XP     int    `json:"xp"`
+	Effect string `json:"effect"`
+}
+
+// PremiumEmoji maps the reactions with effects to the XP they need: crying,
+// the finger, the victory fanfare, the laugh, the bomb (thresholds 3..15).
+var PremiumEmoji = map[string]Premium{
+	"😭": {XP: 3, Effect: "cry"},
+	"🖕": {XP: 6, Effect: "finger"},
+	"🏆": {XP: 9, Effect: "fanfare"},
+	"🤣": {XP: 12, Effect: "laugh"},
+	"💣": {XP: 15, Effect: "boom"},
+}
+
+// VictoryLines are what the fanfare says when a player with the tier wins.
+var VictoryLines = []string{
+	"Дурак определён. Админ доволен.",
+	"Победа! Пенёк даже не понадобился.",
+	"GG. Козыри были настоящие.",
+	"Кто-то сейчас разглядывает 20 карт в руке…",
+	"Ещё партию? Колода уже тасуется.",
+}
+
 var allowedEmojiSet = func() map[string]bool {
-	m := make(map[string]bool, len(AllowedEmoji))
+	m := make(map[string]bool, len(AllowedEmoji)+len(PremiumEmoji))
 	for _, e := range AllowedEmoji {
+		m[e] = true
+	}
+	for e := range PremiumEmoji {
 		m[e] = true
 	}
 	return m

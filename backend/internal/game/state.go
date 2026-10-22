@@ -48,6 +48,7 @@ type Player struct {
 	HandCount  int    `json:"hand_count"`       // filled by Sanitized()
 	StumpCount int    `json:"stump_count"`      // filled by Sanitized()
 	IsBot      bool   `json:"is_bot,omitempty"` // seat driven by the server (v10 §2)
+	XP         int    `json:"xp"`               // lifetime experience (public): unlocks reactions with effects
 }
 
 // LogEntry is a compact description of something that happened. The client

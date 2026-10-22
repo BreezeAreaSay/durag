@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"sort"
 	"sync"
+	"time"
 
 	"github.com/breezeareasay/durag/backend/internal/game"
 )
@@ -14,6 +16,8 @@ type Memory struct {
 	rooms map[string]*game.GameState
 	locks map[string]*sync.Mutex
 	subs  map[string]map[chan []byte]struct{}
+	users map[string]UserStats
+	games map[string]bool
 }
 
 // NewMemory creates an empty in-memory store.
@@ -22,6 +26,8 @@ func NewMemory() *Memory {
 		rooms: map[string]*game.GameState{},
 		locks: map[string]*sync.Mutex{},
 		subs:  map[string]map[chan []byte]struct{}{},
+		users: map[string]UserStats{},
+		games: map[string]bool{},
 	}
 }
 
@@ -118,6 +124,75 @@ func (m *Memory) Subscribe(ctx context.Context, roomID string) (<-chan []byte, e
 		m.mu.Unlock()
 	}()
 	return ch, nil
+}
+
+// ListRooms implements Store.
+func (m *Memory) ListRooms(_ context.Context) ([]*game.GameState, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]*game.GameState, 0, len(m.rooms))
+	for _, s := range m.rooms {
+		out = append(out, s.Clone())
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].UpdatedAt > out[j].UpdatedAt })
+	return out, nil
+}
+
+// UserStats implements Store.
+func (m *Memory) UserStats(_ context.Context, userID string) (UserStats, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	u := m.users[userID]
+	u.ID = userID
+	return u, nil
+}
+
+// RecordGame implements Store.
+func (m *Memory) RecordGame(_ context.Context, key string, results []GameResult) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.games[key] {
+		return false, nil
+	}
+	m.games[key] = true
+	now := time.Now().UnixMilli()
+	for _, r := range results {
+		u := m.users[r.ID]
+		u.ID = r.ID
+		if r.Name != "" {
+			u.Name = r.Name
+		}
+		u.Games++
+		if r.Won {
+			u.Wins++
+		} else {
+			u.Losses++
+		}
+		u.XP += XPFor(r)
+		u.LastSeen = now
+		m.users[r.ID] = u
+	}
+	return true, nil
+}
+
+// TopUsers implements Store.
+func (m *Memory) TopUsers(_ context.Context, n int) ([]UserStats, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]UserStats, 0, len(m.users))
+	for _, u := range m.users {
+		out = append(out, u)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].XP != out[j].XP {
+			return out[i].XP > out[j].XP
+		}
+		return out[i].ID < out[j].ID
+	})
+	if n > 0 && len(out) > n {
+		out = out[:n]
+	}
+	return out, nil
 }
 
 // Close implements Store.

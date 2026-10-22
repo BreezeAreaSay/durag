@@ -3,6 +3,7 @@ import { GameProvider, useGame } from './state/GameContext';
 import { Lobby } from './components/Lobby';
 import { WaitingRoom } from './components/WaitingRoom';
 import { GameScreen } from './components/GameScreen';
+import { AdminScreen } from './components/AdminScreen';
 import { Toast } from './components/Toast';
 import { t } from './i18n';
 
@@ -15,7 +16,7 @@ function startRoomFromUrl(): string | undefined {
 }
 
 function Screens() {
-  const { state, roomId, identity, join, connection, replaced } = useGame();
+  const { state, roomId, identity, join, connection, replaced, adminOpen } = useGame();
   const startRoom = useMemo(startRoomFromUrl, []);
 
   // Deep links (t.me/bot/app?startapp=CODE or ?room=CODE) join automatically
@@ -33,6 +34,7 @@ function Screens() {
       </main>
     );
   }
+  if (adminOpen) return <AdminScreen />;
   if (!state || !roomId) return <Lobby prefillCode={startRoom} />;
   if (state.status === 'waiting') return <WaitingRoom state={state} />;
   return <GameScreen state={state} />;

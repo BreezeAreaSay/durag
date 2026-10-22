@@ -23,6 +23,7 @@
 | `CERTBOT_EMAIL` | да | почта для Let's Encrypt |
 | `TELEGRAM_BOT_TOKEN` | да | токен бота от @BotFather |
 | `LLM_API_KEY` | нет | ключ OpenRouter (`sk-or-…`) для LLM-ботов; без него боты играют по встроенным правилам |
+| `ADMIN_IDS` | нет | Telegram user id владельца (узнать: @userinfobot): открывает админ-панель с логами, столами, игроками |
 | `LLM_BASE_URL`, `LLM_MODEL`, `LLM_FREE_ONLY` | нет | по умолчанию `https://openrouter.ai/api/v1`, `openrouter/free` и `true`: только бесплатные модели (50 запросов/день без купленных кредитов, 1000/день после покупки на $10). После деплоя проверь в `logs backend` строку `bots: LLM probe ok` |
 | `VITE_BOT_USERNAME` | желательно | username бота без `@` |
 | `VITE_APP_SHORTNAME` | желательно | короткое имя Mini App из `/newapp` |

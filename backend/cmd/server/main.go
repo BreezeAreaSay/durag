@@ -15,6 +15,7 @@ import (
 	"github.com/breezeareasay/durag/backend/internal/bot"
 	"github.com/breezeareasay/durag/backend/internal/config"
 	"github.com/breezeareasay/durag/backend/internal/game"
+	"github.com/breezeareasay/durag/backend/internal/monitor"
 	"github.com/breezeareasay/durag/backend/internal/store"
 	"github.com/breezeareasay/durag/backend/internal/ws"
 )
@@ -25,7 +26,8 @@ func main() {
 		slog.Error("configuration", "err", err)
 		os.Exit(1)
 	}
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel(cfg.LogLevel)}))
+	recorder := monitor.New()
+	logger := slog.New(recorder.Handler(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel(cfg.LogLevel)}), slog.LevelInfo))
 	slog.SetDefault(logger)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -112,12 +114,22 @@ func main() {
 	default:
 		logger.Info("bots: rule-based brain only (set LLM_API_KEY for the LLM brain)")
 	}
-	hub := ws.NewHub(st, engine, auth, ws.Options{AllowedOrigins: cfg.AllowedOrigins, Logger: logger, Bots: bots})
+	hub := ws.NewHub(st, engine, auth, ws.Options{AllowedOrigins: cfg.AllowedOrigins, Logger: logger, Bots: bots, Monitor: recorder})
+	var llmStatus ws.LLMStatus
+	if l, ok := bots.Brain.(*bot.LLM); ok {
+		llmStatus = l
+	}
+	if len(cfg.AdminIDs) > 0 {
+		logger.Info("admin panel enabled", "admins", len(cfg.AdminIDs))
+	} else {
+		logger.Info("admin panel disabled: set ADMIN_IDS to your Telegram user id")
+	}
 
 	mux := http.NewServeMux()
 	mux.Handle("/ws", hub)
 	mux.Handle("/healthz", ws.HealthHandler())
 	mux.Handle("/api/config", ws.ConfigHandler(cfg.AllowDevAuth, cfg.BotsEnabled))
+	mux.Handle("/api/admin/", hub.AdminHandler(ws.AdminOptions{IDs: cfg.AdminIDs, Auth: auth, LLM: llmStatus, BotsEnabled: cfg.BotsEnabled, FreeOnly: cfg.LLMFreeOnly, Discover: cfg.LLMDiscover}))
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,

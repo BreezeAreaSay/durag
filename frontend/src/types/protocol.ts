@@ -21,6 +21,7 @@ export interface Player {
   hand_count: number;
   stump_count: number;
   is_bot?: boolean; // seat driven by the server (v10 §2)
+  xp?: number; // lifetime experience: unlocks reactions with effects
 }
 
 export interface LogEntry {
@@ -83,6 +84,7 @@ export interface ReactionPayload {
   emoji: string;
   ts: number;
   text?: string; // a bot's short line (spec v10 §2)
+  effect?: string; // premium reaction: cry | finger | fanfare | laugh | boom
 }
 
 export type ServerMessage =

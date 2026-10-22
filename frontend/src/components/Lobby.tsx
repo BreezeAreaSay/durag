@@ -26,7 +26,7 @@ function botLink(): string | null {
 }
 
 export function Lobby({ prefillCode }: Props) {
-  const { identity, setDevName, join, connection, config } = useGame();
+  const { identity, setDevName, join, connection, config, isAdmin, setAdminOpen } = useGame();
   const [name, setName] = useState(identity.name);
   const [code, setCode] = useState(prefillCode ?? '');
   useEffect(() => {
@@ -124,6 +124,11 @@ export function Lobby({ prefillCode }: Props) {
           {t('lobby.join')}
         </Button>
       </form>
+      {isAdmin ? (
+        <Button variant="ink" onClick={() => setAdminOpen(true)}>
+          {t('admin.open')}
+        </Button>
+      ) : null}
       {connection !== 'open' ? <p className="muted">{t('lobby.connecting')}</p> : null}
     </main>
   );

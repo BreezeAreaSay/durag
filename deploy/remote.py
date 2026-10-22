@@ -204,6 +204,8 @@ def dotenv_text() -> str:
         f"LLM_BASE_URL={env('LLM_BASE_URL', 'https://openrouter.ai/api/v1')}",
         f"LLM_MODEL={env('LLM_MODEL', 'openrouter/free')}",
         f"LLM_FREE_ONLY={env('LLM_FREE_ONLY', 'true')}",
+        f"LLM_DISCOVER={env('LLM_DISCOVER', 'true')}",
+        f"ADMIN_IDS={env('ADMIN_IDS')}",
         f"LLM_TIMEOUT={env('LLM_TIMEOUT', '10s')}",
         f"DOMAIN={domain}",
         f"CERTBOT_EMAIL={email}",

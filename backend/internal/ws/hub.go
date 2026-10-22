@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -15,6 +18,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/breezeareasay/durag/backend/internal/game"
+	"github.com/breezeareasay/durag/backend/internal/monitor"
 	"github.com/breezeareasay/durag/backend/internal/store"
 )
 
@@ -24,6 +28,9 @@ type Options struct {
 	AllowedOrigins []string
 	Logger         *slog.Logger
 	Bots           BotOptions
+	// Monitor collects counters, events and log lines for the admin panel
+	// (optional: a fresh recorder is created when nil).
+	Monitor *monitor.Recorder
 }
 
 // Hub owns every local connection, routes intents to the engine and relays
@@ -44,6 +51,7 @@ type Hub struct {
 	bots     BotOptions
 	botMu    sync.Mutex
 	botRooms map[string]*botRoom
+	mon      *monitor.Recorder
 }
 
 type roomSub struct {
@@ -80,11 +88,15 @@ func NewHub(st store.Store, engine *game.Engine, auth Authenticator, opts Option
 		rooms:    map[string]*roomSub{},
 		bots:     opts.Bots,
 		botRooms: map[string]*botRoom{},
+		mon:      opts.Monitor,
 	}
 	h.upgrader = websocket.Upgrader{
 		ReadBufferSize:  4096,
 		WriteBufferSize: 4096,
 		CheckOrigin:     originChecker(opts.AllowedOrigins),
+	}
+	if h.mon == nil {
+		h.mon = monitor.New()
 	}
 	return h
 }
@@ -188,8 +200,15 @@ func (h *Hub) join(c *Client, raw json.RawMessage) {
 
 	c.setRoom(roomID, id.ID)
 	replaced := h.addToRoom(c)
+	stats, _ := h.store.UserStats(h.ctx, id.ID)
 	state, err := h.store.Update(h.ctx, roomID, p.Create, func(s *game.GameState) error {
-		return h.engine.Join(s, id.ID, id.Name, id.AvatarURL)
+		if err := h.engine.Join(s, id.ID, id.Name, id.AvatarURL); err != nil {
+			return err
+		}
+		if pl := s.Player(id.ID); pl != nil {
+			pl.XP = stats.XP
+		}
+		return nil
 	})
 	if err != nil {
 		h.removeFromRoom(c)
@@ -206,6 +225,7 @@ func (h *Hub) join(c *Client, raw json.RawMessage) {
 		old.sendError("REPLACED", "you connected from another device", "")
 		old.close()
 	}
+	h.mon.Inc("joins")
 	h.afterUpdate(roomID, state)
 }
 
@@ -274,6 +294,7 @@ func (h *Hub) intent(c *Client, env Envelope) {
 		h.resendState(c, roomID, playerID)
 		return
 	}
+	h.mon.Inc("intents")
 	if env.Type == TypeLeaveRoom {
 		h.removeFromRoom(c)
 		c.setRoom("", "")
@@ -308,7 +329,21 @@ func (h *Hub) react(c *Client, raw json.RawMessage) {
 	if !c.allowReact(now, reactMinInterval) {
 		return // silently dropped: spam protection
 	}
-	raw2, err := json.Marshal(pubMessage{Kind: "reaction", Reaction: &ReactionPayload{PlayerID: playerID, Emoji: p.Emoji, TS: now.UnixMilli()}})
+	payload := ReactionPayload{PlayerID: playerID, Emoji: p.Emoji, TS: now.UnixMilli()}
+	if prem, ok := PremiumEmoji[p.Emoji]; ok {
+		xp := 0
+		if state, err := h.store.Load(h.ctx, roomID); err == nil {
+			if pl := state.Player(playerID); pl != nil {
+				xp = pl.XP
+			}
+		}
+		if xp < prem.XP {
+			c.sendError("LOCKED_EMOJI", fmt.Sprintf("this reaction unlocks at %d XP", prem.XP), "")
+			return
+		}
+		payload.Effect = prem.Effect
+	}
+	raw2, err := json.Marshal(pubMessage{Kind: "reaction", Reaction: &payload})
 	if err != nil {
 		return
 	}
@@ -325,6 +360,77 @@ func (h *Hub) afterUpdate(roomID string, state *game.GameState) {
 	h.publish(roomID, state)
 	h.scheduleTick(roomID, state)
 	h.scheduleBots(roomID, state)
+	if last := lastLogType(state); last == "start" {
+		h.mon.Inc("games.started")
+		h.mon.Event("game.start", roomID, "players", len(state.Players), "humans", state.HumanCount())
+	} else if last == "finish" && state.Status == game.StatusFinished {
+		go h.recordFinish(roomID, state)
+	}
+}
+
+func lastLogType(state *game.GameState) string {
+	if len(state.Log) == 0 {
+		return ""
+	}
+	return state.Log[len(state.Log)-1].Type
+}
+
+// recordFinish credits the players' lifetime stats exactly once per finished
+// game (keyed by room and state version) and pushes the new XP into the room.
+func (h *Hub) recordFinish(roomID string, state *game.GameState) {
+	var results []store.GameResult
+	for _, p := range state.Players {
+		if p.IsBot {
+			continue
+		}
+		results = append(results, store.GameResult{ID: p.ID, Name: p.Name, Won: p.ID != state.LoserID})
+	}
+	if len(results) == 0 {
+		return
+	}
+	key := roomID + ":" + strconv.FormatInt(state.Version, 10)
+	applied, err := h.store.RecordGame(h.ctx, key, results)
+	if err != nil {
+		h.log.Warn("stats: record game", "room", roomID, "err", err)
+		return
+	}
+	if !applied {
+		return
+	}
+	h.mon.Inc("games.finished")
+	loser := state.LoserID
+	if p := state.Player(loser); p != nil {
+		loser = p.Name
+	}
+	h.mon.Event("game.finish", roomID, "loser", loser, "bout", state.BoutNumber, "players", len(state.Players))
+	xp := map[string]int{}
+	for _, r := range results {
+		if st, err := h.store.UserStats(h.ctx, r.ID); err == nil {
+			xp[r.ID] = st.XP
+		}
+	}
+	fresh, err := h.store.Update(h.ctx, roomID, false, func(s *game.GameState) error {
+		for i := range s.Players {
+			if v, ok := xp[s.Players[i].ID]; ok {
+				s.Players[i].XP = v
+			}
+		}
+		return nil
+	})
+	if err == nil {
+		h.publish(roomID, fresh)
+	}
+	// the victory joke: winners who earned the fanfare tier get it with a line
+	fanfare := PremiumEmoji["🏆"]
+	for _, r := range results {
+		if r.Won && xp[r.ID] >= fanfare.XP {
+			line := VictoryLines[rand.IntN(len(VictoryLines))]
+			raw, err := json.Marshal(pubMessage{Kind: "reaction", Reaction: &ReactionPayload{PlayerID: r.ID, Emoji: "🏆", Text: line, Effect: fanfare.Effect, TS: time.Now().UnixMilli()}})
+			if err == nil {
+				_ = h.store.Publish(h.ctx, roomID, raw)
+			}
+		}
+	}
 }
 
 // nextDeadline returns the earliest pending server deadline of a state (unix ms) or 0.
@@ -389,14 +495,19 @@ func (h *Hub) tickDue(roomID string) {
 
 func (h *Hub) sendFailure(c *Client, err error, cardID string) {
 	var rule *game.RuleError
+	roomID, playerID := c.room()
 	switch {
 	case errors.As(err, &rule):
+		h.mon.Inc("errors.rule")
+		h.mon.Event("rule_error", rule.Code, "room", roomID, "player", playerID, "card", cardID)
 		c.sendError(rule.Code, rule.Message, cardID)
 	case errors.Is(err, errBadPayload):
 		c.sendError("BAD_PAYLOAD", "malformed payload", cardID)
 	case errors.Is(err, store.ErrNotFound):
 		c.sendError("ROOM_NOT_FOUND", "the room no longer exists", cardID)
 	default:
+		h.mon.Inc("errors.internal")
+		h.mon.Event("internal_error", err.Error(), "room", roomID, "player", playerID)
 		h.log.Error("ws: intent failed", "err", err)
 		c.sendError("INTERNAL", "internal error", cardID)
 	}

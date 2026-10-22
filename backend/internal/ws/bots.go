@@ -248,15 +248,20 @@ func (h *Hub) decide(in bot.Context) (bot.Decision, bool) {
 		d, err := h.bots.Brain.Decide(ctx, in)
 		cancel()
 		if err == nil && legalMove(in.Moves, d.Move) {
+			h.mon.Inc("bots.model_moves")
 			h.log.Info("bot: model move", "bot", in.BotID, "model", d.Model, "move", d.Move.String(), "say", d.Say)
 			return d, true
 		}
 		if errors.Is(err, bot.ErrPaused) {
+			h.mon.Inc("bots.model_paused")
 			h.log.Debug("bot: model paused, rule-based move", "bot", in.BotID, "err", err)
 		} else {
+			h.mon.Inc("bots.model_failures")
+			h.mon.Event("llm_error", fmt.Sprint(err), "bot", in.BotID)
 			h.log.Warn("bot: model failed, rule-based fallback", "bot", in.BotID, "err", err)
 		}
 	}
+	h.mon.Inc("bots.rule_moves")
 	d, err := bot.NewHeuristic(rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64()))).Decide(h.ctx, in)
 	return d, err == nil
 }

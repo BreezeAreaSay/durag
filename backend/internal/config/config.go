@@ -28,6 +28,7 @@ type Config struct {
 	TurnTimeout      time.Duration // idle players get a default move after this (0 = off)
 	MaxAttacks       int           // attack cards per bout (classic 6; 0 = only the defender's hand limits)
 	LogLevel         string
+	AdminIDs         []string // Telegram user ids (or "dev:<id>") allowed into /api/admin
 
 	// Bots (spec v10 §2). The rule-based brain always works; the LLM brain
 	// is used when LLM_API_KEY is set (OpenRouter by default).
@@ -97,6 +98,7 @@ func FromEnv() (Config, error) {
 		AllowDevAuth:   parseBool(getenv("ALLOW_DEV_AUTH", "false")),
 		AllowedOrigins: splitList(getenv("ALLOWED_ORIGINS", "*")),
 		LogLevel:       getenv("LOG_LEVEL", "info"),
+		AdminIDs:       splitList(getenv("ADMIN_IDS", "")),
 		BotsEnabled:    parseBool(getenv("BOTS", "true")),
 		LLMBaseURL:     getenv("LLM_BASE_URL", "https://openrouter.ai/api/v1"),
 		LLMAPIKey:      strings.TrimSpace(os.Getenv("LLM_API_KEY")),

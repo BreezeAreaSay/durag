@@ -64,7 +64,7 @@ export function WaitingRoom({ state }: Props) {
                 {p.is_bot ? <span className="players__bot" aria-hidden="true">🤖 </span> : null}
                 {p.name}
                 {p.id === state.host_id ? <small> · {t('waiting.host')}</small> : null}
-                {p.is_bot ? <small> · {t('waiting.bot')}</small> : null}
+                {p.is_bot ? <small> · {t('waiting.bot')}</small> : <small> · XP {p.xp ?? 0}</small>}
               </span>
               {p.is_bot ? (
                 <button type="button" className="players__remove" onClick={() => removeBot(p.id)} aria-label={t('waiting.removeBot')}>

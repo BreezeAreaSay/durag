@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Hud } from './Hud';
 import { ResultOverlay } from './ResultOverlay';
 import { EmojiPanel } from './EmojiPanel';
+import { EffectLayer } from './EffectLayer';
 import { PixiTable } from '../pixi/PixiTable';
 import { toSceneModel } from '../pixi/model';
 import { computeMetrics } from '../pixi/layout';
@@ -83,8 +84,10 @@ export function GameScreen({ state }: Props) {
           {state.resolve_outcome === 'took' ? t('game.takesStamp', { name: defenderName }) : t('game.bitoStamp')}
         </div>
       ) : null}
+      <EffectLayer />
       {panelOpen ? (
         <EmojiPanel
+          xp={state.players.find((p) => p.id === selfId)?.xp ?? 0}
           onPick={(emoji) => {
             react(emoji);
             haptic('light');

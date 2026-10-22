@@ -1,5 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { ClientConfig, ClientMessage, GameState, ServerMessage } from '../types/protocol';
+import { isEffect, type Effect } from '../util/emoji';
+import { unlockAudio } from '../util/sound';
 import { useTelegram } from '../telegram/useTelegram';
 import { setLang } from '../i18n';
 
@@ -16,6 +18,14 @@ export interface Reaction {
   /** a bot's short line (spec v10 §2), shown as a speech bubble */
   text?: string;
   emoji: string;
+  /** premium reaction: the effect the EffectLayer plays */
+  effect?: Effect;
+  nonce: number;
+}
+
+export interface LiveEffect {
+  effect: Effect;
+  playerId: string;
   nonce: number;
 }
 
@@ -34,10 +44,18 @@ export interface GameContextValue {
   selfId: string | null;
   roomId: string | null;
   identity: Identity;
+  /** the server lists this identity in ADMIN_IDS */
+  isAdmin: boolean;
+  /** query string that proves who we are to /api/admin/* */
+  adminQuery(): string;
+  adminOpen: boolean;
+  setAdminOpen(open: boolean): void;
   lastError: GameError | null;
   replaced: boolean;
   /** Live emoji reactions by player id (cleared automatically). */
   reactions: Record<string, Reaction>;
+  /** The latest premium reaction; the EffectLayer plays each nonce once. */
+  lastEffect: LiveEffect | null;
   react(emoji: string): void;
   join(roomId: string, create: boolean): void;
   leave(): void;
@@ -118,6 +136,9 @@ export function GameProvider({ children }: { children: ReactNode }) {
   const [lastError, setLastError] = useState<GameError | null>(null);
   const [replaced, setReplaced] = useState(false);
   const [reactions, setReactions] = useState<Record<string, Reaction>>({});
+  const [lastEffect, setLastEffect] = useState<LiveEffect | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [adminOpen, setAdminOpen] = useState(false);
   const reactionTimers = useRef(new Map<string, number>());
 
   const socketRef = useRef<WebSocket | null>(null);
@@ -129,6 +150,17 @@ export function GameProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     setLang(tg.languageCode ?? navigator.language);
   }, [tg.languageCode]);
+
+  // Mobile browsers only start audio after a gesture: unlock on the first tap.
+  useEffect(() => {
+    const unlock = () => unlockAudio();
+    window.addEventListener('pointerdown', unlock, { once: true, passive: true });
+    window.addEventListener('keydown', unlock, { once: true });
+    return () => {
+      window.removeEventListener('pointerdown', unlock);
+      window.removeEventListener('keydown', unlock);
+    };
+  }, []);
 
   // Public server configuration (is dev login allowed, table sizes).
   useEffect(() => {
@@ -155,6 +187,29 @@ export function GameProvider({ children }: { children: ReactNode }) {
   );
   const identityRef = useRef(identity);
   identityRef.current = identity;
+
+  const adminQuery = useCallback(() => {
+    const id = identityRef.current;
+    if (id.kind === 'telegram') return `init_data=${encodeURIComponent(id.initData)}`;
+    return `dev_id=${encodeURIComponent(id.devId)}`;
+  }, []);
+
+  // Is this person an admin? One cheap question once the identity is known.
+  useEffect(() => {
+    if (identity.kind === 'dev' && !identity.devId) return;
+    let cancelled = false;
+    fetch(apiUrl(`/api/admin/me?${adminQuery()}`))
+      .then((r) => (r.ok ? (r.json() as Promise<{ admin: boolean }>) : null))
+      .then((me) => {
+        if (!cancelled) setIsAdmin(Boolean(me?.admin));
+      })
+      .catch(() => {
+        // not reachable: no admin button
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [identity.kind, identity.initData, identity.devId, adminQuery]);
 
   const send = useCallback((msg: ClientMessage) => {
     const ws = socketRef.current;
@@ -204,10 +259,12 @@ export function GameProvider({ children }: { children: ReactNode }) {
           roomRef.current = { roomId: msg.payload.room_id, create: false };
           sessionStorage.setItem(ROOM_KEY, msg.payload.room_id);
         } else if (msg.type === 'REACTION') {
-          const { player_id: playerId, emoji, text } = msg.payload;
+          const { player_id: playerId, emoji, text, effect } = msg.payload;
           nonceRef.current += 1;
           const nonce = nonceRef.current;
-          setReactions((prev) => ({ ...prev, [playerId]: { emoji, text, nonce } }));
+          const fx = isEffect(effect) ? effect : undefined;
+          setReactions((prev) => ({ ...prev, [playerId]: { emoji, text, effect: fx, nonce } }));
+          if (fx) setLastEffect({ effect: fx, playerId, nonce });
           const previous = reactionTimers.current.get(playerId);
           if (previous) window.clearTimeout(previous);
           reactionTimers.current.set(
@@ -307,9 +364,14 @@ export function GameProvider({ children }: { children: ReactNode }) {
       selfId: state?.viewer_id ?? null,
       roomId,
       identity,
+      isAdmin,
+      adminQuery,
+      adminOpen,
+      setAdminOpen,
       lastError,
       replaced,
       reactions,
+      lastEffect,
       react: (emoji) => send({ type: 'SEND_EMOJI', payload: { emoji } }),
       join,
       leave,
@@ -324,7 +386,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
       setDevName,
       clearError: () => setLastError(null),
     }),
-    [connection, config, state, roomId, identity, lastError, replaced, reactions, join, leave, send, setDevName],
+    [connection, config, state, roomId, identity, isAdmin, adminQuery, adminOpen, lastError, replaced, reactions, lastEffect, join, leave, send, setDevName],
   );
 
   return <GameContext.Provider value={value}>{children}</GameContext.Provider>;

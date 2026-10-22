@@ -19,6 +19,33 @@ var ErrNotFound = errors.New("store: room not found")
 // update: nothing is persisted and the error is passed through.
 type UpdateFunc func(s *game.GameState) error
 
+// UserStats is a player's lifetime record. XP unlocks the reactions with
+// effects: 1 point per finished game, one more for not being the loser.
+type UserStats struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Games    int    `json:"games"`
+	Wins     int    `json:"wins"`
+	Losses   int    `json:"losses"`
+	XP       int    `json:"xp"`
+	LastSeen int64  `json:"last_seen"` // unix milliseconds
+}
+
+// GameResult is one player's outcome of a finished game.
+type GameResult struct {
+	ID   string
+	Name string
+	Won  bool // everybody but the loser wins; in a draw everybody does
+}
+
+// XPFor returns the experience a result is worth.
+func XPFor(r GameResult) int {
+	if r.Won {
+		return 2
+	}
+	return 1
+}
+
 // Store is the persistence and messaging layer for rooms.
 type Store interface {
 	// Load returns a copy of the room state or ErrNotFound.
@@ -35,6 +62,15 @@ type Store interface {
 	// Subscribe returns a channel of payloads published for the room. The
 	// channel is closed when ctx is cancelled.
 	Subscribe(ctx context.Context, roomID string) (<-chan []byte, error)
+	// ListRooms returns copies of every stored room (monitoring).
+	ListRooms(ctx context.Context) ([]*game.GameState, error)
+	// UserStats returns a player's record (the zero value for a stranger).
+	UserStats(ctx context.Context, userID string) (UserStats, error)
+	// RecordGame applies the results of one finished game exactly once per
+	// key (room id + state version); it reports whether anything was applied.
+	RecordGame(ctx context.Context, key string, results []GameResult) (bool, error)
+	// TopUsers lists the n best players by XP.
+	TopUsers(ctx context.Context, n int) ([]UserStats, error)
 	// Close releases resources.
 	Close() error
 }
