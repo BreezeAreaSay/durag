@@ -77,15 +77,36 @@ func main() {
 				logger.Warn("bots: LLM_FREE_ONLY=true drops paid models from LLM_MODEL", "dropped", dropped, "kept", llm.Models)
 			}
 		}
+		llm.Discover = cfg.LLMDiscover && cfg.LLMFreeOnly
 		bots.Brain = llm
-		logger.Info("bots: LLM brain", "models", llm.Models, "base_url", cfg.LLMBaseURL, "free_only", cfg.LLMFreeOnly)
-		go func() { // one request so the logs show at once whether the key and a model work
+		logger.Info("bots: LLM brain", "models", llm.Models, "base_url", cfg.LLMBaseURL, "free_only", cfg.LLMFreeOnly, "discover", llm.Discover)
+		go func() { // the catalog's free models, then one request so the logs show whether the key works
+			refresh := func() {
+				rctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+				defer cancel()
+				if models, err := llm.RefreshModels(rctx); err != nil {
+					logger.Warn("bots: model discovery failed, configured models only", "err", err, "models", models)
+				} else {
+					logger.Info("bots: models in play", "models", models)
+				}
+			}
+			refresh()
 			probeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-			defer cancel()
 			if model, err := llm.Probe(probeCtx); err != nil {
 				logger.Warn("bots: LLM probe failed, bots play by the rules until a model answers", "err", err)
 			} else {
 				logger.Info("bots: LLM probe ok", "model", model)
+			}
+			cancel()
+			ticker := time.NewTicker(time.Hour)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					refresh()
+				}
 			}
 		}()
 	default:

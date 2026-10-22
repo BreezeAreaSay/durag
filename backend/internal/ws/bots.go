@@ -248,7 +248,7 @@ func (h *Hub) decide(in bot.Context) (bot.Decision, bool) {
 		d, err := h.bots.Brain.Decide(ctx, in)
 		cancel()
 		if err == nil && legalMove(in.Moves, d.Move) {
-			h.log.Debug("bot: model move", "bot", in.BotID, "model", d.Model, "move", d.Move.String())
+			h.log.Info("bot: model move", "bot", in.BotID, "model", d.Model, "move", d.Move.String(), "say", d.Say)
 			return d, true
 		}
 		if errors.Is(err, bot.ErrPaused) {

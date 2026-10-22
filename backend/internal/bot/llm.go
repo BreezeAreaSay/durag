@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -35,9 +37,72 @@ type LLM struct {
 	Referer string
 	Title   string
 
+	// Discover adds the free models OpenRouter currently lists (GET /models)
+	// after the configured ones, so a renamed ":free" id never leaves the
+	// bots without a model.
+	Discover bool
+
 	mu          sync.Mutex
 	pausedUntil time.Time
 	pauseReason string
+	discovered  []string
+	calls       int
+	ok          int
+	failed      int
+	lastError   string
+	lastModel   string
+	lastOK      time.Time
+}
+
+// Status is a snapshot for monitoring: which models are in play, whether the
+// brain is resting and how the calls went.
+type Status struct {
+	Configured  []string  `json:"configured"`
+	Discovered  []string  `json:"discovered"`
+	Paused      bool      `json:"paused"`
+	PauseReason string    `json:"pause_reason,omitempty"`
+	PausedUntil time.Time `json:"paused_until,omitempty"`
+	Calls       int       `json:"calls"`
+	OK          int       `json:"ok"`
+	Failed      int       `json:"failed"`
+	LastError   string    `json:"last_error,omitempty"`
+	LastModel   string    `json:"last_model,omitempty"`
+	LastOK      time.Time `json:"last_ok,omitempty"`
+}
+
+// Status implements monitoring.
+func (l *LLM) Status() Status {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := time.Now()
+	return Status{
+		Configured:  append([]string{}, l.Models...),
+		Discovered:  append([]string{}, l.discovered...),
+		Paused:      now.Before(l.pausedUntil),
+		PauseReason: l.pauseReason,
+		PausedUntil: l.pausedUntil,
+		Calls:       l.calls,
+		OK:          l.ok,
+		Failed:      l.failed,
+		LastError:   l.lastError,
+		LastModel:   l.lastModel,
+		LastOK:      l.lastOK,
+	}
+}
+
+// candidates returns the configured models followed by the discovered ones.
+func (l *LLM) candidates() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	seen := map[string]bool{}
+	var out []string
+	for _, m := range append(append([]string{}, l.Models...), l.discovered...) {
+		if !seen[m] {
+			seen[m] = true
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 // NewLLM builds a client; models is a comma-separated list tried in order.
@@ -173,10 +238,13 @@ func (l *LLM) Decide(ctx context.Context, in Context) (Decision, error) {
 	if paused, why := l.Paused(time.Now()); paused {
 		return Decision{}, fmt.Errorf("%w: %s", ErrPaused, why)
 	}
-	models := l.Models
+	models := l.candidates()
 	if len(models) == 0 {
-		models = []string{"openrouter/free"}
+		models = []string{FreeRouter}
 	}
+	l.mu.Lock()
+	l.calls++
+	l.mu.Unlock()
 	timeout := l.Timeout
 	if timeout <= 0 {
 		timeout = 8 * time.Second
@@ -194,21 +262,153 @@ func (l *LLM) Decide(ctx context.Context, in Context) (Decision, error) {
 				d, err = l.ask(ctx, model, in, false)
 			case he.status == http.StatusPaymentRequired:
 				l.pause(pauseAfterNoCredits, "no credits (HTTP 402)")
-				return Decision{}, err
+				return Decision{}, l.noteFailure(err)
 			case he.status == http.StatusTooManyRequests:
 				l.pause(pauseForRateLimit(he.body, time.Now()), "rate limited (HTTP 429)")
-				return Decision{}, err
+				return Decision{}, l.noteFailure(err)
 			}
 		}
 		if err == nil {
+			l.mu.Lock()
+			l.ok++
+			l.lastModel = d.Model
+			l.lastOK = time.Now()
+			l.mu.Unlock()
 			return d, nil
 		}
 		lastErr = err
 		if ctx.Err() != nil {
-			return Decision{}, err // out of time: the rules take over
+			return Decision{}, l.noteFailure(err) // out of time: the rules take over
 		}
 	}
-	return Decision{}, lastErr
+	return Decision{}, l.noteFailure(lastErr)
+}
+
+func (l *LLM) noteFailure(err error) error {
+	l.mu.Lock()
+	l.failed++
+	if err != nil {
+		l.lastError = err.Error()
+	}
+	l.mu.Unlock()
+	return err
+}
+
+// modelEntry is the part of GET /models the discovery needs.
+type modelEntry struct {
+	ID            string `json:"id"`
+	ContextLength int    `json:"context_length"`
+	Pricing       struct {
+		Prompt     string `json:"prompt"`
+		Completion string `json:"completion"`
+	} `json:"pricing"`
+	Architecture struct {
+		OutputModalities []string `json:"output_modalities"`
+	} `json:"architecture"`
+}
+
+// families lists the model families bots play best with, most preferred first.
+var families = []string{"deepseek/", "qwen/", "meta-llama/", "mistralai/", "google/gemma", "openai/gpt-oss", "z-ai/", "moonshotai/", "nvidia/", "microsoft/"}
+
+// DiscoverFree lists the free chat models of an OpenRouter-compatible
+// catalog (GET /models, no key needed), best candidates first.
+func DiscoverFree(ctx context.Context, client *http.Client, baseURL string) ([]string, error) {
+	if client == nil {
+		client = http.DefaultClient
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(baseURL, "/")+"/models", nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		return nil, fmt.Errorf("llm: models: http %d", resp.StatusCode)
+	}
+	var catalog struct {
+		Data []modelEntry `json:"data"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&catalog); err != nil {
+		return nil, fmt.Errorf("llm: models: %w", err)
+	}
+	return rankFree(catalog.Data), nil
+}
+
+func rankFree(entries []modelEntry) []string {
+	type cand struct {
+		id   string
+		fam  int
+		ctxL int
+	}
+	var cands []cand
+	for _, m := range entries {
+		if m.ID == "" || m.ID == FreeRouter {
+			continue
+		}
+		if p, err := strconv.ParseFloat(m.Pricing.Prompt, 64); err != nil || p != 0 {
+			continue
+		}
+		if c, err := strconv.ParseFloat(m.Pricing.Completion, 64); err != nil || c != 0 {
+			continue
+		}
+		id := strings.ToLower(m.ID)
+		if strings.Contains(id, "vision") || strings.Contains(id, "-vl") || strings.Contains(id, "image") || strings.Contains(id, "audio") || strings.Contains(id, "whisper") || strings.Contains(id, "tts") || strings.Contains(id, "embed") || strings.Contains(id, "guard") || strings.Contains(id, "rerank") {
+			continue
+		}
+		if len(m.Architecture.OutputModalities) > 0 && !contains(m.Architecture.OutputModalities, "text") {
+			continue
+		}
+		fam := len(families)
+		for i, f := range families {
+			if strings.HasPrefix(id, f) {
+				fam = i
+				break
+			}
+		}
+		cands = append(cands, cand{id: m.ID, fam: fam, ctxL: m.ContextLength})
+	}
+	sort.SliceStable(cands, func(i, j int) bool {
+		if cands[i].fam != cands[j].fam {
+			return cands[i].fam < cands[j].fam
+		}
+		return cands[i].ctxL > cands[j].ctxL
+	})
+	var out []string
+	for i, c := range cands {
+		if i >= 8 {
+			break
+		}
+		out = append(out, c.id)
+	}
+	return out
+}
+
+func contains(list []string, s string) bool {
+	for _, x := range list {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}
+
+// RefreshModels re-reads the free models from the catalog (when Discover is
+// on) and returns the full candidate list.
+func (l *LLM) RefreshModels(ctx context.Context) ([]string, error) {
+	if !l.Discover {
+		return l.candidates(), nil
+	}
+	found, err := DiscoverFree(ctx, l.Client, l.BaseURL)
+	if err != nil {
+		return l.candidates(), err
+	}
+	l.mu.Lock()
+	l.discovered = found
+	l.mu.Unlock()
+	return l.candidates(), nil
 }
 
 // ask sends one request for one model and validates the answer.

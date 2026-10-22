@@ -38,6 +38,7 @@ type Config struct {
 	LLMAPIKey   string
 	LLMModel    string
 	LLMFreeOnly bool // drop paid model ids from LLM_MODEL (default on)
+	LLMDiscover bool // append the free models the catalog lists right now (default on)
 	LLMTimeout  time.Duration
 }
 
@@ -101,6 +102,7 @@ func FromEnv() (Config, error) {
 		LLMAPIKey:      strings.TrimSpace(os.Getenv("LLM_API_KEY")),
 		LLMModel:       getenv("LLM_MODEL", "openrouter/free"),
 		LLMFreeOnly:    parseBool(getenv("LLM_FREE_ONLY", "true")),
+		LLMDiscover:    parseBool(getenv("LLM_DISCOVER", "true")),
 	}
 	var err error
 	if c.MaxAttacks, err = strconv.Atoi(getenv("MAX_ATTACKS", "6")); err != nil || c.MaxAttacks < 0 {

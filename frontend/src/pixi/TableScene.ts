@@ -335,10 +335,13 @@ export class TableScene {
           const c = nextAttackSlot(0, metrics);
           view.root.position.set(c.x, c.y);
         } else if (p.kind === 'hand' && m.lastEvent === 'stump') {
-          // the stump was just picked up: cards come out of the viewer's stump pile
-          const sSlot = stumpSlot(metrics);
-          view.root.position.set(sSlot.x, sSlot.y);
-          view.root.scale.set(sSlot.scale);
+          // the stump was just picked up: the cards simply appear in the hand
+          // and blink a few times (a flight from the pile hid them when the
+          // taker was also the one to move next)
+          view.root.position.set(p.slot.x, p.slot.y);
+          view.root.rotation = p.slot.rotation;
+          view.root.scale.set(p.slot.scale);
+          this.blink(view);
         }
         if (p.kind === 'attack' || p.kind === 'defense') this.flash(view);
       }
@@ -415,6 +418,14 @@ export class TableScene {
   private flash(view: CardView): void {
     view.setHighlight(true);
     this.later(900, () => view.setHighlight(false));
+  }
+
+  /** Three quick blinks of the outline: "these cards are new". */
+  private blink(view: CardView): void {
+    for (let i = 0; i < 3; i++) {
+      this.later(i * 360, () => view.setHighlight(true));
+      this.later(i * 360 + 180, () => view.setHighlight(false));
+    }
   }
 
   private later(ms: number, fn: () => void): void {

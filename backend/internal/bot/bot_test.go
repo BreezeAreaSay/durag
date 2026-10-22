@@ -273,3 +273,41 @@ func TestProbeReportsTheAnsweringModel(t *testing.T) {
 		t.Fatalf("probe: %q %v", model, err)
 	}
 }
+
+func TestDiscoverFreeRanksTheCatalog(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/models" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(`{"data":[
+		  {"id":"openai/gpt-4o","context_length":128000,"pricing":{"prompt":"0.0000025","completion":"0.00001"}},
+		  {"id":"qwen/qwen3-235b-a22b:free","context_length":131072,"pricing":{"prompt":"0","completion":"0"}},
+		  {"id":"deepseek/deepseek-chat-v3-0324:free","context_length":163840,"pricing":{"prompt":"0","completion":"0"}},
+		  {"id":"deepseek/deepseek-r1:free","context_length":64000,"pricing":{"prompt":"0","completion":"0"}},
+		  {"id":"qwen/qwen2.5-vl-72b-instruct:free","context_length":32768,"pricing":{"prompt":"0","completion":"0"}},
+		  {"id":"openrouter/free","context_length":0,"pricing":{"prompt":"0","completion":"0"}},
+		  {"id":"meta-llama/llama-3.3-70b-instruct:free","context_length":131072,"pricing":{"prompt":"0","completion":"0"},"architecture":{"output_modalities":["text"]}},
+		  {"id":"some/image-model:free","context_length":4096,"pricing":{"prompt":"0","completion":"0"},"architecture":{"output_modalities":["image"]}}
+		]}`))
+	}))
+	defer srv.Close()
+	got, err := DiscoverFree(context.Background(), nil, srv.URL+"/api/v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"deepseek/deepseek-chat-v3-0324:free", "deepseek/deepseek-r1:free", "qwen/qwen3-235b-a22b:free", "meta-llama/llama-3.3-70b-instruct:free"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("got %v want %v", got, want)
+	}
+	l := NewLLM(srv.URL+"/api/v1", "k", "openrouter/free", time.Second)
+	l.Discover = true
+	models, err := l.RefreshModels(context.Background())
+	if err != nil || len(models) != 5 || models[0] != "openrouter/free" || models[1] != want[0] {
+		t.Fatalf("candidates %v %v", models, err)
+	}
+	st := l.Status()
+	if len(st.Discovered) != 4 || st.Calls != 0 {
+		t.Fatalf("status %+v", st)
+	}
+}
