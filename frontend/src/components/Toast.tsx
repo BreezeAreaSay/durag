@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useGame } from '../state/GameContext';
 import { errorText } from '../i18n';
 import { haptic } from '../telegram/useTelegram';
@@ -7,17 +7,23 @@ import { haptic } from '../telegram/useTelegram';
 export function Toast() {
   const { lastError, clearError, notice, clearNotice } = useGame();
   const [visible, setVisible] = useState(false);
+  // The hide timer must follow the message, not the context: a timer that
+  // restarts on every state update never fires while bots move and talk.
+  const latest = useRef({ lastError, clearError, notice, clearNotice });
+  latest.current = { lastError, clearError, notice, clearNotice };
+  const errorNonce = lastError?.nonce ?? 0;
   useEffect(() => {
-    if (!lastError && !notice) return;
+    if (!errorNonce && !notice) return;
     setVisible(true);
-    if (lastError) haptic('error');
+    if (errorNonce) haptic('error');
     const t = window.setTimeout(() => {
       setVisible(false);
-      if (lastError) clearError();
-      if (notice) clearNotice();
-    }, lastError ? 2600 : 3600);
+      const cur = latest.current;
+      if (cur.lastError) cur.clearError();
+      if (cur.notice) cur.clearNotice();
+    }, errorNonce ? 2600 : 3600);
     return () => window.clearTimeout(t);
-  }, [lastError, clearError, notice, clearNotice]);
+  }, [errorNonce, notice]);
   if ((!lastError && !notice) || !visible) return null;
   return (
     <div className="toast" role="alert" onClick={() => setVisible(false)}>

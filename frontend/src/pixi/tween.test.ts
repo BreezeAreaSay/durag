@@ -71,3 +71,14 @@ describe('landing physics', () => {
     expect(fallDuration(1e6)).toBe(460);
   });
 });
+
+it('reports whether a target is mid-tween', () => {
+  const tw = new StopMotionTweener(12);
+  const o = obj();
+  expect(tw.has(o)).toBe(false);
+  const done = tw.to(o, { x: 100 }, { duration: 100 });
+  expect(tw.has(o)).toBe(true);
+  tw.update(200);
+  expect(tw.has(o)).toBe(false);
+  return done.then((completed) => expect(completed).toBe(true));
+});

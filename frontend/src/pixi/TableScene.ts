@@ -662,10 +662,14 @@ export class TableScene {
       const h = H * Math.exp(-d / R);
       if (h < 2) continue;
       const delay = d / 1.6; // ms: the wave travels 1.6 px per ms
-      const home = { x: r.x, y: r.y, rotation: r.rotation, scale: r.scale.x };
-      const settle = { ...home, rotation: home.rotation + (Math.random() - 0.5) * 0.12, x: home.x + (Math.random() - 0.5) * 6 };
       this.later(delay, () => {
         if (this.destroyed || this.tweener.active > 400) return;
+        // a card in flight (just played, drawn or taken) keeps flying: hijacking its
+        // tween would drop it wherever it was and it would never reach its slot
+        if (view.isDissolved || this.drag?.id === view.card.id || this.tweener.has(r)) return;
+        // home is where the card is when the wave reaches it, not where it was at the slam
+        const home = { x: r.x, y: r.y, rotation: r.rotation, scale: r.scale.x };
+        const settle = { ...home, rotation: home.rotation + (Math.random() - 0.5) * 0.12, x: home.x + (Math.random() - 0.5) * 6 };
         view.setLifted(true);
         void this.tweener.to(r, { y: home.y - h, rotation: home.rotation + (Math.random() - 0.5) * 0.2 }, { duration: 110 + h * 0.6, ease: easings.outQuad }).then((up) => {
           if (!up) return;

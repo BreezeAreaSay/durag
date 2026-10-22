@@ -420,6 +420,9 @@ export function GameProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  const clearError = useCallback(() => setLastError(null), []);
+  const clearNotice = useCallback(() => setNotice(null), []);
+
   const value = useMemo<GameContextValue>(
     () => ({
       connection,
@@ -445,7 +448,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
       fxLevel,
       setFx,
       notice,
-      clearNotice: () => setNotice(null),
+      clearNotice,
       react: (emoji) => send({ type: 'SEND_EMOJI', payload: { emoji } }),
       join,
       leave,
@@ -458,7 +461,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
       pass: () => send({ type: 'RESOLVE_BOUT' }),
       takeStump: () => send({ type: 'TAKE_STUMP' }),
       setDevName,
-      clearError: () => setLastError(null),
+      clearError,
     }),
     [connection, config, state, roomId, identity, isAdmin, adminQuery, adminOpen, lastError, replaced, reactions, lastEffect, wins, skin, setSkin, theme, setTheme, fx, fxLevel, setFx, notice, join, leave, send, setDevName],
   );

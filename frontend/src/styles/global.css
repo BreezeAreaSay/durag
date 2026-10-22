@@ -734,10 +734,11 @@ body::after {
   display: flex;
   align-items: center;
   gap: 6px;
-  top: -34px;
+  top: 2px;
+  bottom: 2px; /* the bubble lives inside its own row: two talking bots never overlap */
   left: 52px; /* beside the sticker, so the name stays readable */
   width: max-content;
-  max-width: 230px;
+  max-width: min(240px, calc(100vw - 150px));
   font-size: 20px;
   animation: reaction-pop 220ms steps(3) both, reaction-fade 500ms 4600ms both;
 }
@@ -747,6 +748,10 @@ body::after {
   line-height: 1.2;
   color: var(--ink);
   white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 .players__remove {
   font-family: var(--display);

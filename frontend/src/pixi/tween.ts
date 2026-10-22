@@ -76,6 +76,11 @@ export class StopMotionTweener {
     return 1000 / this.fps;
   }
 
+  /** Whether a tween is running (or waiting out its delay) on the target. */
+  has(target: Animatable): boolean {
+    return this.tweens.some((tw) => tw.target === target);
+  }
+
   /** Starts a tween; a running tween on the same target is cancelled. */
   to(target: Animatable, to: TweenProps, opts: TweenOptions = {}): Promise<boolean> {
     this.cancel(target);
