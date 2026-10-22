@@ -1,5 +1,5 @@
 import type { Card, GameState, Outcome, Suit } from '../types/protocol';
-import { roleOf, tablePairs, type Role, type TablePair } from '../util/rules';
+import { canThrowIn, canTransferWith, firstBeatableTarget, roleOf, tablePairs, type Role, type TablePair } from '../util/rules';
 import type { SkinId } from '../util/progress';
 
 /** Everything the PixiJS scene needs, derived from the sanitized state. */
@@ -32,6 +32,28 @@ export interface SceneModel {
   version: number;
   /** the viewer's chosen card back (piles, stump, hidden trump) */
   skin: SkinId;
+  /**
+   * Ids of hand cards the viewer could play right now by the client mirror
+   * of the rules: throw-ins of a rank on the table, defences that beat an
+   * open attack, transfers. A hint only; the server has the last word.
+   */
+  playable: Set<string>;
+}
+
+/** The client mirror's opinion of which hand cards may be played now. */
+export function playableCards(state: GameState, role: Role, hand: Card[]): Set<string> {
+  const ids = new Set<string>();
+  if (state.status !== 'playing' || state.phase === 'resolving' || state.stump_pending.length > 0) return ids;
+  if (role === 'attacker' && state.table_order.length === 0) {
+    for (const c of hand) ids.add(c.id); // the lead attacker opens with anything
+    return ids;
+  }
+  if (role === 'attacker' || role === 'thrower') {
+    for (const c of hand) if (canThrowIn(state, c)) ids.add(c.id);
+  } else if (role === 'defender' && !state.defender_taking) {
+    for (const c of hand) if (firstBeatableTarget(state, c) || canTransferWith(state, c)) ids.add(c.id);
+  }
+  return ids;
 }
 
 function lastOutcomeOf(state: GameState): Outcome {
@@ -61,8 +83,10 @@ export function sortHand(cards: Card[], mode: HandSort): Card[] {
 export function toSceneModel(state: GameState, selfId: string, skin: SkinId = 'classic', sort: HandSort = 'rank'): SceneModel {
   const me = state.players.find((p) => p.id === selfId);
   const role = roleOf(state, selfId);
+  const hand = sortHand(me?.hand ?? [], sort);
   return {
-    hand: sortHand(me?.hand ?? [], sort),
+    hand,
+    playable: playableCards(state, role, hand),
     table: tablePairs(state),
     deckCount: state.deck_count,
     trumpCard: state.trump_card,

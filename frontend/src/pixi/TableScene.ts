@@ -444,7 +444,10 @@ export class TableScene {
       if (view.isDissolved && p.kind === 'hand') view.setDissolved(false);
       // the trump card you beat with glows softly
       // the Super card is a light of its own wherever it shows its face
-      view.setGlow((p.kind === 'defense' && m.trumpRevealed && p.card.suit === m.trumpSuit) || (p.card.id === 'SC' && p.faceUp));
+      // in the hand, the cards the rules let you play now glow: a throw-in of
+      // a rank on the table, a card that beats an open attack, a transfer
+      const hint = p.kind === 'hand' && m.interactive && m.table.length > 0 && m.playable.has(p.card.id);
+      view.setGlow((p.kind === 'defense' && m.trumpRevealed && p.card.suit === m.trumpSuit) || (p.card.id === 'SC' && p.faceUp) || hint);
       if (view.root.parent !== p.layer) this.reparent(view, p.layer);
       view.root.zIndex = p.z;
       view.setFaceUp(p.faceUp && !this.riteHold.has(id));
