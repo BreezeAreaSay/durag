@@ -19,6 +19,8 @@ export interface Metrics {
 }
 
 const PILE_SCALE = 0.72;
+/** room on the left of the hand for the player's own sticker */
+export const HAND_INSET = 46;
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
@@ -49,10 +51,11 @@ export function computeMetrics(width: number, height: number, topInset = 0): Met
 export function handSlots(n: number, m: Metrics): Slot[] {
   if (n <= 0) return [];
   const maxSpacing = m.cardW * 0.74;
-  const available = Math.max(0, m.width - 28 - m.cardW);
+  // the player's sticker holds the fan from the left: the cards keep clear of it
+  const available = Math.max(0, m.width - 28 - m.cardW - HAND_INSET);
   const spacing = n > 1 ? Math.min(maxSpacing, available / (n - 1)) : 0;
   const total = spacing * (n - 1);
-  const x0 = m.width / 2 - total / 2;
+  const x0 = HAND_INSET + (m.width - HAND_INSET) / 2 - total / 2;
   const y = m.height - m.cardH / 2 - 58;
   const slots: Slot[] = [];
   for (let i = 0; i < n; i++) {
@@ -94,6 +97,27 @@ export function tableSlots(n: number, m: Metrics): { attack: Slot; defense: Slot
     });
   }
   return out;
+}
+
+/**
+ * A card's own sloppiness, derived from its id so every client sees the same
+ * table and a resync never makes a card twitch. A card's hash h in [0, 1)
+ * seeds three independent-looking numbers; one card in ten (h < 0.1) is
+ * thrown down carelessly and tilts up to 0.35 rad, the rest wobble ±0.08.
+ * `amount` scales it down for the hand (cards held, not thrown).
+ */
+export function jitterSlot(slot: Slot, id: string, amount = 1): Slot {
+  if (amount <= 0) return slot;
+  let h = 2166136261;
+  for (let i = 0; i < id.length; i++) h = Math.imul(h ^ id.charCodeAt(i), 16777619);
+  const u = ((h >>> 0) % 100000) / 100000;
+  const frac = (v: number) => v - Math.floor(v);
+  const careless = u < 0.1;
+  const amp = careless ? 0.35 : 0.08;
+  const rot = (frac(u * 7.31 + 0.17) - 0.5) * 2 * amp;
+  const dx = (frac(u * 13.7 + 0.43) - 0.5) * 8;
+  const dy = (frac(u * 3.3 + 0.71) - 0.5) * 8;
+  return { x: slot.x + dx * amount * slot.scale, y: slot.y + dy * amount * slot.scale, rotation: slot.rotation + rot * amount, scale: slot.scale };
 }
 
 /** Slot of the next attack card (where a dragged card snaps while pending). */

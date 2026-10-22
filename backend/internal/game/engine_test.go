@@ -241,8 +241,10 @@ func TestThrowInsNeverExceedDefenderHand(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantErr(t, e.PlayCard(s, "C", "C_10", ""), ErrTooManyAttacks)
-	// a defender with a bigger hand can be piled on up to the classic six
+	// with the classic cap switched on, a defender with a bigger hand can be piled on up to six
 	e2, s2 := newPlaying(t, "A", "B", "C")
+	e2.MaxAttacks = 6
+	s2.MaxAttacks = 6
 	setRoles(s2, "A", "B")
 	setHand(t, s2, "A", "H_7", "S_7", "D_7", "C_7")
 	setHand(t, s2, "B", "H_10", "S_8", "D_4", "C_5", "H_6", "D_12", "C_13", "S_2")
@@ -262,13 +264,11 @@ func TestThrowInsNeverExceedDefenderHand(t *testing.T) {
 		}
 	}
 	wantErr(t, e2.PlayCard(s2, "C", "S_10", ""), ErrTooManyAttacks)
-	if len(s2.TableOrder) != DefaultMaxAttacks {
+	if len(s2.TableOrder) != 6 {
 		t.Fatalf("six attacks expected, got %d", len(s2.TableOrder))
 	}
-	// the cap is a setting: without it only the hand limits the table
+	// the default: no cap, only the hand limits the table
 	e3, s3 := newPlaying(t, "A", "B", "C")
-	e3.MaxAttacks = 0
-	s3.MaxAttacks = 0
 	setRoles(s3, "A", "B")
 	setHand(t, s3, "A", "H_7", "S_7", "D_7", "C_7")
 	setHand(t, s3, "B", "H_10", "S_8", "D_4", "C_5", "H_6", "D_12", "C_13", "S_2")
@@ -352,8 +352,8 @@ func TestSuperCardBeatsEverythingAndIsUnbeatable(t *testing.T) {
 			t.Fatalf("%s should not beat the super card, got %v", id, err)
 		}
 	}
-	if _, err := s.ValidateTransfer("B", "RJ"); err != ErrJokerCannotTransfer {
-		t.Fatalf("a Joker never transfers, got %v", err)
+	if _, err := s.ValidateTransfer("B", "RJ"); err != ErrTransferRank {
+		t.Fatalf("a Joker never transfers the Super card, got %v", err)
 	}
 }
 

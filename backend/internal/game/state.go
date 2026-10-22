@@ -43,12 +43,25 @@ type Player struct {
 	// Extensions (not in the original data model).
 	AvatarURL  string `json:"avatar_url,omitempty"`
 	Connected  bool   `json:"connected"`
-	Passed     bool   `json:"passed"`           // "бито" said in the current bout
-	Out        bool   `json:"out"`              // got rid of all cards, left the game as a non-loser
-	HandCount  int    `json:"hand_count"`       // filled by Sanitized()
-	StumpCount int    `json:"stump_count"`      // filled by Sanitized()
-	IsBot      bool   `json:"is_bot,omitempty"` // seat driven by the server (v10 §2)
-	XP         int    `json:"xp"`               // lifetime experience (public): unlocks reactions with effects
+	Passed     bool   `json:"passed"`              // "бито" said in the current bout
+	Out        bool   `json:"out"`                 // got rid of all cards, left the game as a non-loser
+	HandCount  int    `json:"hand_count"`          // filled by Sanitized()
+	StumpCount int    `json:"stump_count"`         // filled by Sanitized()
+	IsBot      bool   `json:"is_bot,omitempty"`    // seat driven by the server (v10 §2)
+	XP         int    `json:"xp"`                  // lifetime experience (public): unlocks reactions with effects
+	Admin      bool   `json:"admin,omitempty"`     // listed in ADMIN_IDS: every reaction, skin and frame
+	Wins       int    `json:"wins,omitempty"`      // lifetime wins (first out of the game), kept by the store
+	BotLevel   string `json:"bot_level,omitempty"` // easy / normal / hard for a bot seat
+	Scar       bool   `json:"scar,omitempty"`      // lost the last finished game: the fool's mark, washed off by a win
+	Stats      Stats  `json:"stats"`               // what this player did this game (folded into their profile at the end)
+}
+
+// Stats is what a seat did in the current game: the raw material of a
+// bot's memory of people.
+type Stats struct {
+	Took      int            `json:"took"`       // cards taken from the table
+	WorstTake int            `json:"worst_take"` // the biggest single take
+	Leads     map[string]int `json:"leads"`      // opening attacks by suit
 }
 
 // LogEntry is a compact description of something that happened. The client
@@ -85,7 +98,8 @@ type GameState struct {
 	HostID         string     `json:"host_id"`
 	MaxPlayers     int        `json:"max_players"`
 	LoserID        string     `json:"loser_id,omitempty"`
-	FinishedOrder  []string   `json:"finished_order"` // players who got rid of their cards, first to last
+	FinishedOrder  []string   `json:"finished_order"`        // players who got rid of their cards, first to last
+	WinAwarded     bool       `json:"win_awarded,omitempty"` // the winner of this finished game got their win counted
 	Version        int64      `json:"version"`
 	UpdatedAt      int64      `json:"updated_at"`
 	Log            []LogEntry `json:"log"`
@@ -160,6 +174,15 @@ func (s *GameState) PlayerIndex(id string) int {
 }
 
 // Player returns a pointer to the player with the given ID or nil.
+// Winner is the player who got rid of their cards first in a finished game,
+// or "" (nobody finished, or the game is still on).
+func (s *GameState) Winner() string {
+	if s.Status != StatusFinished || len(s.FinishedOrder) == 0 {
+		return ""
+	}
+	return s.FinishedOrder[0]
+}
+
 func (s *GameState) Player(id string) *Player {
 	i := s.PlayerIndex(id)
 	if i < 0 {
@@ -383,6 +406,13 @@ func (s *GameState) Clone() *GameState {
 		out.Players[i] = p
 		out.Players[i].Hand = append([]Card{}, p.Hand...)
 		out.Players[i].Stump = append([]Card{}, p.Stump...)
+		if p.Stats.Leads != nil { // a shared map would race between the store and the encoder
+			leads := make(map[string]int, len(p.Stats.Leads))
+			for k, v := range p.Stats.Leads {
+				leads[k] = v
+			}
+			out.Players[i].Stats.Leads = leads
+		}
 	}
 	out.Deck = append([]Card{}, s.Deck...)
 	if s.TrumpCard != nil {

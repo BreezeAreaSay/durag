@@ -15,6 +15,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/breezeareasay/durag/backend/internal/bot"
 	"github.com/breezeareasay/durag/backend/internal/game"
 	"github.com/breezeareasay/durag/backend/internal/store"
 	"github.com/breezeareasay/durag/backend/internal/telegram"
@@ -564,5 +565,116 @@ func TestStumpStepOverTheWire(t *testing.T) {
 		if p.ID == "dev:A" && (p.HandCount != 2 || p.StumpCount != 0) {
 			t.Fatalf("A should hold the stump now: %+v", p)
 		}
+	}
+}
+
+func TestWinIsAwardedOnceToTheFirstOut(t *testing.T) {
+	_, h, st := newTestServerWithEngine(t, true, game.NewEngine(game.NewRand(7, 8)))
+	ctx := context.Background()
+	finished, err := st.Update(ctx, "W", true, func(s *game.GameState) error {
+		for _, id := range []string{"dev:A", "dev:B", "dev:C"} {
+			if err := h.engine.Join(s, id, id, ""); err != nil {
+				return err
+			}
+		}
+		s.Players[2].IsBot = true
+		s.Status = game.StatusFinished
+		s.FinishedOrder = []string{"dev:A", "dev:B"}
+		s.LoserID = "dev:C"
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.afterUpdate("W", finished)
+	h.afterUpdate("W", finished) // a duplicate publish of the same finished state
+	if n, _ := st.Wins(ctx, "dev:A"); n != 1 {
+		t.Fatalf("first out must have exactly one win, got %d", n)
+	}
+	if n, _ := st.Wins(ctx, "dev:B"); n != 0 {
+		t.Fatalf("second out gets nothing, got %d", n)
+	}
+	stored, _ := st.Load(ctx, "W")
+	if !stored.WinAwarded || stored.Player("dev:A").Wins != 1 {
+		t.Fatalf("state must carry the award: %+v", stored.Player("dev:A"))
+	}
+
+	// bots never collect wins
+	finished, _ = st.Update(ctx, "W", false, func(s *game.GameState) error {
+		s.WinAwarded = false
+		s.FinishedOrder = []string{"dev:C"}
+		return nil
+	})
+	h.afterUpdate("W", finished)
+	stored, _ = st.Load(ctx, "W")
+	if n, _ := st.Wins(ctx, "dev:C"); n != 0 || !stored.WinAwarded {
+		t.Fatalf("bot wins %d awarded %v", n, stored.WinAwarded)
+	}
+}
+
+func TestScarsProfilesAndBotPromotion(t *testing.T) {
+	_, h, st := newTestServerWithEngine(t, true, game.NewEngine(game.NewRand(7, 8)))
+	ctx := context.Background()
+	finished, err := st.Update(ctx, "S", true, func(s *game.GameState) error {
+		for _, id := range []string{"dev:A", "dev:B", "dev:C"} {
+			if err := h.engine.Join(s, id, id, ""); err != nil {
+				return err
+			}
+		}
+		s.Players[2].IsBot = true
+		s.Players[2].BotLevel = "easy"
+		s.Players[1].Stats = game.Stats{Took: 11, WorstTake: 11, Leads: map[string]int{game.SuitHearts: 4}}
+		s.Status = game.StatusFinished
+		s.FinishedOrder = []string{"dev:A", "dev:C"}
+		s.LoserID = "dev:B"
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.afterUpdate("S", finished)
+	stored, _ := st.Load(ctx, "S")
+	if !stored.Player("dev:B").Scar || stored.Player("dev:A").Scar {
+		t.Fatalf("the loser wears the scar, the winner does not: B=%v A=%v", stored.Player("dev:B").Scar, stored.Player("dev:A").Scar)
+	}
+	prof, _ := st.Profile(ctx, "dev:B")
+	if prof.Games != 1 || prof.Losses != 1 || prof.WorstTake != 11 || !prof.Scar {
+		t.Fatalf("loser profile: %+v", prof)
+	}
+	if stored.Player("dev:C").BotLevel != "easy" {
+		t.Fatalf("a bot that did not lose keeps its level, got %q", stored.Player("dev:C").BotLevel)
+	}
+
+	// next game: the human loser wins, the bot loses and comes back stronger
+	finished, _ = st.Update(ctx, "S", false, func(s *game.GameState) error {
+		s.WinAwarded = false
+		s.FinishedOrder = []string{"dev:B", "dev:A"}
+		s.LoserID = "dev:C"
+		return nil
+	})
+	h.afterUpdate("S", finished)
+	stored, _ = st.Load(ctx, "S")
+	if stored.Player("dev:B").Scar {
+		t.Fatal("a win washes the scar off")
+	}
+	if stored.Player("dev:C").BotLevel != "normal" {
+		t.Fatalf("the losing bot is promoted easy -> normal, got %q", stored.Player("dev:C").BotLevel)
+	}
+	br := h.botRoomFor("S")
+	br.mu.Lock()
+	promoted := br.promoted["dev:C"]
+	br.mu.Unlock()
+	if promoted != bot.LevelNormal {
+		t.Fatalf("the bot owes a line about its promotion, got %q", promoted)
+	}
+	// a new joiner carries the scar from the store
+	joined, _ := st.Update(ctx, "S2", true, func(s *game.GameState) error { return h.engine.Join(s, "dev:X", "X", "") })
+	_ = joined
+	if err := st.SaveProfile(ctx, "dev:Y", store.Profile{Games: 1, Losses: 1, Scar: true}); err != nil {
+		t.Fatal(err)
+	}
+	p, _ := st.Profile(ctx, "dev:Y")
+	if !p.Scar {
+		t.Fatal("profile scar")
 	}
 }

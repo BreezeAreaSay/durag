@@ -3,8 +3,11 @@ import { Button } from './Button';
 import { Sticker } from './Sticker';
 import { useGame } from '../state/GameContext';
 import { useBackButton } from '../telegram/useTelegram';
+import { frameWins } from '../util/progress';
 import { t } from '../i18n';
-import type { GameState } from '../types/protocol';
+import type { BotLevel, GameState } from '../types/protocol';
+
+const LEVELS: BotLevel[] = ['easy', 'normal', 'hard'];
 
 interface Props {
   state: GameState;
@@ -19,8 +22,9 @@ function shareLink(room: string): string | null {
 }
 
 export function WaitingRoom({ state }: Props) {
-  const { selfId, setReady, leave, addBot, removeBot, config } = useGame();
+  const { selfId, setReady, leave, addBot, removeBot, config, reactions } = useGame();
   const [copied, setCopied] = useState(false);
+  const [level, setLevel] = useState<BotLevel>('normal');
   const me = state.players.find((p) => p.id === selfId);
   const link = shareLink(state.room_id);
   useBackButton(leave);
@@ -66,12 +70,17 @@ export function WaitingRoom({ state }: Props) {
         <ul className="players__list">
           {state.players.map((p) => (
             <li key={p.id} className={`players__item ${p.is_ready ? 'players__item--ready' : ''}`}>
-              <Sticker name={p.name} avatarUrl={p.avatar_url} seed={p.id} />
+              <Sticker name={p.name} avatarUrl={p.avatar_url} seed={p.id} wins={frameWins(p)} playerId={p.id} scar={p.scar} />
+              {reactions[p.id]?.text ? (
+                <span className="reaction reaction--text reaction--lobby" key={reactions[p.id]!.nonce}>
+                  <span className="reaction__text">{reactions[p.id]!.text}</span>
+                </span>
+              ) : null}
               <span className="players__name">
                 {p.is_bot ? <span className="players__bot" aria-hidden="true">🤖 </span> : null}
                 {p.name}
                 {p.id === state.host_id ? <small> · {t('waiting.host')}</small> : null}
-                {p.is_bot ? <small> · {t('waiting.bot')}</small> : <small> · XP {p.xp ?? 0}</small>}
+                {p.is_bot ? <small> · {t(`waiting.level.${p.bot_level ?? 'normal'}`).toLowerCase()}</small> : <small> · XP {p.xp ?? 0}</small>}
               </span>
               {p.is_bot ? (
                 <button type="button" className="players__remove" onClick={() => removeBot(p.id)} aria-label={t('waiting.removeBot')}>
@@ -84,9 +93,20 @@ export function WaitingRoom({ state }: Props) {
           ))}
         </ul>
         {config?.bots !== false && state.players.length < state.max_players ? (
-          <Button variant="paper" onClick={addBot}>
-            {t('waiting.addBot')}
-          </Button>
+          <div className="players__add">
+            <Button variant="paper" onClick={() => addBot(level)}>
+              {t('waiting.addBot')}
+            </Button>
+            <button
+              type="button"
+              className={`chip chip--level chip--level-${level}`}
+              aria-label={t('waiting.level')}
+              title={t('waiting.level')}
+              onClick={() => setLevel(LEVELS[(LEVELS.indexOf(level) + 1) % LEVELS.length] ?? 'normal')}
+            >
+              {t(`waiting.level.${level}`)}
+            </button>
+          </div>
         ) : null}
         {state.players.length < 2 ? <p className="muted">{t('waiting.needPlayers')}</p> : null}
         {state.players.length >= 2 && me?.is_ready ? <p className="muted">{t('waiting.waitingOthers')}</p> : null}

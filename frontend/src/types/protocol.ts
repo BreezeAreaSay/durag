@@ -8,6 +8,8 @@ export interface Card {
   rank: number; // 2..14, 15 = Joker, 16 = Super card
 }
 
+export type BotLevel = 'easy' | 'normal' | 'hard';
+
 export interface Player {
   id: string;
   name: string;
@@ -22,6 +24,10 @@ export interface Player {
   stump_count: number;
   is_bot?: boolean; // seat driven by the server (v10 §2)
   xp?: number; // lifetime experience: unlocks reactions with effects
+  admin?: boolean; // listed in ADMIN_IDS: every reaction, skin and frame
+  wins?: number; // lifetime wins (first out of a finished game)
+  bot_level?: BotLevel; // how well a bot seat plays
+  scar?: boolean; // lost the last finished game: the fool's mark until a win
 }
 
 export interface LogEntry {
@@ -115,7 +121,7 @@ export type ClientMessage =
   | { type: 'RESOLVE_BOUT' } // "nothing more to throw in" (alias PASS on the server)
   | { type: 'READY'; payload: { ready: boolean } }
   | { type: 'LEAVE_ROOM' }
-  | { type: 'ADD_BOT' } // lobby: seat a server-driven opponent
+  | { type: 'ADD_BOT'; payload?: { level: BotLevel } } // lobby: seat a server-driven opponent
   | { type: 'REMOVE_BOT'; payload: { player_id: string } }
   | { type: 'SEND_EMOJI'; payload: { emoji: string } } // alias REACT on the server
   | { type: 'PING' };

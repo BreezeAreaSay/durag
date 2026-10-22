@@ -110,7 +110,7 @@ export function EffectLayer() {
 
   if (bursts.length === 0) return null;
   return (
-    <div className="fx-layer" aria-hidden="true">
+    <div className="effects-layer" aria-hidden="true">
       {bursts.map((b) => (
         <div key={b.id} className={`fx fx--${b.effect}`}>
           {b.effect === 'boom' ? <div className="fx-flash" /> : null}

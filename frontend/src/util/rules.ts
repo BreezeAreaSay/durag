@@ -7,7 +7,7 @@ export function canBeat(attack: Card, defense: Card, trumpSuit: Suit | ''): bool
   if (isSuper(defense)) return true;
   if (isSuper(attack)) return false;
   if (isJoker(defense)) {
-    if (isJoker(attack)) return false;
+    if (isJoker(attack)) return attack.id !== defense.id; // a Joker beats the Joker of the other colour
     return defense.id === 'RJ' ? isRed(attack) : isBlack(attack);
   }
   if (isJoker(attack)) return false;
@@ -52,18 +52,21 @@ export function roleOf(state: GameState, playerId: string): Role {
 export function canThrowIn(state: GameState, card: Card): boolean {
   if (state.table_order.length === 0) return false;
   const defender = state.players.find((p) => p.id === state.defender_id);
-  // classic limit (server: ThrowInAllowed): the defender must hold a card for
-  // every attack still waiting, whether they are beating or taking
+  if (!defender) return false;
   if (state.max_attacks && state.table_order.length >= state.max_attacks) return false;
-  const undefended = tablePairs(state).filter((p) => !p.defense).length;
-  if (!defender || defender.hand_count <= undefended) return false;
+  // hand limit (server: ThrowInAllowed): while beating, the defender must hold
+  // a card for every attack still waiting; once taking, only the rank limits
+  if (!state.defender_taking) {
+    const undefended = tablePairs(state).filter((p) => !p.defense).length;
+    if (defender.hand_count <= undefended) return false;
+  }
   return tableRanks(state).has(card.rank);
 }
 
 /** Whether the viewer (defender) could transfer with this card (hint only). */
 export function canTransferWith(state: GameState, card: Card): boolean {
-  // the Super card never transfers; a Joker neither beats nor passes on the other Joker
-  if (state.table_order.length === 0 || state.defender_taking || isSuper(card) || isJoker(card)) return false;
+  // the Super card never transfers; a Joker transfers only a Joker attack (the rank check below)
+  if (state.table_order.length === 0 || state.defender_taking || isSuper(card)) return false;
   const pairs = tablePairs(state);
   if (pairs.some((p) => p.defense)) return false;
   return pairs.every((p) => p.attack.rank === card.rank);

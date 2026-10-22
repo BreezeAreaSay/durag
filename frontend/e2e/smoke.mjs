@@ -77,9 +77,10 @@ try {
   await a.locator('.me .avatar-btn').click();
   await a.locator('.emoji-panel').waitFor({ timeout: 3000 });
   await a.locator('.emoji-panel__btn', { hasText: '🔥' }).click();
-  await a.locator('.reaction--me').waitFor({ timeout: 3000 });
-  await b.locator('.opponent .reaction').waitFor({ timeout: 3000 });
-  log('reaction delivered:', (await b.locator('.opponent .reaction').textContent())?.trim());
+  // reactions fly from the sender's avatar to the middle of the table on every screen
+  await a.locator('.fly').first().waitFor({ timeout: 3000 });
+  await b.locator('.fly').first().waitFor({ timeout: 3000 });
+  log('reaction delivered:', (await b.locator('.fly').first().textContent())?.trim());
   await b.screenshot({ path: join(here, 'shot-reaction.png') });
 
   const attacker = (await status(a)).includes('АТАКУЙ') ? a : b;

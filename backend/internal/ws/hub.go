@@ -17,6 +17,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/breezeareasay/durag/backend/internal/bot"
 	"github.com/breezeareasay/durag/backend/internal/game"
 	"github.com/breezeareasay/durag/backend/internal/monitor"
 	"github.com/breezeareasay/durag/backend/internal/store"
@@ -214,12 +215,23 @@ func (h *Hub) join(c *Client, raw json.RawMessage) {
 	c.setRoom(roomID, id.ID)
 	replaced := h.addToRoom(c)
 	stats, _ := h.store.UserStats(h.ctx, id.ID)
+	wins, werr := h.store.Wins(h.ctx, id.ID)
+	if werr != nil {
+		h.log.Warn("ws: wins lookup failed", "player", id.ID, "err", werr)
+	}
+	prof, perr := h.store.Profile(h.ctx, id.ID)
+	if perr != nil {
+		h.log.Warn("ws: profile lookup failed", "player", id.ID, "err", perr)
+	}
 	state, err := h.store.Update(h.ctx, roomID, p.Create, func(s *game.GameState) error {
 		if err := h.engine.Join(s, id.ID, id.Name, id.AvatarURL); err != nil {
 			return err
 		}
 		if pl := s.Player(id.ID); pl != nil {
 			pl.XP = stats.XP
+			pl.Admin = h.isAdmin(id.ID)
+			pl.Wins = wins
+			pl.Scar = prof.Scar
 		}
 		return nil
 	})
@@ -240,6 +252,9 @@ func (h *Hub) join(c *Client, raw json.RawMessage) {
 	}
 	h.mon.Inc("joins")
 	h.afterUpdate(roomID, state)
+	if len(replaced) == 0 && hasBots(state) {
+		h.botGreet(roomID, state, []string{id.ID}) // the bots know who just sat down
+	}
 }
 
 func (h *Hub) intent(c *Client, env Envelope) {
@@ -288,7 +303,18 @@ func (h *Hub) intent(c *Client, env Envelope) {
 			if h.bots.Disabled {
 				return errBotsDisabled
 			}
-			return h.engine.AddBot(s, newBotID(), pickBotName(s))
+			var p AddBotPayload
+			if len(env.Payload) > 0 {
+				_ = json.Unmarshal(env.Payload, &p) // a bad payload is just a normal bot
+			}
+			id := newBotID()
+			if err := h.engine.AddBot(s, id, pickBotName(s)); err != nil {
+				return err
+			}
+			if seat := s.Player(id); seat != nil {
+				seat.BotLevel = string(bot.ParseLevel(p.Level))
+			}
+			return nil
 		case TypeRemoveBot:
 			var p RemoveBotPayload
 			if err := json.Unmarshal(env.Payload, &p); err != nil {
@@ -318,6 +344,15 @@ func (h *Hub) intent(c *Client, env Envelope) {
 		}
 	}
 	h.afterUpdate(roomID, state)
+	if env.Type == TypeAddBot {
+		var humans []string
+		for _, p := range state.Players {
+			if !p.IsBot && p.Connected {
+				humans = append(humans, p.ID)
+			}
+		}
+		h.botGreet(roomID, state, humans) // the new bot looks around the table
+	}
 }
 
 var (
@@ -370,6 +405,9 @@ func (h *Hub) react(c *Client, raw json.RawMessage) {
 // deadline of the room: the end of the resolving pause, the automatic stump
 // pickup or the turn timer, whichever comes first.
 func (h *Hub) afterUpdate(roomID string, state *game.GameState) {
+	if state.Status == game.StatusFinished && !state.WinAwarded {
+		state = h.awardWin(roomID, state)
+	}
 	h.publish(roomID, state)
 	h.scheduleTick(roomID, state)
 	h.scheduleBots(roomID, state)
@@ -444,6 +482,62 @@ func (h *Hub) recordFinish(roomID string, state *game.GameState) {
 			}
 		}
 	}
+}
+
+// awardWin counts the win of a finished game exactly once: the first player
+// out of the game gets +1 on their lifetime counter (bots and draws get
+// nothing). The flag and the counter move together under the room lock, so
+// two backend instances cannot both count the same game.
+func (h *Hub) awardWin(roomID string, state *game.GameState) *game.GameState {
+	next, err := h.store.Update(h.ctx, roomID, false, func(s *game.GameState) error {
+		if s.Status != game.StatusFinished || s.WinAwarded {
+			return errStale
+		}
+		s.WinAwarded = true
+		now := time.Now().Unix()
+		winnerID := s.Winner()
+		for i := range s.Players {
+			p := &s.Players[i]
+			if p.IsBot {
+				// a bot that lost at this table comes back a level stronger
+				if p.ID == s.LoserID {
+					next := bot.Promote(bot.ParseLevel(p.BotLevel))
+					if string(next) != p.BotLevel {
+						p.BotLevel = string(next)
+						h.botPromote(roomID, p.ID, next)
+					}
+				}
+				continue
+			}
+			prof, err := h.store.Profile(h.ctx, p.ID)
+			if err != nil {
+				return err
+			}
+			prof.Fold(p.Stats, p.ID == s.LoserID, p.ID == winnerID, now)
+			if err := h.store.SaveProfile(h.ctx, p.ID, prof); err != nil {
+				return err
+			}
+			p.Scar = prof.Scar
+			h.dossier(roomID, p) // refresh what the bots know
+		}
+		winner := s.Player(winnerID)
+		if winner == nil || winner.IsBot {
+			return nil
+		}
+		n, err := h.store.AddWin(h.ctx, winner.ID)
+		if err != nil {
+			return err
+		}
+		winner.Wins = n
+		return nil
+	})
+	if err != nil {
+		if !errors.Is(err, errStale) {
+			h.log.Warn("ws: award win failed", "room", roomID, "err", err)
+		}
+		return state
+	}
+	return next
 }
 
 // nextDeadline returns the earliest pending server deadline of a state (unix ms) or 0.

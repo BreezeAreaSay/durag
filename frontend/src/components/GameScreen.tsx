@@ -3,8 +3,11 @@ import { Hud } from './Hud';
 import { ResultOverlay } from './ResultOverlay';
 import { EmojiPanel } from './EmojiPanel';
 import { EffectLayer } from './EffectLayer';
+import { ReactionLayer } from './ReactionLayer';
+import { SLAM_EMOJI } from '../util/emoji';
+import { sound } from '../util/audio';
 import { PixiTable } from '../pixi/PixiTable';
-import { toSceneModel } from '../pixi/model';
+import { toSceneModel, type HandSort } from '../pixi/model';
 import { computeMetrics } from '../pixi/layout';
 import { useGame } from '../state/GameContext';
 import { closingConfirmation, haptic } from '../telegram/useTelegram';
@@ -16,11 +19,57 @@ interface Props {
 }
 
 export function GameScreen({ state }: Props) {
-  const { selfId, playCard, transfer, takeStump, lastError, reactions, react, connection, isAdmin } = useGame();
+  const { selfId, playCard, transfer, takeStump, lastError, reactions, react, connection, isAdmin, skin, theme } = useGame();
   const [panelOpen, setPanelOpen] = useState(false);
   const [hudTop, setHudTop] = useState(150);
   const [size, setSize] = useState({ w: window.innerWidth, h: window.innerHeight });
+  const [slam, setSlam] = useState(0);
+  const [shaking, setShaking] = useState(false);
   const gameRef = useRef<HTMLDivElement>(null);
+  const gazeTimer = useRef(0);
+  const [sort, setSortState] = useState<HandSort>(() => {
+    try {
+      return localStorage.getItem('durag.sort') === 'suit' ? 'suit' : 'rank';
+    } catch {
+      return 'rank';
+    }
+  });
+  const setSort = useCallback((next: HandSort) => {
+    setSortState(next);
+    try {
+      localStorage.setItem('durag.sort', next);
+    } catch {
+      /* private mode: the choice lives for the session */
+    }
+  }, []);
+
+  // a fist on the table from anybody in the room: cards jump, the screen shakes
+  useEffect(() => {
+    const hit = Object.values(reactions).find((r) => r.emoji === SLAM_EMOJI);
+    if (!hit) return;
+    setSlam(hit.nonce);
+    setShaking(true);
+    haptic('heavy');
+    const id = window.setTimeout(() => setShaking(false), 650);
+    return () => window.clearTimeout(id);
+  }, [reactions]);
+
+  // the table glanced at a card: the player's sticker turns its head that way for a moment
+  const onGaze = useCallback((x: number, y: number) => {
+    const el = gameRef.current;
+    const me = el?.querySelector<HTMLElement>('.me .avatar-btn');
+    if (!el || !me) return;
+    const base = el.getBoundingClientRect();
+    const r = me.getBoundingClientRect();
+    const cx = r.left + r.width / 2 - base.left;
+    const cy = r.top + r.height / 2 - base.top;
+    const angle = Math.atan2(y - cy, x - cx); // 0 = to the right
+    el.style.setProperty('--gaze', `${(Math.cos(angle) * 5).toFixed(1)}deg`); // lean towards the card, at most 5°
+    el.style.setProperty('--gaze-y', `${(Math.sin(angle) * 3).toFixed(1)}px`);
+    el.classList.add('game--gaze');
+    window.clearTimeout(gazeTimer.current);
+    gazeTimer.current = window.setTimeout(() => el.classList.remove('game--gaze'), 900);
+  }, []);
 
   const onTopHeight = useCallback((h: number) => setHudTop((prev) => (Math.abs(prev - h) < 1 ? prev : Math.round(h))), []);
   const onAvatarClick = useCallback(() => setPanelOpen(true), []);
@@ -36,7 +85,7 @@ export function GameScreen({ state }: Props) {
   }, []);
 
   const metrics = useMemo(() => computeMetrics(size.w, size.h, hudTop), [size, hudTop]);
-  const model = useMemo(() => (selfId ? toSceneModel(state, selfId) : null), [state, selfId]);
+  const model = useMemo(() => (selfId ? toSceneModel(state, selfId, skin, sort) : null), [state, selfId, skin, sort]);
   const reject = useMemo(() => (lastError?.cardId ? { cardId: lastError.cardId, nonce: lastError.nonce } : null), [lastError]);
   const labels = useMemo(() => ({ trump: t('game.trump'), stump: t('game.stump').toUpperCase() }), []);
 
@@ -50,13 +99,15 @@ export function GameScreen({ state }: Props) {
     if (!last) return;
     if (last.type === 'bout_end' || last.type === 'took' || last.type === 'bito') haptic('medium');
     else if (last.type === 'finish') haptic('success');
+    if (last.type === 'took') sound.took();
+    else if (last.type === 'bito') sound.bito();
   }, [state.log]);
 
   const resolving = state.phase === 'resolving';
   const defenderName = state.players.find((p) => p.id === state.defender_id)?.name ?? '?';
 
   return (
-    <div className="game" ref={gameRef}>
+    <div className={`game ${shaking ? 'game--shake' : ''}`} ref={gameRef} onPointerDown={() => sound.unlock()}>
       {model ? (
         <PixiTable
           model={model}
@@ -76,9 +127,14 @@ export function GameScreen({ state }: Props) {
             haptic('light');
             transfer(cardId);
           }}
+          onSlam={() => react(SLAM_EMOJI)}
+          onGaze={onGaze}
+          slam={slam}
+          theme={theme}
         />
       ) : null}
-      <Hud state={state} handTop={metrics.handTop} reactions={reactions} onAvatarClick={onAvatarClick} onTopHeight={onTopHeight} />
+      <Hud state={state} handTop={metrics.handTop} handMiddle={metrics.height - metrics.cardH / 2 - 58} reactions={reactions} onAvatarClick={onAvatarClick} onTopHeight={onTopHeight} sort={sort} onSort={setSort} />
+      <ReactionLayer reactions={reactions} host={gameRef} target={{ x: size.w / 2, y: (metrics.tableTop + metrics.tableBottom) / 2 }} />
       {resolving ? (
         <div className={`stamp ${state.resolve_outcome === 'took' ? 'stamp--took' : ''}`} key={`${state.bout_number}-${state.resolve_outcome}`}>
           {state.resolve_outcome === 'took' ? t('game.takesStamp', { name: defenderName }) : t('game.bitoStamp')}

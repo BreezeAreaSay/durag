@@ -1,9 +1,12 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { ClientConfig, ClientMessage, GameState, ServerMessage } from '../types/protocol';
+import type { ClientConfig, ClientMessage, GameState, ServerMessage, BotLevel } from '../types/protocol';
 import { isEffect, type Effect } from '../util/emoji';
 import { unlockAudio } from '../util/sound';
 import { useTelegram } from '../telegram/useTelegram';
-import { setLang } from '../i18n';
+import { setLang, t } from '../i18n';
+import { loadSkin, loadWins, saveSkin, saveWins, type SkinId } from '../util/progress';
+import { applyTheme, loadTheme, type Theme } from '../util/theme';
+import { FX_EVENT, applyFx, effectiveFx, loadFx, type FxLevel, type FxMode } from '../util/fx';
 
 export type Connection = 'connecting' | 'open' | 'closed';
 
@@ -56,10 +59,24 @@ export interface GameContextValue {
   reactions: Record<string, Reaction>;
   /** The latest premium reaction; the EffectLayer plays each nonce once. */
   lastEffect: LiveEffect | null;
+  /** Lifetime wins of the viewer: counted by the server, remembered locally. */
+  wins: number;
+  /** The chosen card back. */
+  skin: SkinId;
+  setSkin(skin: SkinId): void;
+  theme: Theme;
+  setTheme(theme: Theme): void;
+  /** effects: auto / full / lite, and what actually runs */
+  fx: FxMode;
+  fxLevel: FxLevel;
+  setFx(mode: FxMode): void;
+  /** a one-line notice for the toast (not an error) */
+  notice: string | null;
+  clearNotice(): void;
   react(emoji: string): void;
   join(roomId: string, create: boolean): void;
   leave(): void;
-  addBot(): void;
+  addBot(level?: BotLevel): void;
   removeBot(playerId: string): void;
   setReady(ready: boolean): void;
   playCard(cardId: string, targetCardId?: string): void;
@@ -139,6 +156,47 @@ export function GameProvider({ children }: { children: ReactNode }) {
   const [lastEffect, setLastEffect] = useState<LiveEffect | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [adminOpen, setAdminOpen] = useState(false);
+  const [wins, setWins] = useState<number>(loadWins);
+  const [skin, setSkinState] = useState<SkinId>(() => loadSkin(loadWins()));
+  const [theme, setThemeState] = useState<Theme>(() => {
+    const t = loadTheme();
+    applyTheme(t);
+    return t;
+  });
+  const setTheme = useCallback((t: Theme) => {
+    applyTheme(t);
+    setThemeState(t);
+  }, []);
+  const [fx, setFxState] = useState<FxMode>(() => {
+    const m = loadFx();
+    document.documentElement.dataset.fx = effectiveFx(m);
+    return m;
+  });
+  const [fxLevel, setFxLevel] = useState<FxLevel>(() => effectiveFx());
+  const [notice, setNotice] = useState<string | null>(null);
+  const setFx = useCallback((m: FxMode) => {
+    applyFx(m);
+    setFxState(m);
+  }, []);
+  useEffect(() => {
+    // the table judged the phone (or the mode changed): follow, and say so once when it was automatic
+    const onFx = (e: Event) => {
+      const level = (e as CustomEvent<FxLevel>).detail;
+      setFxLevel((prev) => {
+        if (prev !== level && loadFx() === 'auto' && level === 'lite') setNotice(t('ui.fxAuto'));
+        return level;
+      });
+    };
+    window.addEventListener(FX_EVENT, onFx);
+    return () => window.removeEventListener(FX_EVENT, onFx);
+  }, []);
+  const setSkin = useCallback((id: SkinId) => {
+    saveSkin(id);
+    setSkinState(id);
+  }, []);
+  useEffect(() => {
+    if (isAdmin) setSkinState(loadSkin(Number.POSITIVE_INFINITY)); // admins own every skin
+  }, [isAdmin]);
   const reactionTimers = useRef(new Map<string, number>());
 
   const socketRef = useRef<WebSocket | null>(null);
@@ -255,6 +313,12 @@ export function GameProvider({ children }: { children: ReactNode }) {
         }
         if (msg.type === 'STATE_UPDATE') {
           setState(msg.payload);
+          const mine = msg.payload.players.find((p) => p.id === msg.payload.viewer_id)?.wins ?? 0;
+          setWins((prev) => {
+            if (mine <= prev) return prev;
+            saveWins(mine);
+            return mine;
+          });
           setRoomId(msg.payload.room_id);
           roomRef.current = { roomId: msg.payload.room_id, create: false };
           sessionStorage.setItem(ROOM_KEY, msg.payload.room_id);
@@ -372,11 +436,21 @@ export function GameProvider({ children }: { children: ReactNode }) {
       replaced,
       reactions,
       lastEffect,
+      wins,
+      skin,
+      setSkin,
+      theme,
+      setTheme,
+      fx,
+      fxLevel,
+      setFx,
+      notice,
+      clearNotice: () => setNotice(null),
       react: (emoji) => send({ type: 'SEND_EMOJI', payload: { emoji } }),
       join,
       leave,
       setReady: (ready) => send({ type: 'READY', payload: { ready } }),
-      addBot: () => send({ type: 'ADD_BOT' }),
+      addBot: (level = 'normal') => send({ type: 'ADD_BOT', payload: { level } }),
       removeBot: (playerId) => send({ type: 'REMOVE_BOT', payload: { player_id: playerId } }),
       playCard: (cardId, targetCardId) => send({ type: 'PLAY_CARD', payload: { card_id: cardId, target_card_id: targetCardId } }),
       transfer: (cardId) => send({ type: 'TRANSFER_TURN', payload: { card_id: cardId } }),
@@ -386,7 +460,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
       setDevName,
       clearError: () => setLastError(null),
     }),
-    [connection, config, state, roomId, identity, isAdmin, adminQuery, adminOpen, lastError, replaced, reactions, lastEffect, join, leave, send, setDevName],
+    [connection, config, state, roomId, identity, isAdmin, adminQuery, adminOpen, lastError, replaced, reactions, lastEffect, wins, skin, setSkin, theme, setTheme, fx, fxLevel, setFx, notice, join, leave, send, setDevName],
   );
 
   return <GameContext.Provider value={value}>{children}</GameContext.Provider>;

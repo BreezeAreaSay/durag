@@ -12,6 +12,18 @@ export const easings = {
     const c3 = c1 + 1;
     return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
   }) as Ease,
+  /**
+   * A card with weight landing on the table: a damped cosine,
+   * 1 − (1 − t)² · cos(1.5π·t). Starts at 0, ends at 1, slides about 11%
+   * past the slot at t = 2/3 and settles. One soft overshoot reads as mass
+   * at 12 fps, where outElastic's quick wobble turns to noise.
+   */
+  land: ((t) => {
+    if (t <= 0) return 0;
+    if (t >= 1) return 1;
+    const u = 1 - t;
+    return 1 - u * u * Math.cos(1.5 * Math.PI * t);
+  }) as Ease,
   /** rubber-band snap (used when the server rejects a card) */
   outElastic: ((t) => {
     if (t <= 0) return 0;
@@ -138,6 +150,15 @@ export class StopMotionTweener {
       for (const tw of done) tw.resolve(true);
     }
   }
+}
+
+/**
+ * How long a card takes to fall a distance d (px): free fall scales with
+ * √d, so a card from across the table takes longer than one from your
+ * hand, without ever dragging on. Clamped to [180, 460] ms.
+ */
+export function fallDuration(d: number): number {
+  return Math.max(180, Math.min(460, Math.round(160 + 9 * Math.sqrt(Math.max(0, d)))));
 }
 
 function lerp(a: number, b: number, t: number): number {

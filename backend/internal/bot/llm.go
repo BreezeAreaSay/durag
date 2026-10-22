@@ -340,8 +340,9 @@ type answer struct {
 	Emoji string `json:"emoji"`
 }
 
-const systemPrompt = `Ты играешь в «Дурака» (вариант DURAG) за одного из игроков. Правила кратко: атакующий кладёт карту, защищающийся бьёт её старшей картой той же масти или козырем (козырь известен только после вскрытия), может перевести картой того же достоинства или взять весь стол. Подкидывать можно карты тех достоинств, что уже на столе, но не больше, чем карт в руке у защищающегося. Джокер бьёт любую карту своего цвета, Супер-карта бьёт всё. Кто остался с картами последним — проиграл.
-Тебе дают твою руку, стол и ПРОНУМЕРОВАННЫЙ список легальных ходов. Выбери лучший ход и ответь СТРОГО одним JSON-объектом вида {"move": <номер хода>, "say": "<короткая реплика до 60 символов или пустая строка>", "emoji": "<один эмодзи из списка 👍 👎 😂 😡 😎 🤔 🔥 💀 🤡 ❤️ 👏 🙏 или пустая строка>"}. Реплика — по-русски, в характере дворового игрока, без оскорблений, не чаще чем в каждом третьем ходе. Никакого текста вне JSON.`
+const systemPrompt = `Ты играешь в «Дурака» (вариант DURAG) за одного из игроков. Правила кратко: атакующий кладёт карту, защищающийся бьёт её старшей картой той же масти или козырем (козырь известен только после вскрытия), может перевести картой того же достоинства или взять весь стол. Подкидывать можно карты тех достоинств, что уже на столе, но не больше, чем карт в руке у защищающегося. Джокер бьёт любую карту своего цвета и Джокера другого цвета, Супер-карта бьёт всё. Когда защищающийся берёт, подкидывать можно без лимита по руке. Кто остался с картами последним — проиграл.
+Тебе дают твою руку, стол и ПРОНУМЕРОВАННЫЙ список легальных ходов. Выбери лучший ход и ответь СТРОГО одним JSON-объектом вида {"move": <номер хода>, "say": "<реплика до 40 символов или пустая строка>", "emoji": "<один эмодзи из списка 👍 👎 😂 😡 😎 🤔 🔥 💀 🤡 ❤️ 👏 🙏 👊 🚬 или пустая строка; 👊 — стукнуть кулаком по столу, 🚬 — закурить>"}. Играй по линии, которую тебе называют (пресс, сброс, счёт, охота, экономия): это твоя стратегия на текущую ситуацию, меняй ход только если видишь явную ошибку. В конце игры не отдавай сильные карты без нужды: козырь и спецкарта — на защиту или на последний ход. Тебе могут назвать карты, которые ты точно помнишь на руках соперников, и карты, которые соперник сам тебе подкидывал: используй это и в игре, и в репликах.
+Реплика — по-русски, одна короткая фраза в характере дворового игрока: подкалывай, провоцируй, шути про последний ход соперника, обращайся по имени, без мата и оскорблений. Если ходишь картой, которую тебе подкинул соперник, подколи его этим («помнишь, ты мне это подкидывал?»). Если соперник сыграл карту, которую ты помнил у него на руке, отметь это («а, та самая»). Говори только когда тебе разрешили в сообщении, иначе say — пустая строка. Никакого текста вне JSON.`
 
 // Decide implements Brain: the first model that answers with a legal move wins.
 func (l *LLM) Decide(ctx context.Context, in Context) (Decision, error) {
@@ -826,6 +827,73 @@ func Prompt(in Context) string {
 			fmt.Fprintf(&b, "%s %s", e.FromName, e.Emoji)
 		}
 	}
+	if ev := in.Event.String(); ev != "" {
+		b.WriteString("\nПоследнее: " + ev + ".")
+	}
+	plan := in.Plan
+	if plan == "" {
+		plan = ChoosePlan(s, in.BotID)
+	}
+	b.WriteString("\nТвоя линия сейчас — " + PlanText(plan) + ".")
+	if in.Memory != nil && in.level().Counts() {
+		for _, p := range s.Players {
+			if p.ID == in.BotID {
+				continue
+			}
+			if known := in.Memory.Known(p.ID); len(known) > 0 {
+				fmt.Fprintf(&b, "\nТы точно помнишь на руке у %s: %s.", p.Name, cardsText(known))
+			}
+		}
+		if n := in.Memory.Gone(); n > 0 {
+			fmt.Fprintf(&b, "\nВ отбое %d карт, ты их помнишь.", n)
+		}
+		if r := in.Memory.Recall; r.PlayerID != "" && r.Version == s.Version {
+			fmt.Fprintf(&b, "\n%s только что сыграл %s — ты помнил эту карту у него на руке.", r.Name, cardText(r.Card))
+		}
+		var returned []string
+		for _, m := range in.Moves {
+			if from := in.Memory.TookFrom(m.CardID); from != "" {
+				if c, ok := game.CardByID(m.CardID); ok {
+					returned = append(returned, cardText(c)+" (подкинул "+nameOf(s, from)+")")
+				}
+			}
+		}
+		if len(returned) > 0 {
+			b.WriteString("\nКарты у тебя на руке, которые тебе подкидывали соперники: " + strings.Join(returned, ", ") + ".")
+		}
+	}
+	for _, p := range s.Players {
+		if p.IsBot || p.ID == in.BotID {
+			continue
+		}
+		if d, ok := in.Dossiers[p.ID]; ok {
+			if text := d.String(); text != "" {
+				fmt.Fprintf(&b, "\nДосье на %s (ты помнишь его с прошлых игр): %s.", p.Name, text)
+			}
+		}
+	}
+	if in.Overheard.Text != "" && in.Overheard.BotID != in.BotID {
+		fmt.Fprintf(&b, "\nДругой бот, %s, только что сказал: «%s». Можешь ответить ему в say, если есть что.", in.Overheard.Name, in.Overheard.Text)
+	}
+	if in.Promoted != "" {
+		b.WriteString("\nТы проиграл прошлую игру за этим столом и вернулся сильнее: скажи об этом в say одной фразой, с характером.")
+	}
+	if in.Hint != nil {
+		for i, m := range in.Moves {
+			if m == *in.Hint {
+				fmt.Fprintf(&b, "\nСовет по линии: ход №%d.", i+1)
+				if in.level() == LevelHard {
+					b.WriteString(" Следуй ему, если нет явной причины иначе.")
+				}
+				break
+			}
+		}
+	}
+	if in.SpeakDue() {
+		b.WriteString("\nСейчас твоя очередь что-то сказать: одна колкая фраза в say.")
+	} else {
+		b.WriteString("\nСейчас молчи: say пустая.")
+	}
 	if in.AdminJokeDue {
 		b.WriteString("\nОдин раз за игру ты можешь сломать четвёртую стену — пошутить, что ты бот и привет админу. Можешь сделать это сейчас в поле say.")
 	}
@@ -876,8 +944,8 @@ func findAnswer(content string) (answer, bool) {
 func trimSay(s string) string {
 	s = strings.TrimSpace(s)
 	r := []rune(s)
-	if len(r) > 80 {
-		return string(r[:80]) + "…"
+	if len(r) > 48 {
+		return string(r[:48]) + "…"
 	}
 	return s
 }
@@ -901,6 +969,14 @@ func suitText(suit string) string {
 		return n
 	}
 	return suit
+}
+
+func cardsText(cards []game.Card) string {
+	parts := make([]string, 0, len(cards))
+	for _, c := range cards {
+		parts = append(parts, cardText(c))
+	}
+	return strings.Join(parts, ", ")
 }
 
 func cardText(c game.Card) string {

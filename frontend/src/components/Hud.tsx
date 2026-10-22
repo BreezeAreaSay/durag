@@ -1,13 +1,16 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { sound } from '../util/audio';
 import { Button } from './Button';
 import { Sticker } from './Sticker';
 import { TimerRing } from './TimerRing';
 import { useGame, type Reaction } from '../state/GameContext';
+import { frameWins } from '../util/progress';
 import { t, type Key } from '../i18n';
 import { SUIT_SYMBOL } from '../util/cards';
 import { roleOf, tablePairs } from '../util/rules';
 import { lastMove } from '../util/moves';
 import type { GameState, Player } from '../types/protocol';
+import type { HandSort } from '../pixi/model';
 
 interface Props {
   state: GameState;
@@ -17,6 +20,10 @@ interface Props {
   onAvatarClick(playerId: string): void;
   /** Reports the rendered height of the top panel so the table can avoid it. */
   onTopHeight(height: number): void;
+  /** y (CSS px) of the middle of the hand: the player's sticker sits there, holding the cards */
+  handMiddle: number;
+  sort: HandSort;
+  onSort(next: HandSort): void;
 }
 
 type RoleKey = 'attack' | 'throw' | 'defend' | 'take' | 'pass' | 'wait' | 'out' | 'offline' | 'stump';
@@ -71,8 +78,9 @@ function statusLine(state: GameState, selfId: string): string {
   }
 }
 
-export function Hud({ state, handTop, reactions, onAvatarClick, onTopHeight }: Props) {
-  const { selfId, take, pass, takeStump, leave, connection } = useGame();
+export function Hud({ state, handTop, reactions, onAvatarClick, onTopHeight, handMiddle, sort, onSort }: Props) {
+  const { selfId, take, pass, takeStump, leave, connection, theme, setTheme } = useGame();
+  const [soundOn, setSoundOn] = useState(sound.enabled);
   const topRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
@@ -114,11 +122,17 @@ export function Hud({ state, handTop, reactions, onAvatarClick, onTopHeight }: P
           <span className="chip chip--ghost">
             {t('game.bout')} {state.bout_number}
           </span>
+          <button className="chip chip--ghost chip--icon" onClick={() => setSoundOn(sound.toggle())} aria-label={t('ui.sound')} title={t('ui.sound')}>
+            {soundOn ? '🔊' : '🔇'}
+          </button>
+          <button className="chip chip--ghost chip--icon" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} aria-label={t('ui.theme')} title={t('ui.theme')}>
+            {theme === 'dark' ? '☀' : '☾'}
+          </button>
           <button className="chip chip--link" onClick={leave}>
             {t('game.leave')}
           </button>
         </div>
-        <ul className="opponents">
+        <ul className={`opponents ${opponents.length > 3 ? 'opponents--many' : ''}`}>
           {opponents.map((p) => {
             const key = roleKey(state, p);
             const hot = HOT_ROLES.includes(key) && !resolving;
@@ -126,13 +140,12 @@ export function Hud({ state, handTop, reactions, onAvatarClick, onTopHeight }: P
             return (
               <li key={p.id} className={`opponent ${p.out ? 'opponent--out' : ''}`}>
                 <button type="button" className="avatar-btn" onClick={() => onAvatarClick(p.id)} aria-label={p.name}>
-                  <Sticker name={p.name} avatarUrl={p.avatar_url} seed={p.id} size={40} muted={!p.connected || p.out} />
+                  <Sticker name={p.name} avatarUrl={p.avatar_url} seed={p.id} size={40} muted={!p.connected || p.out} wins={frameWins(p)} playerId={p.id} scar={p.scar} />
                   {timerFor(p.id) ? <TimerRing deadline={timerFor(p.id)} timeoutMs={state.turn_timeout_ms} size={64} /> : null}
                 </button>
-                {reaction ? (
-                  <span className={`reaction ${reaction.text ? 'reaction--text' : ''} ${reaction.effect ? `reaction--fx reaction--fx-${reaction.effect}` : ''}`} key={reaction.nonce}>
-                    {reaction.emoji}
-                    {reaction.text ? <span className="reaction__text">{reaction.text}</span> : null}
+                {reaction?.text ? (
+                  <span className="reaction reaction--text" key={reaction.nonce}>
+                    <span className="reaction__text">{reaction.text}</span>
                   </span>
                 ) : null}
                 <div className="opponent__info">
@@ -178,24 +191,26 @@ export function Hud({ state, handTop, reactions, onAvatarClick, onTopHeight }: P
         </div>
       </div>
 
+      {me ? (
+        <div className="me me__avatar" style={{ top: handMiddle - 20 }}>
+          <button type="button" className="avatar-btn" onClick={() => onAvatarClick(me.id)} aria-label={me.name}>
+            <Sticker name={me.name} avatarUrl={me.avatar_url} seed={me.id} size={34} wins={frameWins(me)} playerId={me.id} scar={me.scar} />
+            {timerFor(me.id) ? <TimerRing deadline={timerFor(me.id)} timeoutMs={state.turn_timeout_ms} size={58} /> : null}
+          </button>
+        </div>
+      ) : null}
       <footer className="hud-bottom">
         {me ? (
-          <div className="me">
-            <button type="button" className="avatar-btn" onClick={() => onAvatarClick(me.id)} aria-label={me.name}>
-              <Sticker name={me.name} avatarUrl={me.avatar_url} seed={me.id} size={34} />
-              {timerFor(me.id) ? <TimerRing deadline={timerFor(me.id)} timeoutMs={state.turn_timeout_ms} size={58} /> : null}
-            </button>
-            {reactions[me.id] ? (
-              <span className={`reaction reaction--me ${reactions[me.id]!.effect ? `reaction--fx reaction--fx-${reactions[me.id]!.effect}` : ''}`} key={reactions[me.id]!.nonce}>
-                {reactions[me.id]!.emoji}
-              </span>
-            ) : null}
+          <div className="me me__row">
             <span className={`roletag roletag--me ${HOT_ROLES.includes(myRole) && !resolving ? 'roletag--hot' : ''}`}>{roleLabel(myRole, true)}</span>
             <span className="me__meta">
               {me.name} · {me.hand_count}
               {me.stump_count ? ` · ${t('game.stump')} ${me.stump_count}` : ''}
               {` · XP ${me.xp ?? 0}`}
             </span>
+            <button type="button" className="chip chip--ghost chip--sort" onClick={() => onSort(sort === 'rank' ? 'suit' : 'rank')} aria-label={t('ui.sort')} title={t('ui.sort')}>
+              {sort === 'rank' ? t('ui.sortRank') : t('ui.sortSuit')}
+            </button>
           </div>
         ) : null}
       </footer>

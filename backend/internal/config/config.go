@@ -26,7 +26,7 @@ type Config struct {
 	BoutResolveDelay time.Duration // how long a finished bout stays on the table
 	StumpAutoDelay   time.Duration // how long players get to take their stump themselves
 	TurnTimeout      time.Duration // idle players get a default move after this (0 = off)
-	MaxAttacks       int           // attack cards per bout (classic 6; 0 = only the defender's hand limits)
+	MaxAttacks       int           // attack cards per bout (0 = only the defender's hand limits; 6 = classic)
 	LogLevel         string
 	AdminIDs         []string // Telegram user ids (or "dev:<id>") allowed into /api/admin
 
@@ -107,7 +107,7 @@ func FromEnv() (Config, error) {
 		LLMDiscover:    parseBool(getenv("LLM_DISCOVER", "true")),
 	}
 	var err error
-	if c.MaxAttacks, err = strconv.Atoi(getenv("MAX_ATTACKS", "6")); err != nil || c.MaxAttacks < 0 {
+	if c.MaxAttacks, err = strconv.Atoi(getenv("MAX_ATTACKS", "0")); err != nil || c.MaxAttacks < 0 {
 		return c, fmt.Errorf("config: MAX_ATTACKS must be a non-negative integer")
 	}
 	if c.RedisDB, err = strconv.Atoi(getenv("REDIS_DB", "0")); err != nil {

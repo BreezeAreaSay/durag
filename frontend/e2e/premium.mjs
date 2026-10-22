@@ -174,8 +174,8 @@ try {
   if (locked !== expectLocked) problems.push(`expected ${expectLocked} locked buttons at XP ${myXP}, got ${locked}`);
 
   await p.click('.emoji-panel__btn--fx:has-text("🏆")');
-  await p.locator('.fx-layer').waitFor({ timeout: 5000 });
-  await p.locator('.reaction--fx-fanfare').waitFor({ timeout: 5000 });
+  await p.locator('.effects-layer').waitFor({ timeout: 5000 });
+  await p.locator('.fx--fanfare').waitFor({ timeout: 5000 });
   const confetti = await p.locator('.fx-confetti').count();
   log('fanfare effect rendered; confetti pieces:', confetti);
   if (confetti < 40) problems.push(`expected confetti, got ${confetti}`);

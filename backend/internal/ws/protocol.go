@@ -68,6 +68,11 @@ type ReadyPayload struct {
 	Ready bool `json:"ready"`
 }
 
+// AddBotPayload is the (optional) payload of ADD_BOT.
+type AddBotPayload struct {
+	Level string `json:"level"` // easy / normal / hard; empty = normal
+}
+
 // RemoveBotPayload is the payload of REMOVE_BOT.
 type RemoveBotPayload struct {
 	PlayerID string `json:"player_id"`
@@ -88,8 +93,10 @@ type ReactionPayload struct {
 	TS       int64  `json:"ts"`               // unix milliseconds
 }
 
-// AllowedEmoji is the whitelist of free reactions; the client renders the same set.
-var AllowedEmoji = []string{"👍", "👎", "😂", "😡", "😎", "🤔", "🔥", "💀", "🤡", "❤️", "👏", "🙏"}
+// AllowedEmoji is the whitelist of reactions; the client renders the same set.
+// 👊 is a fist on the table (every client shakes its cards), 🚬 lights a
+// cigarette by the sender's avatar instead of flying to the table.
+var AllowedEmoji = []string{"👍", "👎", "😂", "😡", "😎", "🤔", "🔥", "💀", "🤡", "❤️", "👏", "🙏", "👊", "🚬"}
 
 // Premium is a reaction with an effect (and a sound) that experience unlocks.
 type Premium struct {

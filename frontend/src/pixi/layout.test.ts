@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { computeMetrics, deckSlot, discardSlot, handSlots, hitSlot, nextAttackSlot, tableSlots, trumpSlot } from './layout';
+import { computeMetrics, deckSlot, discardSlot, handSlots, hitSlot, nextAttackSlot, tableSlots, trumpSlot, jitterSlot, HAND_INSET } from './layout';
 
 const phone = computeMetrics(390, 844);
 const tablet = computeMetrics(1024, 768);
@@ -33,8 +33,9 @@ describe('hand', () => {
       expect(slots).toHaveLength(n);
       const xs = slots.map((s) => s.x);
       const mid = (Math.min(...xs) + Math.max(...xs)) / 2;
-      expect(Math.abs(mid - phone.width / 2)).toBeLessThan(1);
-      expect(Math.min(...xs) - phone.cardW / 2).toBeGreaterThanOrEqual(0);
+      // centred in the room right of the player's sticker
+      expect(Math.abs(mid - (HAND_INSET + (phone.width - HAND_INSET) / 2))).toBeLessThan(1);
+      expect(Math.min(...xs) - phone.cardW / 2).toBeGreaterThanOrEqual(HAND_INSET);
       expect(Math.max(...xs) + phone.cardW / 2).toBeLessThanOrEqual(phone.width);
     }
     expect(handSlots(0, phone)).toEqual([]);
@@ -81,5 +82,25 @@ describe('piles', () => {
       expect(s.x).toBeLessThan(phone.width);
     }
     expect(trumpSlot(phone).x).toBeGreaterThan(deckSlot(phone).x);
+  });
+});
+
+describe('jitterSlot', () => {
+  const base = { x: 100, y: 100, rotation: 0, scale: 1 };
+  it('is deterministic per card id', () => {
+    expect(jitterSlot(base, 'H_7')).toEqual(jitterSlot(base, 'H_7'));
+    expect(jitterSlot(base, 'H_7')).not.toEqual(jitterSlot(base, 'S_7'));
+  });
+  it('stays within the careless bounds and scales with amount', () => {
+    const ids = ['H_2', 'H_7', 'S_14', 'RJ', 'BJ', 'SC', 'C_10', 'D_12', 'S_3', 'C_4'];
+    for (const id of ids) {
+      const j = jitterSlot(base, id);
+      expect(Math.abs(j.rotation)).toBeLessThanOrEqual(0.35);
+      expect(Math.abs(j.x - 100)).toBeLessThanOrEqual(4);
+      expect(Math.abs(j.y - 100)).toBeLessThanOrEqual(4);
+      const small = jitterSlot(base, id, 0.3);
+      expect(Math.abs(small.rotation)).toBeCloseTo(Math.abs(j.rotation) * 0.3, 6);
+    }
+    expect(jitterSlot(base, 'H_7', 0)).toEqual(base);
   });
 });

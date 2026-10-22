@@ -18,6 +18,8 @@ type Memory struct {
 	subs  map[string]map[chan []byte]struct{}
 	users map[string]UserStats
 	games map[string]bool
+	wins  map[string]int
+	prof  map[string]Profile
 }
 
 // NewMemory creates an empty in-memory store.
@@ -28,6 +30,7 @@ func NewMemory() *Memory {
 		subs:  map[string]map[chan []byte]struct{}{},
 		users: map[string]UserStats{},
 		games: map[string]bool{},
+		wins:  map[string]int{},
 	}
 }
 
@@ -193,6 +196,39 @@ func (m *Memory) TopUsers(_ context.Context, n int) ([]UserStats, error) {
 		out = out[:n]
 	}
 	return out, nil
+}
+
+// AddWin implements Store.
+func (m *Memory) AddWin(_ context.Context, playerID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.wins[playerID]++
+	return m.wins[playerID], nil
+}
+
+// Wins implements Store.
+func (m *Memory) Wins(_ context.Context, playerID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.wins[playerID], nil
+}
+
+// Profile implements Store.
+func (m *Memory) Profile(_ context.Context, playerID string) (Profile, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.prof[playerID], nil
+}
+
+// SaveProfile implements Store.
+func (m *Memory) SaveProfile(_ context.Context, playerID string, p Profile) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.prof == nil {
+		m.prof = map[string]Profile{}
+	}
+	m.prof[playerID] = p
+	return nil
 }
 
 // Close implements Store.

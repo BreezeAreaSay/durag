@@ -1,5 +1,6 @@
 import type { Card, GameState, Outcome, Suit } from '../types/protocol';
 import { roleOf, tablePairs, type Role, type TablePair } from '../util/rules';
+import type { SkinId } from '../util/progress';
 
 /** Everything the PixiJS scene needs, derived from the sanitized state. */
 export interface SceneModel {
@@ -15,6 +16,8 @@ export interface SceneModel {
   defenderTaking: boolean;
   interactive: boolean;
   lastEvent: string;
+  /** the player of the last log entry */
+  lastEventBy: string;
   /** The finished bout is still shown on the table (server-side pause). */
   resolving: boolean;
   resolveOutcome: Outcome;
@@ -27,6 +30,8 @@ export interface SceneModel {
   /** the viewer is one of the players who must take their stump now */
   mustTakeStump: boolean;
   version: number;
+  /** the viewer's chosen card back (piles, stump, hidden trump) */
+  skin: SkinId;
 }
 
 function lastOutcomeOf(state: GameState): Outcome {
@@ -37,11 +42,27 @@ function lastOutcomeOf(state: GameState): Outcome {
   return '';
 }
 
-export function toSceneModel(state: GameState, selfId: string): SceneModel {
+/** how the viewer likes the hand laid out */
+export type HandSort = 'rank' | 'suit';
+
+const SUIT_ORDER: Record<string, number> = { Hearts: 0, Diamonds: 1, Clubs: 2, Spades: 3, None: 4 };
+
+/** Specials go last either way; the rest by rank then suit, or by suit then rank. */
+export function sortHand(cards: Card[], mode: HandSort): Card[] {
+  const key = (c: Card): [number, number, number] =>
+    c.rank >= 15 ? [1, c.rank, 0] : mode === 'suit' ? [0, SUIT_ORDER[c.suit] ?? 4, c.rank] : [0, c.rank, SUIT_ORDER[c.suit] ?? 4];
+  return [...cards].sort((a, b) => {
+    const ka = key(a);
+    const kb = key(b);
+    return ka[0] - kb[0] || ka[1] - kb[1] || ka[2] - kb[2];
+  });
+}
+
+export function toSceneModel(state: GameState, selfId: string, skin: SkinId = 'classic', sort: HandSort = 'rank'): SceneModel {
   const me = state.players.find((p) => p.id === selfId);
   const role = roleOf(state, selfId);
   return {
-    hand: me?.hand ?? [],
+    hand: sortHand(me?.hand ?? [], sort),
     table: tablePairs(state),
     deckCount: state.deck_count,
     trumpCard: state.trump_card,
@@ -53,6 +74,7 @@ export function toSceneModel(state: GameState, selfId: string): SceneModel {
     defenderTaking: state.defender_taking,
     interactive: state.status === 'playing' && role !== 'spectator' && state.phase !== 'resolving' && state.stump_pending.length === 0,
     lastEvent: state.log[state.log.length - 1]?.type ?? '',
+    lastEventBy: state.log[state.log.length - 1]?.player_id ?? '',
     resolving: state.phase === 'resolving',
     resolveOutcome: state.resolve_outcome,
     lastOutcome: lastOutcomeOf(state),
@@ -60,5 +82,6 @@ export function toSceneModel(state: GameState, selfId: string): SceneModel {
     stumpStep: state.stump_pending.length > 0,
     mustTakeStump: state.stump_pending.includes(selfId),
     version: state.version,
+    skin,
   };
 }

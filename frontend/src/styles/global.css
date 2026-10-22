@@ -30,18 +30,27 @@
 }
 
 :root {
-  /* v10 "Indie Punk & Glitch": dark worn paper, acid tape, toxic magenta */
-  --bg: #161513;
+  /* v10 "Indie Punk & Glitch": worn paper, acid tape, toxic magenta.
+     Light paper is the default; [data-theme="dark"] switches to deep night. */
+  --bg: #e4e0d6;
   --paper: #ece9e1;
   --ink: #0d0d0d;
   --acid: #e6ff00;
   --red: #cf1fff; /* the "red" suits are toxic magenta now */
   --toxic: #cf1fff;
-  --grey: #8a877f;
-  --text: #ece9e1;
+  --grey: #6b685f;
+  --text: #0d0d0d;
+  --plate: rgba(236, 233, 225, 0.85); /* small info plates: paper by day */
+  --plate-border: rgba(13, 13, 13, 0.45);
+  --muted: #5e5b53;
   --shadow: 6px 6px 0 var(--ink);
   --shadow-small: 3px 3px 0 var(--ink);
   --tape-shadow: 5px 5px 0 rgba(0, 0, 0, 0.75);
+  --grain-blend: multiply;
+  --grain-alpha: 0.35;
+  --vignette: rgba(0, 0, 0, 0.18);
+  --title: #0d0d0d;
+  --smoke: rgba(70, 70, 78, 0.6);
   --display: 'Unbounded', 'Arial Black', Impact, sans-serif;
   --mono: ui-monospace, 'SF Mono', Menlo, Consolas, 'Courier New', monospace;
   /* Telegram exposes its own insets (notch, home indicator and, in fullscreen,
@@ -49,6 +58,21 @@
      a plain browser only has env(). Whichever is larger wins. */
   --safe-top: max(env(safe-area-inset-top, 0px), calc(var(--tg-safe-area-inset-top, 0px) + var(--tg-content-safe-area-inset-top, 0px)));
   --safe-bottom: max(env(safe-area-inset-bottom, 0px), calc(var(--tg-safe-area-inset-bottom, 0px) + var(--tg-content-safe-area-inset-bottom, 0px)));
+}
+
+:root[data-theme='dark'] {
+  /* deep, cold night rather than grey: near-black with a drop of blue */
+  --bg: #07070b;
+  --grey: #8a877f;
+  --text: #ece9e1;
+  --plate: rgba(13, 13, 13, 0.7); /* and ink at night */
+  --plate-border: rgba(236, 233, 225, 0.5);
+  --muted: #8a877f;
+  --grain-blend: screen;
+  --grain-alpha: 0.5;
+  --vignette: rgba(0, 0, 0, 0.6);
+  --title: #ece9e1;
+  --smoke: rgba(200, 200, 205, 0.75);
 }
 
 * {
@@ -87,8 +111,8 @@ body::before {
   inset: 0;
   z-index: 0;
   pointer-events: none;
-  opacity: 0.6;
-  mix-blend-mode: screen;
+  opacity: var(--grain-alpha);
+  mix-blend-mode: var(--grain-blend);
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.95' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.75 0 0 0 0 0.73 0 0 0 0 0.68 0 0 0 0.22 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 body::after {
@@ -100,7 +124,7 @@ body::after {
   opacity: 0.35;
   mix-blend-mode: soft-light;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='600' height='600'%3E%3Cfilter id='f'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.012 0.35' numOctaves='2' seed='7' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.9 0 0 0 0 0.88 0 0 0 0 0.8 0 0 0 0.5 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23f)'/%3E%3C/svg%3E"),
-    radial-gradient(ellipse at 50% 40%, transparent 55%, rgba(0, 0, 0, 0.55) 100%);
+    radial-gradient(ellipse at var(--lx, 50%) var(--ly, 40%), transparent 55%, var(--vignette) 100%);
 }
 
 #root {
@@ -118,7 +142,7 @@ body::after {
   letter-spacing: -0.05em;
   margin: 0;
   text-transform: uppercase;
-  color: var(--paper);
+  color: var(--title);
   text-shadow: 5px 5px 0 var(--toxic), 9px 9px 0 var(--acid);
 }
 .zine-title--code {
@@ -486,13 +510,53 @@ body::after {
 
 .opponents {
   list-style: none;
-  /* the top padding keeps reaction bubbles inside the scroll container */
-  margin: -30px 0 0;
-  padding: 36px 0 0 4px;
+  margin: 0;
+  padding: 6px 0 0 4px;
   display: flex;
-  gap: 14px;
-  overflow-x: auto;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  overflow: visible; /* bubbles hang over the edge of the row, never clipped */
   pointer-events: none; /* only the player cards below take taps */
+}
+/* four or more opponents: stickers in a row, name hidden, count under each */
+.opponents--many {
+  gap: 4px 6px;
+}
+.opponents--many .opponent {
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 0 2px;
+  width: 68px;
+}
+.opponents--many .opponent__info {
+  align-items: center;
+  gap: 2px;
+  margin-top: 10px; /* clear of the sticker's outline */
+  max-width: 100%;
+}
+.opponents--many .opponent__name {
+  display: none;
+}
+.opponents--many .opponent__cards {
+  font-size: 12px;
+}
+.opponents--many .roletag {
+  font-size: 7px;
+  letter-spacing: 0.02em;
+  padding: 1px 3px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* a bubble on the right side of the row opens to the left, so it stays on screen */
+.opponent:not(:first-child) .reaction--text {
+  left: auto;
+  right: 0;
+}
+.opponents--many .opponent:not(:first-child) .reaction--text {
+  right: -8px;
 }
 .opponent {
   position: relative;
@@ -539,7 +603,7 @@ body::after {
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--grey);
-  background: rgba(13, 13, 13, 0.7);
+  background: var(--plate);
   border: 2px solid var(--grey);
   padding: 2px 6px;
   width: max-content;
@@ -761,12 +825,13 @@ body::after {
 /* narrow phones (320–359px): six columns still fit */
 @media (max-width: 359px) {
   .emoji-panel__row {
-    grid-template-columns: repeat(6, 40px);
+    grid-template-columns: repeat(7, 37px);
+    gap: 4px;
   }
-  .emoji-panel__btn {
-    width: 40px;
-    height: 40px;
-    font-size: 22px;
+  .emoji-panel__row .emoji-panel__btn {
+    width: 37px;
+    height: 37px;
+    font-size: 20px;
   }
 }
 
@@ -785,8 +850,8 @@ body::after {
   color: var(--toxic);
 }
 .me__meta {
-  background: rgba(13, 13, 13, 0.7);
-  border: 1px dashed rgba(236, 233, 225, 0.5);
+  background: var(--plate);
+  border: 1px dashed var(--plate-border);
   padding: 2px 6px;
   color: var(--text);
 }
@@ -960,7 +1025,7 @@ body::after {
   font-family: var(--display);
   font-size: 12px;
   letter-spacing: 0.08em;
-  color: var(--acid);
+  color: var(--text);
 }
 .admin__table {
   width: 100%;
@@ -1026,8 +1091,13 @@ body::after {
 /* ---- reaction picker rows: free reactions on top, the ones with effects below ---- */
 .emoji-panel__row {
   display: grid;
-  grid-template-columns: repeat(6, 46px);
-  gap: 6px;
+  grid-template-columns: repeat(7, 42px);
+  gap: 5px;
+}
+.emoji-panel__row .emoji-panel__btn {
+  width: 42px;
+  height: 42px;
+  font-size: 24px;
 }
 .emoji-panel__row--fx {
   padding-top: 6px;
@@ -1081,7 +1151,7 @@ body::after {
 }
 
 /* ---- full-screen effects of premium reactions (EffectLayer) ---- */
-.fx-layer {
+.effects-layer {
   position: fixed;
   inset: 0;
   z-index: 25;
@@ -1210,4 +1280,392 @@ body.fx-shake--laugh {
   50% {
     transform: translateY(-8px);
   }
+}
+
+/* --- progression: frames by wins ------------------------------------------- */
+/* The sticker's white outline takes the tier colour (--frame, set inline from
+   util/progress). From tier 10 (50 wins) a conic ring spins behind it; --fx
+   (0..10) drives both the speed (--spin) and the glow (--glow). */
+.sticker--framed {
+  outline-color: var(--frame);
+  box-shadow: 0 0 0 6px var(--frame), 4px 4px 0 6px var(--ink);
+}
+.sticker--fx::before {
+  content: '';
+  position: absolute;
+  inset: -11px;
+  z-index: -1;
+  border-radius: 2px;
+  background: conic-gradient(from 0deg, var(--frame), #fff 25%, var(--frame) 50%, var(--acid) 75%, var(--frame));
+  box-shadow: 0 0 var(--glow) var(--frame);
+  animation: frame-spin var(--spin) linear infinite;
+}
+@keyframes frame-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sticker--fx::before {
+    animation: none;
+  }
+}
+
+/* --- reactions flying to the middle of the table ---------------------------- */
+.fx-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  pointer-events: none;
+  overflow: hidden;
+}
+/* X is linear, Y eases out: two easings on two axes draw an arc for free.
+   The opacity fades on its own linear clock, in parallel with the flight. */
+.fly {
+  position: absolute;
+  font-size: 30px;
+  line-height: 1;
+  transform: translate(-50%, -50%);
+  animation: fly-x 1100ms linear both, fly-fade 1100ms linear both;
+}
+.fly__y {
+  display: block;
+  animation: fly-y 1100ms cubic-bezier(0.2, 0.9, 0.3, 1) both;
+}
+@keyframes fly-x {
+  to {
+    transform: translate(calc(-50% + var(--dx)), -50%);
+  }
+}
+@keyframes fly-y {
+  from {
+    transform: translateY(0) scale(0.8);
+  }
+  to {
+    transform: translateY(var(--dy)) scale(1.9);
+  }
+}
+@keyframes fly-fade {
+  0% {
+    opacity: 0;
+  }
+  12% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* --- lobby extras, skins, rules --------------------------------------------- */
+.lobby__extras {
+  margin-top: 0;
+}
+.overlay--fixed {
+  position: fixed;
+  overflow-y: auto;
+  align-items: flex-start;
+  padding-top: calc(24px + var(--safe-top));
+  padding-bottom: calc(24px + var(--safe-bottom));
+}
+.overlay__card--tall {
+  text-align: left;
+  transform: none;
+}
+.overlay__card--tall .zine-title--result {
+  text-align: center;
+}
+.skins__h {
+  font-family: var(--display);
+  font-size: 13px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  margin: 22px 0 10px;
+  border-bottom: 3px solid var(--ink);
+}
+.skins {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.skin {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+}
+.skin--locked .back {
+  opacity: 0.45;
+  filter: grayscale(1);
+}
+.skin--on .back {
+  outline: 4px solid var(--acid);
+}
+.skin__info {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+  font-family: var(--mono);
+  font-size: 13px;
+}
+.frames {
+  display: flex;
+  gap: 22px;
+  align-items: center;
+  padding: 14px 6px 14px 18px;
+}
+/* card backs in CSS, the same two designs CardView draws */
+.back {
+  flex: none;
+  width: 58px;
+  height: 84px;
+  border-radius: 4px;
+  border: 2px solid var(--paper);
+  background: var(--ink);
+  box-shadow: 4px 4px 0 var(--paper);
+  position: relative;
+}
+.back--classic::after {
+  content: '';
+  position: absolute;
+  inset: 5px;
+  background: repeating-linear-gradient(-42deg, var(--ink) 0 1.5px, var(--paper) 1.5px 7px);
+}
+/* a hexagonal lattice from two offset dot grids: the second is shifted by half a pitch in both axes */
+.back--dots::after {
+  content: '';
+  position: absolute;
+  inset: 6px;
+  border: 1.5px solid rgba(236, 233, 225, 0.5);
+  background-image: radial-gradient(circle, var(--paper) 1.8px, transparent 2px), radial-gradient(circle, var(--paper) 1.8px, transparent 2px);
+  background-size: 9px 15.6px;
+  background-position: 0 0, 4.5px 7.8px;
+}
+.meter {
+  display: block;
+  width: 150px;
+  height: 10px;
+  border: 2px solid var(--ink);
+  background: var(--paper);
+}
+.meter i {
+  display: block;
+  height: 100%;
+  width: calc(var(--p, 0) * 100%);
+  background: var(--acid);
+}
+.result__win {
+  display: inline-block;
+  margin: 6px 0 10px;
+  background: var(--acid);
+}
+.rules p {
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.45;
+  margin: 0 0 8px;
+}
+
+/* --- the fist on the table ------------------------------------------------- */
+/* a decaying shake: the amplitude halves every step, the direction flips */
+.game--shake {
+  animation: table-shake 600ms linear both;
+}
+@keyframes table-shake {
+  0% { transform: translate(0, 0) rotate(0); }
+  8% { transform: translate(-7px, 5px) rotate(-0.6deg); }
+  18% { transform: translate(6px, -4px) rotate(0.5deg); }
+  30% { transform: translate(-4px, 3px) rotate(-0.3deg); }
+  45% { transform: translate(3px, -2px) rotate(0.2deg); }
+  62% { transform: translate(-2px, 1px) rotate(-0.1deg); }
+  80% { transform: translate(1px, -1px) rotate(0); }
+  100% { transform: translate(0, 0) rotate(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .game--shake {
+    animation: none;
+  }
+}
+
+/* --- a smoke by the avatar ------------------------------------------------- */
+.smoke {
+  position: absolute;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+.smoke__cig {
+  position: absolute;
+  left: -4px;
+  top: -2px;
+  width: 18px;
+  height: 4px;
+  background: linear-gradient(90deg, #d84a2a 0 3px, var(--paper) 3px 12px, #c9a36a 12px);
+  border: 1px solid var(--ink);
+  transform: rotate(-28deg);
+  transform-origin: left center;
+  animation: cig-fade 6s linear both;
+}
+/* four puffs, phase-shifted: each rises 70px along a sine wobble, grows and dissolves */
+.smoke__puff {
+  position: absolute;
+  left: 8px;
+  top: -14px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--smoke), transparent 70%);
+  filter: blur(1.5px);
+  opacity: 0;
+  /* two cycles each, phase-shifted: the last puff dies out at 6s together with the cigarette */
+  animation: puff 2.4s ease-out 2 both;
+}
+.smoke__puff:nth-child(3) { animation-delay: 0.6s; }
+.smoke__puff:nth-child(4) { animation-delay: 1.2s; }
+.smoke__puff:nth-child(5) { animation-delay: 1.8s; }
+.smoke__puff:nth-child(5) { animation-iteration-count: 1.75; }
+@keyframes puff {
+  0% { transform: translate(0, 0) scale(0.5); opacity: 0; }
+  15% { opacity: 0.9; }
+  40% { transform: translate(6px, -30px) scale(1.4); }
+  70% { transform: translate(-4px, -52px) scale(2.2); opacity: 0.4; }
+  100% { transform: translate(3px, -72px) scale(3); opacity: 0; }
+}
+@keyframes cig-fade {
+  0%, 85% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* icon chips in the table header (sound, theme) */
+.chip--icon {
+  cursor: pointer;
+  font-size: 13px;
+  padding: 2px 7px;
+  line-height: 1.3;
+}
+
+/* --- bot level picker in the lobby ---------------------------------------- */
+.players__add {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.chip--level {
+  cursor: pointer;
+  transform: rotate(-1.5deg);
+}
+.chip--level-easy { background: var(--acid, #d6f24a); }
+.chip--level-hard { background: var(--ink); color: var(--paper); }
+
+/* --- the sticker looks at a card the table zoomed on ---------------------- */
+.me .avatar-btn {
+  transition: transform 320ms cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+.game--gaze .me .avatar-btn {
+  transform: rotate(var(--gaze, 0deg)) translateY(var(--gaze-y, 0px));
+}
+
+/* --- the player's own sticker holds the hand ------------------------------- */
+.me__avatar {
+  position: absolute;
+  left: 8px;
+  z-index: 3;
+  pointer-events: auto;
+}
+/* alive: breathing, and every so often a glance to the side */
+.me__avatar .sticker {
+  animation: idle-breathe 3.4s ease-in-out infinite, idle-glance 13s ease-in-out infinite;
+}
+@keyframes idle-breathe {
+  0%, 100% { transform: rotate(var(--tilt)) translateY(0); }
+  50% { transform: rotate(var(--tilt)) translateY(-2px); }
+}
+@keyframes idle-glance {
+  0%, 60%, 100% { filter: none; }
+  63% { transform: rotate(calc(var(--tilt) + 9deg)) translateX(2px); }
+  66% { transform: rotate(calc(var(--tilt) + 9deg)) translateX(2px); }
+  70% { transform: rotate(var(--tilt)); }
+  86% { transform: rotate(calc(var(--tilt) - 6deg)) translateX(-2px); }
+  90% { transform: rotate(var(--tilt)); }
+}
+.me__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+.me__row .roletag--me {
+  font-size: 11px;
+  padding: 4px 8px;
+  flex: none;
+}
+.me__row .me__meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chip--sort {
+  margin-left: auto;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+/* --- lite effects: a weak phone, or the owner's choice ---------------------- */
+:root[data-fx='lite'] body::before,
+:root[data-fx='lite'] body::after {
+  display: none; /* the two procedural grain layers are the dearest thing on the page */
+}
+:root[data-fx='lite'] .me__avatar .sticker {
+  animation: none;
+}
+:root[data-fx='lite'] .smoke__puff {
+  filter: none;
+}
+:root[data-fx='lite'] .fly {
+  animation-duration: 700ms;
+}
+
+/* --- the fool's mark: lost the last game, washed off by a win ------------ */
+.sticker__scar {
+  position: absolute;
+  right: -9px;
+  bottom: -9px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--red, #d84a2a);
+  color: #fff;
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+  border: 2px solid var(--ink);
+  transform: rotate(14deg);
+  box-shadow: 2px 2px 0 var(--ink);
+}
+.result__scar {
+  color: var(--red, #d84a2a);
+}
+/* a bot's line in the lobby: beside the sticker of the person it talks to */
+.players__item {
+  position: relative;
+  overflow: visible;
+}
+.reaction--lobby {
+  top: -34px;
+  left: auto;
+  right: 10px;
+  z-index: 6; /* over the row above */
+  max-width: 250px;
+  font-size: 18px;
+}
+.reaction--lobby .reaction__text {
+  font-size: 12px;
 }

@@ -490,3 +490,86 @@ func TestDiscoverFreeRanksTheCatalog(t *testing.T) {
 		t.Fatalf("status %+v", st)
 	}
 }
+
+func TestBanterCadenceIsEvenButIrregular(t *testing.T) {
+	spoke := 0
+	silence, longest := 0, 0
+	var pattern []bool
+	for i := 1; i <= 100; i++ {
+		d := Due(i, SpeakEvery)
+		pattern = append(pattern, d)
+		if d {
+			spoke++
+			silence = 0
+		} else {
+			silence++
+			if silence > longest {
+				longest = silence
+			}
+		}
+	}
+	if spoke < 45 || spoke > 55 {
+		t.Fatalf("expected about every second move, spoke %d/100", spoke)
+	}
+	if longest > 2 {
+		t.Fatalf("silence of %d moves in a row", longest)
+	}
+	// not a plain alternation: the golden rotation never repeats
+	alternating := true
+	for i := 2; i < len(pattern); i++ {
+		if pattern[i] != pattern[i-2] {
+			alternating = false
+			break
+		}
+	}
+	if alternating {
+		t.Fatal("cadence must not be a fixed every-other-move pattern")
+	}
+	if !Due(5, 1) {
+		t.Fatal("every=1 always talks")
+	}
+}
+
+func TestLastEventAndJabs(t *testing.T) {
+	in := sampleContext(t)
+	s := in.State
+	human := "h"
+	if in.BotID == "h" {
+		human = "b"
+	}
+	s.Log = append(s.Log, game.LogEntry{Type: "took", PlayerID: human, Text: "4"})
+	ev := LastEvent(s, in.BotID)
+	if ev.Kind != "took" || ev.Name != human || ev.Count != 4 {
+		t.Fatalf("event %+v", ev)
+	}
+	if !strings.Contains(ev.String(), "взял 4") {
+		t.Fatalf("prompt text %q", ev.String())
+	}
+	rng := rand.New(rand.NewPCG(3, 4))
+	line := Jab(rng, ev)
+	if !strings.Contains(line, human) && !strings.Contains(line, "4") {
+		t.Fatalf("jab %q must mention the player or the count", line)
+	}
+	if strings.Contains(line, "{") {
+		t.Fatalf("unfilled placeholder in %q", line)
+	}
+	// the bot's own entries are skipped; nothing notable gives the generic pool
+	s.Log = []game.LogEntry{{Type: "took", PlayerID: in.BotID, Text: "6"}}
+	if ev := LastEvent(s, in.BotID); ev.Kind != "" {
+		t.Fatalf("own move must not be an event: %+v", ev)
+	}
+	if Jab(rng, Event{}) == "" {
+		t.Fatal("generic jab pool is empty")
+	}
+	// the prompt carries the event and the permission to speak
+	in.Event = Event{Kind: "lonely", Name: human}
+	in.Turn = 2 // frac(2φ) ≈ 0.236 < 0.5: due
+	p := Prompt(in)
+	if !strings.Contains(p, "одна карта") || !strings.Contains(p, "очередь что-то сказать") {
+		t.Fatalf("prompt lacks event or permission:\n%s", p)
+	}
+	in.Turn = 1 // frac(φ) ≈ 0.618: silent
+	if !strings.Contains(Prompt(in), "Сейчас молчи") {
+		t.Fatal("prompt must ask for silence off-cadence")
+	}
+}

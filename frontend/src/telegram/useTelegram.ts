@@ -40,11 +40,7 @@ export function useTelegram(): TelegramInfo {
     };
     attempt(() => tg.ready());
     attempt(() => tg.expand()); // a Mini App opened from a button starts half-height
-    // the Telegram chrome takes the app's dark paper so the header, the
-    // background behind the keyboard and the bottom bar match the table
-    attempt(() => tg.setHeaderColor('#161513'));
-    attempt(() => tg.setBackgroundColor('#161513'));
-    attempt(() => tg.setBottomBarColor?.('#161513'));
+    // header, keyboard background and bottom bar colours follow the theme (util/theme.ts applyTheme)
     attempt(() => tg.disableVerticalSwipes?.()); // dragging a card must not pull the app down
     attempt(() => tg.lockOrientation?.()); // the table is laid out for portrait
   }, []);

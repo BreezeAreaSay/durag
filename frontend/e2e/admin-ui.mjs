@@ -71,8 +71,8 @@ try {
   if (locked !== 0 || !/админ/i.test(hint)) problems.push(`admin should see everything unlocked: locked=${locked} hint=${hint}`);
   await p.screenshot({ path: join(here, 'shot-admin-emoji-small.png') });
   await p.click('.emoji-panel__btn--fx:has-text("💣")');
-  await p.locator('.reaction--fx-boom').waitFor({ timeout: 5000 });
-  await p.locator('.fx-layer').waitFor({ timeout: 5000 });
+  await p.locator('.fx--boom').waitFor({ timeout: 5000 });
+  await p.locator('.effects-layer').waitFor({ timeout: 5000 });
   log('💣 accepted for the admin at 0 XP: boom effect rendered');
   await p.waitForTimeout(300);
   await p.screenshot({ path: join(here, 'shot-admin-boom-small.png') });
