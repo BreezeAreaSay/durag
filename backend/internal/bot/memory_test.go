@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand/v2"
+	"strings"
 	"testing"
 	"time"
 
@@ -169,24 +170,21 @@ func TestLevelsBlunderDifferently(t *testing.T) {
 	}
 }
 
-func TestReturnLineWhenGivingBackAThrownCard(t *testing.T) {
+func TestTheMemoryPlaysButNeverTalks(t *testing.T) {
 	_, s := twoSeats(t)
 	bot := s.CurrentTurn
 	view := s.Sanitized(bot)
 	m := NewMemory()
 	card := view.Player(bot).Hand[0]
 	m.tookFrom[card.ID] = "H"
-	hits := 0
+	m.Recall = Recall{Card: card, PlayerID: "H", Name: "Вася", Version: view.Version}
 	for seed := uint64(1); seed <= 30; seed++ {
 		h := NewHeuristic(rand.New(rand.NewPCG(seed, 9)))
-		in := Context{State: view, BotID: bot, Moves: []game.Move{{Type: game.MoveAttack, CardID: card.ID}}, Level: LevelHard, Memory: m}
+		in := Context{State: view, BotID: bot, Moves: []game.Move{{Type: game.MoveAttack, CardID: card.ID}}, Level: LevelHard, Memory: m, Turn: int(seed)}
 		d, _ := h.Decide(context.Background(), in)
-		if d.Say != "" && containsName(d.Say, "Вася") {
-			hits++
+		if strings.Contains(d.Say, "подкидывал") || strings.Contains(d.Say, "та самая") || strings.Contains(d.Say, "Считаю") {
+			t.Fatalf("lines about remembered cards are gone: %q", d.Say)
 		}
-	}
-	if hits < 15 {
-		t.Fatalf("the bot returned a thrown card 30 times and mentioned it only %d times", hits)
 	}
 }
 

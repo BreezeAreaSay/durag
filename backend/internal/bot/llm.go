@@ -349,6 +349,22 @@ func (l *LLM) Decide(ctx context.Context, in Context) (Decision, error) {
 	if len(in.Moves) == 0 {
 		return Decision{}, ErrBadAnswer
 	}
+	return l.query(ctx, in, nil)
+}
+
+// Talk implements Talker: the move is already made by the rules, the model
+// only supplies the line (and maybe an emoji) for it.
+func (l *LLM) Talk(ctx context.Context, in Context, move game.Move) (Line, error) {
+	d, err := l.query(ctx, in, &move)
+	if err != nil {
+		return Line{}, err
+	}
+	return Line{Say: d.Say, Emoji: d.Emoji, Model: d.Model}, nil
+}
+
+// query runs the model list for a move (talk == nil) or for a line about a
+// move already made (talk != nil).
+func (l *LLM) query(ctx context.Context, in Context, talk *game.Move) (Decision, error) {
 	if paused, why := l.Paused(time.Now()); paused {
 		return Decision{}, fmt.Errorf("%w: %s", ErrPaused, why)
 	}
@@ -368,7 +384,7 @@ func (l *LLM) Decide(ctx context.Context, in Context) (Decision, error) {
 	defer cancel()
 	var lastErr error
 	for _, model := range models {
-		opts := askOptions{jsonMode: true, noThink: true}
+		opts := askOptions{jsonMode: true, noThink: true, talk: talk}
 		d, err := l.ask(ctx, model, in, opts)
 		for retry := 0; retry < 2; retry++ {
 			var he *httpError
@@ -632,16 +648,21 @@ func (l *LLM) RefreshModels(ctx context.Context) ([]string, error) {
 // askOptions are the request features a provider may reject; Decide retries
 // without them.
 type askOptions struct {
-	jsonMode bool // response_format: json_object
-	noThink  bool // reasoning: {enabled: false}
+	jsonMode bool       // response_format: json_object
+	noThink  bool       // reasoning: {enabled: false}
+	talk     *game.Move // a line about this move instead of a move
 }
 
 // ask sends one request for one model and validates the answer.
 func (l *LLM) ask(ctx context.Context, model string, in Context, opts askOptions) (Decision, error) {
+	messages := []chatMessage{{Role: "system", Content: systemPrompt}, {Role: "user", Content: Prompt(in)}}
+	if opts.talk != nil {
+		messages = []chatMessage{{Role: "system", Content: talkPrompt}, {Role: "user", Content: TalkPrompt(in, *opts.talk)}}
+	}
 	req := chatRequest{
 		Model:       model,
-		Messages:    []chatMessage{{Role: "system", Content: systemPrompt}, {Role: "user", Content: Prompt(in)}},
-		Temperature: 0.7,
+		Messages:    messages,
+		Temperature: 0.8,
 		MaxTokens:   maxAnswerTokens,
 	}
 	if opts.jsonMode {
@@ -702,10 +723,16 @@ func (l *LLM) ask(ctx context.Context, model string, in Context, opts askOptions
 	if content == "" && thoughts == "" {
 		return Decision{}, fmt.Errorf("%w: %s sent no text (finish_reason=%q)", ErrEmptyAnswer, answered, choice.FinishReason)
 	}
-	d, err := Parse(content, in)
+	parse := func(text string) (Decision, error) {
+		if opts.talk != nil {
+			return ParseSay(text)
+		}
+		return Parse(text, in)
+	}
+	d, err := parse(content)
 	if err != nil && thoughts != "" {
 		// the answer may only exist in the thoughts of a reasoning model
-		if d2, err2 := Parse(thoughts, in); err2 == nil {
+		if d2, err2 := parse(thoughts); err2 == nil {
 			d, err = d2, nil
 		}
 	}
@@ -926,6 +953,124 @@ func Parse(content string, in Context) (Decision, error) {
 	}
 	return d, nil
 }
+
+// talkPrompt is the system prompt of the talk-only mode: the rules have
+// moved, the model is the voice. It is told what it must not do: name cards
+// it cannot see and count other people's cards out loud, the two things that
+// made its lines wrong and tiresome.
+const talkPrompt = `Ты — бот за столом в «Дураке» (вариант DURAG). Ход за тебя уже сделан по правилам; от тебя нужна только одна короткая реплика в характере дворового игрока: подколоть, ответить на эмодзи, пошутить про последний ход соперника, обратиться по имени. До 60 символов, по-русски, без мата и оскорблений, без смайлов внутри текста. Говори только о том, что видно на столе и у тебя в руке: не называй карты соперников, не считай вслух, что у кого на руках. Если сказать нечего — say пустая строка. Ответь СТРОГО одним JSON-объектом {"say": "<фраза или пустая строка>", "emoji": "<один эмодзи из 👍 👎 😂 😡 😎 🤔 🔥 💀 🤡 ❤️ 👏 🙏 👊 🚬 или пустая строка; 👊 — стукнуть кулаком по столу, 🚬 — закурить>"}. Никакого текста вне JSON.`
+
+// TalkPrompt describes the table for a line about a move already made.
+func TalkPrompt(in Context, move game.Move) string {
+	s := in.State
+	var b strings.Builder
+	fmt.Fprintf(&b, "Ты — %s. ", nameOf(s, in.BotID))
+	switch in.Mood {
+	case MoodAggressive:
+		b.WriteString("Тебя провоцируют эмодзи: отвечай дерзко.\n")
+	case MoodDefensive:
+		b.WriteString("Над тобой насмехаются: отшучивайся, но без обид.\n")
+	default:
+		b.WriteString("Настроение ровное.\n")
+	}
+	if me := s.Player(in.BotID); me != nil {
+		fmt.Fprintf(&b, "У тебя %d карт. ", len(me.Hand))
+	}
+	if s.TrumpRevealed && s.TrumpSuit != "" {
+		fmt.Fprintf(&b, "Козырь: %s. ", suitText(s.TrumpSuit))
+	}
+	fmt.Fprintf(&b, "В колоде %d карт, кон №%d.\n", s.DeckCount, s.BoutNumber)
+	b.WriteString("Игроки: ")
+	for i, p := range s.Players {
+		if i > 0 {
+			b.WriteString("; ")
+		}
+		role := ""
+		switch {
+		case p.Out:
+			role = ", вышел"
+		case p.ID == s.DefenderID:
+			role = ", защищается"
+			if s.DefenderTaking {
+				role = ", берёт"
+			}
+		case p.ID == s.CurrentTurn:
+			role = ", ходит"
+		}
+		fmt.Fprintf(&b, "%s (%d карт%s)", p.Name, p.HandCount, role)
+	}
+	b.WriteString("\nСтол: ")
+	if len(s.TableOrder) == 0 {
+		b.WriteString("пусто")
+	}
+	for i, id := range s.TableOrder {
+		if i > 0 {
+			b.WriteString("; ")
+		}
+		if c, ok := game.CardByID(id); ok {
+			b.WriteString(cardText(c))
+		}
+		if d := s.TableCards[id]; len(d) > 0 {
+			b.WriteString(" побита " + cardText(d[0]))
+		} else {
+			b.WriteString(" (не побита)")
+		}
+	}
+	fmt.Fprintf(&b, "\nТвой ход только что: %s.", moveText(move))
+	if ev := in.Event.String(); ev != "" {
+		b.WriteString("\nПоследнее заметное: " + ev + ".")
+	}
+	if len(in.Recent) > 0 {
+		b.WriteString("\nНедавние эмодзи: ")
+		for i, e := range in.Recent {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			fmt.Fprintf(&b, "%s %s", e.FromName, e.Emoji)
+		}
+	}
+	for _, p := range s.Players {
+		if p.IsBot || p.ID == in.BotID {
+			continue
+		}
+		if d, ok := in.Dossiers[p.ID]; ok {
+			if text := d.String(); text != "" {
+				fmt.Fprintf(&b, "\nДосье на %s (ты помнишь его с прошлых игр): %s.", p.Name, text)
+			}
+		}
+	}
+	if in.Overheard.Text != "" && in.Overheard.BotID != in.BotID {
+		fmt.Fprintf(&b, "\nДругой бот, %s, только что сказал: «%s». Можешь ответить ему.", in.Overheard.Name, in.Overheard.Text)
+	}
+	if in.AdminJokeDue {
+		b.WriteString("\nОдин раз за игру ты можешь сломать четвёртую стену — пошутить, что ты бот и привет админу. Можешь сделать это сейчас.")
+	}
+	b.WriteString("\nОтветь JSON, без рассуждений. /no_think")
+	return b.String()
+}
+
+// ParseSay reads a talk-only answer: the last JSON object with a "say"
+// field. A missing or empty line is silence, not an error.
+func ParseSay(content string) (Decision, error) {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return Decision{}, ErrEmptyAnswer
+	}
+	type said struct {
+		Say   *string `json:"say"`
+		Emoji string  `json:"emoji"`
+	}
+	for i := strings.LastIndex(content, "{"); i >= 0; i = strings.LastIndex(content[:i], "{") {
+		var a said
+		if err := json.NewDecoder(strings.NewReader(content[i:])).Decode(&a); err == nil && a.Say != nil {
+			return Decision{Say: trimSay(*a.Say), Emoji: a.Emoji}, nil
+		}
+	}
+	return Decision{}, errors.New(`llm: bad json: no {"say": "..."} object in the answer`)
+}
+
+// MentionsAdmin reports whether a line is the fourth-wall joke.
+func MentionsAdmin(s string) bool { return mentionsAdmin(s) }
 
 // findAnswer tries every "{" from the last one backwards and returns the
 // first object that decodes and names a move; the final answer of a thinking

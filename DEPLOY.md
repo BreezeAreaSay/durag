@@ -66,6 +66,7 @@ LLM_API_KEY=sk-or-...                   # ключ OpenRouter (или друго
 LLM_BASE_URL=https://openrouter.ai/api/v1
 LLM_MODEL=openrouter/free               # бесплатный роутер; список через запятую, напр. openrouter/free,deepseek/deepseek-chat
 LLM_FREE_ONLY=true                      # предохранитель: платные модели из списка отбрасываются, ключ не тратит деньги
+LLM_MOVES=false                         # модель только говорит; true — модель сама выбирает ходы
 ADMIN_IDS=123456789                     # Telegram user id админа (через запятую): кнопка «Админ-панель» в приложении
 ```
 

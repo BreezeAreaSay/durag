@@ -496,7 +496,7 @@ func TestBanterCadenceIsEvenButIrregular(t *testing.T) {
 	silence, longest := 0, 0
 	var pattern []bool
 	for i := 1; i <= 100; i++ {
-		d := Due(i, SpeakEvery)
+		d := Due(i, 2)
 		pattern = append(pattern, d)
 		if d {
 			spoke++
@@ -527,6 +527,9 @@ func TestBanterCadenceIsEvenButIrregular(t *testing.T) {
 	}
 	if !Due(5, 1) {
 		t.Fatal("every=1 always talks")
+	}
+	if SpeakEvery < 3 {
+		t.Fatalf("a bot must not commentate every other move: SpeakEvery=%d", SpeakEvery)
 	}
 }
 
@@ -571,5 +574,63 @@ func TestLastEventAndJabs(t *testing.T) {
 	in.Turn = 1 // frac(φ) ≈ 0.618: silent
 	if !strings.Contains(Prompt(in), "Сейчас молчи") {
 		t.Fatal("prompt must ask for silence off-cadence")
+	}
+}
+
+func TestLLMTalkAsksForALineOnly(t *testing.T) {
+	in := sampleContext(t)
+	var system, user string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req struct {
+			Messages []struct{ Role, Content string } `json:"messages"`
+		}
+		_ = json.Unmarshal(body, &req)
+		for _, m := range req.Messages {
+			if m.Role == "system" {
+				system = m.Content
+			} else {
+				user = m.Content
+			}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"model":   "google/gemma-4-31b-it:free",
+			"choices": []map[string]any{{"message": map[string]any{"content": "Вот:\n{\"say\": \"Вася, ты уверен?\", \"emoji\": \"😎\"}"}}},
+		})
+	}))
+	defer srv.Close()
+	l := NewLLM(srv.URL, "k", "openrouter/free", 2*time.Second)
+	line, err := l.Talk(context.Background(), in, in.Moves[0])
+	if err != nil || line.Say != "Вася, ты уверен?" || line.Emoji != "😎" || line.Model != "google/gemma-4-31b-it:free" {
+		t.Fatalf("line %+v %v", line, err)
+	}
+	if strings.Contains(system, "ПРОНУМЕРОВАННЫЙ") || !strings.Contains(system, "не называй карты соперников") {
+		t.Fatalf("talk mode must use the talk prompt, got %q", system)
+	}
+	if !strings.Contains(user, "Твой ход только что") || strings.Contains(user, "Легальные ходы") {
+		t.Fatalf("talk prompt must describe the move made, not offer moves:\n%s", user)
+	}
+	if st := l.Status(); st.Calls != 1 || st.OK != 1 {
+		t.Fatalf("status %+v", st)
+	}
+}
+
+func TestParseSayIsLenient(t *testing.T) {
+	d, err := ParseSay("```json\n{\"say\": \"Ну-ну\", \"emoji\": \"\"}\n```")
+	if err != nil || d.Say != "Ну-ну" {
+		t.Fatalf("%+v %v", d, err)
+	}
+	if d, err := ParseSay(`{"say": ""}`); err != nil || d.Say != "" {
+		t.Fatalf("an empty say is silence, not an error: %+v %v", d, err)
+	}
+	if _, err := ParseSay(`{"move": 2}`); err == nil {
+		t.Fatal("an object without say is not a line")
+	}
+	if _, err := ParseSay(""); !errors.Is(err, ErrEmptyAnswer) {
+		t.Fatalf("empty content: %v", err)
+	}
+	long := strings.Repeat("а", 120)
+	if d, _ := ParseSay(`{"say": "` + long + `"}`); len([]rune(d.Say)) > 81 {
+		t.Fatalf("lines are trimmed: %d runes", len([]rune(d.Say)))
 	}
 }

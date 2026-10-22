@@ -19,7 +19,8 @@ import (
 // N ≥ 2, yet the pattern does not repeat.
 
 // SpeakEvery is the mean number of a bot's own moves between two lines.
-const SpeakEvery = 2
+// Four: a line now and then, not a commentary track.
+const SpeakEvery = 4
 
 const phi = 1.618033988749895
 
@@ -41,6 +42,19 @@ type Event struct {
 	Count    int    // cards: taken, left in hand...
 	Suit     string // the suit of an opening attack
 	Bot      bool   // the player is another bot
+}
+
+// Notable reports whether the event deserves a line of its own: a big take,
+// a transfer, somebody down to the last card. Ordinary attacks, defences
+// and passes happen every move and are left alone.
+func (e Event) Notable() bool {
+	switch e.Kind {
+	case "took":
+		return e.Count >= 3
+	case "transfer", "lonely":
+		return true
+	}
+	return false
 }
 
 // String renders the event for the model's prompt ("" for nothing notable).
@@ -146,7 +160,6 @@ var Jabs = map[string][]string{
 	"": {
 		"Козырь у меня. Наверное",
 		"Кто-то тут нервничает",
-		"Считаю ваши карты. Все",
 		"Пенёк мой, не трогать",
 		"Скучно. Давайте быстрее",
 	},

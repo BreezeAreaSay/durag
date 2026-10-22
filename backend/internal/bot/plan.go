@@ -7,10 +7,12 @@ import (
 	"github.com/breezeareasay/durag/backend/internal/game"
 )
 
-// Level is how well a bot plays. One knob does it: the chance that a move
-// is picked at random among the card moves instead of by the plan. Cheap,
-// and it reads right at the table: a weak player is not a player with a
-// bad plan, it is one who sometimes does not look.
+// Level is how well a bot plays. Two knobs: how often a move is picked at
+// random instead of by the plan, and whether the bot counts cards. Which
+// card goes hardly decides a game of Durak; taking a table you could have
+// covered, or passing with a card to throw, does. So an easy bot sometimes
+// picks any legal move at all, a normal one only slips on the choice of
+// card, a hard one never slips and plays the odds.
 type Level string
 
 const (
@@ -37,11 +39,20 @@ func ParseLevel(s string) Level {
 func (l Level) Blunder() float64 {
 	switch l {
 	case LevelEasy:
-		return 0.35
+		return 0.2
 	case LevelHard:
 		return 0
 	}
-	return 0.1
+	return 0.06
+}
+
+// Slip is the chance of any random legal move (a needless take, a pass with
+// a card to throw): the mistakes that actually lose games. Easy only.
+func (l Level) Slip() float64 {
+	if l == LevelEasy {
+		return 0.18
+	}
+	return 0
 }
 
 // Counts reports whether the bot plays the numbers (memory and odds).
@@ -119,16 +130,4 @@ func PlanText(p Plan) string {
 		return "ОХОТА: кто-то почти вышел — не дай ему отбиться, заходи тем, что он точно не побьёт, и не подкидывай то, что он может побить"
 	}
 	return "ЭКОНОМИЯ: колода жива — заходи мелочью, козыри и спецкарты береги на защиту"
-}
-
-// MemoryLines are the lines about memory: a card the human threw that the
-// bot now returns, and a card the bot knew the human was holding.
-var (
-	ReturnLines = []string{"Помнишь, {n}? Ты мне это подкидывал", "{n}, твоя же карта. Возвращаю", "Узнаёшь, {n}? Твоё", "Держи обратно, {n}, не благодари"}
-	RecallLines = []string{"А, та самая {c}. Помню, {n}", "{n}, я знал, что {c} у тебя", "{c}? Я её у тебя с прошлого кона считаю", "Ждал эту {c}, {n}"}
-)
-
-func fill(line, name, card string) string {
-	line = strings.ReplaceAll(line, "{n}", name)
-	return strings.ReplaceAll(line, "{c}", card)
 }

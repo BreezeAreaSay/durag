@@ -16,10 +16,14 @@ import (
 
 // BotOptions configures the server-driven opponents (spec v10 §2).
 type BotOptions struct {
-	Disabled   bool          // ADD_BOT is rejected
-	Brain      bot.Brain     // optional LLM brain; nil = rule-based only
-	MinDelay   time.Duration // human-like pause before a bot acts
-	MaxDelay   time.Duration
+	Disabled bool          // ADD_BOT is rejected
+	Brain    bot.Brain     // optional LLM brain; nil = rule-based only
+	MinDelay time.Duration // human-like pause before a bot acts
+	MaxDelay time.Duration
+	// LLMMoves lets the model choose moves (with the rules as a hint). Off by
+	// default: the rules move, the model only talks (bot.Talker), after the
+	// move and without holding the game up.
+	LLMMoves   bool
 	LLMTimeout time.Duration // how long a model may think before the rules take over
 }
 
@@ -50,10 +54,11 @@ type botRoom struct {
 	dossiers   map[string]bot.Dossier // what the table remembers about the people (by player id)
 	overheard  bot.Overheard          // the last line a bot said
 	promoted   map[string]bot.Level   // bots that lost here and came back stronger, until they say so
+	talking    map[string]bool        // bots with a model request for a line in flight
 }
 
 func newBotRoom() *botRoom {
-	return &botRoom{moods: map[string]bot.Mood{}, moodUntil: map[string]time.Time{}, jokeSaid: map[string]bool{}, scheduled: map[string]int64{}, turns: map[string]int{}, memory: bot.NewMemory(), dossiers: map[string]bot.Dossier{}, promoted: map[string]bot.Level{}}
+	return &botRoom{moods: map[string]bot.Mood{}, moodUntil: map[string]time.Time{}, jokeSaid: map[string]bool{}, scheduled: map[string]int64{}, turns: map[string]int{}, memory: bot.NewMemory(), dossiers: map[string]bot.Dossier{}, promoted: map[string]bot.Level{}, talking: map[string]bool{}}
 }
 
 func (h *Hub) botRoomFor(roomID string) *botRoom {
@@ -140,6 +145,26 @@ func (h *Hub) botDelay() time.Duration {
 	return lo + time.Duration(rand.Int64N(int64(hi-lo)+1))
 }
 
+// comboDelay is the pause between two cards of the same bot in one bout:
+// the second card of a pair, the next card of a pack thrown at a taker. A
+// quick flick, not a whole think.
+func (h *Hub) comboDelay() time.Duration {
+	if h.bots.MaxDelay <= 0 {
+		return 0
+	}
+	return 160*time.Millisecond + time.Duration(rand.Int64N(int64(220*time.Millisecond)))
+}
+
+// continuing reports whether the bot's last move was a card into the open
+// bout (an attack or a throw-in): its next card comes as part of the pack.
+func continuing(state *game.GameState, botID string) bool {
+	if len(state.Log) == 0 || len(state.TableOrder) == 0 {
+		return false
+	}
+	last := state.Log[len(state.Log)-1]
+	return last.PlayerID == botID && (last.Type == "attack" || last.Type == "throw_in")
+}
+
 // scheduleBots arms a timer for every bot that has to act in this state.
 // The timer carries the state version, so a bot acts at most once per
 // state and never on a state it has not seen.
@@ -168,7 +193,11 @@ func (h *Hub) scheduleBots(roomID string, state *game.GameState) {
 		}
 		br.scheduled[id] = state.Version
 		botID, version := id, state.Version
-		time.AfterFunc(h.botDelay(), func() {
+		delay := h.botDelay()
+		if continuing(state, id) {
+			delay = h.comboDelay()
+		}
+		time.AfterFunc(delay, func() {
 			select {
 			case <-h.ctx.Done():
 				return
@@ -253,8 +282,66 @@ func (h *Hub) botAct(roomID, botID string, version int64) {
 	}
 	if d.Say != "" || d.Emoji != "" {
 		h.botSay(roomID, botID, d.Say, d.Emoji)
+	} else if h.bots.Brain != nil && !h.bots.LLMMoves && in.SpeakDue() {
+		go h.botTalk(roomID, botID, in, d.Move) // the model speaks after the move, never holding it up
 	}
 	h.afterUpdate(roomID, newState)
+}
+
+// botTalk asks the model for a line about a move the rules just made and
+// publishes it when it arrives. One request per bot at a time; a line that
+// comes after the game ended is dropped.
+func (h *Hub) botTalk(roomID, botID string, in bot.Context, move game.Move) {
+	talker, ok := h.bots.Brain.(bot.Talker)
+	if !ok {
+		return
+	}
+	br := h.botRoomFor(roomID)
+	br.mu.Lock()
+	if br.talking[botID] {
+		br.mu.Unlock()
+		return
+	}
+	br.talking[botID] = true
+	br.mu.Unlock()
+	defer func() {
+		br.mu.Lock()
+		delete(br.talking, botID)
+		br.mu.Unlock()
+	}()
+	timeout := h.bots.LLMTimeout
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(h.ctx, timeout)
+	line, err := talker.Talk(ctx, in, move)
+	cancel()
+	if err != nil {
+		if errors.Is(err, bot.ErrPaused) {
+			h.mon.Inc("bots.model_paused")
+			return
+		}
+		h.mon.Inc("bots.model_failures")
+		h.mon.Event("llm_error", fmt.Sprint(err), "bot", botID)
+		h.log.Warn("bot: model line failed", "bot", botID, "err", err)
+		return
+	}
+	if line.Emoji != "" && !allowedEmojiSet[line.Emoji] {
+		line.Emoji = ""
+	}
+	if line.Say == "" && line.Emoji == "" {
+		return
+	}
+	state, err := h.store.Load(h.ctx, roomID)
+	if err != nil || state.Status != game.StatusPlaying {
+		return
+	}
+	if in.AdminJokeDue && bot.MentionsAdmin(line.Say) {
+		br.markJoke(botID)
+	}
+	h.mon.Inc("bots.model_lines")
+	h.log.Info("bot: model line", "bot", botID, "model", line.Model, "say", line.Say)
+	h.botSay(roomID, botID, line.Say, line.Emoji)
 }
 
 // worthAsking reports whether a decision has a real choice in it. Forced
@@ -279,7 +366,7 @@ func (h *Hub) decide(in bot.Context) (bot.Decision, bool) {
 	if err != nil {
 		return rules, false
 	}
-	if h.bots.Brain != nil && worthAsking(in.Moves) {
+	if h.bots.Brain != nil && h.bots.LLMMoves && worthAsking(in.Moves) {
 		hint := rules.Move
 		in.Hint = &hint
 		timeout := h.bots.LLMTimeout

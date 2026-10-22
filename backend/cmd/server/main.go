@@ -66,7 +66,7 @@ func main() {
 	engine.TurnTimeout = cfg.TurnTimeout
 	engine.MaxAttacks = cfg.MaxAttacks
 	auth := ws.TelegramAuth{BotToken: cfg.BotToken, MaxAge: cfg.InitDataMaxAge, AllowDev: cfg.AllowDevAuth}
-	bots := ws.BotOptions{Disabled: !cfg.BotsEnabled, MinDelay: cfg.BotDelayMin, MaxDelay: cfg.BotDelayMax, LLMTimeout: cfg.LLMTimeout}
+	bots := ws.BotOptions{Disabled: !cfg.BotsEnabled, MinDelay: cfg.BotDelayMin, MaxDelay: cfg.BotDelayMax, LLMTimeout: cfg.LLMTimeout, LLMMoves: cfg.LLMMoves}
 	switch {
 	case !cfg.BotsEnabled:
 		logger.Info("bots are disabled (BOTS=false)")
@@ -81,7 +81,7 @@ func main() {
 		}
 		llm.Discover = cfg.LLMDiscover && cfg.LLMFreeOnly
 		bots.Brain = llm
-		logger.Info("bots: LLM brain", "models", llm.Models, "base_url", cfg.LLMBaseURL, "free_only", cfg.LLMFreeOnly, "discover", llm.Discover)
+		logger.Info("bots: LLM brain", "models", llm.Models, "base_url", cfg.LLMBaseURL, "free_only", cfg.LLMFreeOnly, "discover", llm.Discover, "moves", cfg.LLMMoves, "role", map[bool]string{true: "moves and lines", false: "lines only, the rules move"}[cfg.LLMMoves])
 		go func() { // the catalog's free models, then one request so the logs show whether the key works
 			refresh := func() {
 				rctx, cancel := context.WithTimeout(ctx, 20*time.Second)

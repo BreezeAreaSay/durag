@@ -1,10 +1,14 @@
 package ws
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -173,5 +177,85 @@ func TestBotsCanBeDisabled(t *testing.T) {
 	a.send(TypeAddBot, nil)
 	if e := a.errorPayload(); e.Code != "BOTS_DISABLED" {
 		t.Fatalf("got %+v", e)
+	}
+}
+
+// chattyBrain is a model stand-in: it must never be asked for a move when
+// LLMMoves is off, and it answers every request for a line.
+type chattyBrain struct {
+	mu      sync.Mutex
+	decides int
+	talks   int
+}
+
+func (b *chattyBrain) Decide(context.Context, bot.Context) (bot.Decision, error) {
+	b.mu.Lock()
+	b.decides++
+	b.mu.Unlock()
+	return bot.Decision{}, errors.New("not asked for moves")
+}
+
+func (b *chattyBrain) Talk(_ context.Context, in bot.Context, move game.Move) (bot.Line, error) {
+	b.mu.Lock()
+	b.talks++
+	b.mu.Unlock()
+	return bot.Line{Say: "Сказал модельный бот: " + move.String(), Model: "fake/model"}, nil
+}
+
+func TestModelTalksAfterTheRulesMove(t *testing.T) {
+	brain := &chattyBrain{}
+	srv, _, _ := newBotServer(t, BotOptions{Brain: brain})
+	a := dial(t, srv)
+	a.send(TypeJoinRoom, devJoin("TALK", true, "A", "Alice"))
+	a.state()
+	a.send(TypeAddBot, nil)
+	s := a.state()
+	botID := s.Players[1].ID
+	a.send(TypeReady, ReadyPayload{Ready: true})
+	deadline := time.Now().Add(10 * time.Second)
+	heard := ""
+	botMoves := 0
+	for time.Now().Before(deadline) && heard == "" {
+		env := a.next()
+		switch env.Type {
+		case TypeReaction:
+			var r ReactionPayload
+			_ = json.Unmarshal(env.Payload, &r)
+			if r.PlayerID == botID && strings.HasPrefix(r.Text, "Сказал модельный бот") {
+				heard = r.Text
+			}
+		case TypeStateUpdate:
+			var st game.GameState
+			_ = json.Unmarshal(env.Payload, &st)
+			for _, e := range st.Log {
+				if e.PlayerID == botID {
+					botMoves++
+				}
+			}
+			if st.Status != game.StatusPlaying {
+				break
+			}
+			moves := st.LegalMoves("dev:A")
+			if len(moves) == 0 {
+				continue
+			}
+			pick := moves[0]
+			for _, m := range moves {
+				if m.Type != game.MovePass && m.Type != game.MoveTake {
+					pick = m
+					break
+				}
+			}
+			msgType, payload := intentFor(pick)
+			a.send(msgType, payload)
+		}
+	}
+	if heard == "" {
+		t.Fatalf("no model line arrived after %d bot log entries", botMoves)
+	}
+	brain.mu.Lock()
+	defer brain.mu.Unlock()
+	if brain.decides != 0 || brain.talks == 0 {
+		t.Fatalf("with LLM_MOVES off the model must only talk: decides=%d talks=%d", brain.decides, brain.talks)
 	}
 }

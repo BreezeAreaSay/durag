@@ -7,6 +7,7 @@ package bot
 
 import (
 	"context"
+	"math"
 	"math/rand/v2"
 	"sort"
 	"time"
@@ -96,6 +97,34 @@ type Decision struct {
 	Plan      Plan   // the plan the move follows
 }
 
+// sloppyMove is the mistake a careless player makes: taking a table they
+// could have covered, saying "bito" with a card to throw in, or a random
+// card when neither applies. It never repeats the planned move.
+func sloppyMove(rng *rand.Rand, moves []game.Move, planned game.Move) (game.Move, bool) {
+	var take, pass *game.Move
+	cards := 0
+	for i := range moves {
+		switch moves[i].Type {
+		case game.MoveTake:
+			take = &moves[i]
+		case game.MovePass:
+			pass = &moves[i]
+		case game.MoveAttack, game.MoveThrowIn, game.MoveDefend, game.MoveTransfer:
+			cards++
+		}
+	}
+	switch {
+	case take != nil && planned.Type != game.MoveTake && cards > 0:
+		return *take, true
+	case pass != nil && planned.Type != game.MovePass && cards > 0:
+		return *pass, true
+	}
+	if m, ok := randomCardMove(rng, moves); ok && m != planned {
+		return m, true
+	}
+	return game.Move{}, false
+}
+
 // randomCardMove picks any attack, throw-in, defence or transfer.
 func randomCardMove(rng *rand.Rand, moves []game.Move) (game.Move, bool) {
 	var cards []game.Move
@@ -114,6 +143,21 @@ func randomCardMove(rng *rand.Rand, moves []game.Move) (game.Move, bool) {
 // Brain picks a move. Implementations must return one of in.Moves.
 type Brain interface {
 	Decide(ctx context.Context, in Context) (Decision, error)
+}
+
+// Line is what a model says when the rules have already moved: a short
+// line and an optional emoji.
+type Line struct {
+	Say   string
+	Emoji string
+	Model string
+}
+
+// Talker is a brain that can be asked for a line only, after the move was
+// made by the rules (the default use of the model: the rules play, the
+// model talks).
+type Talker interface {
+	Talk(ctx context.Context, in Context, move game.Move) (Line, error)
 }
 
 // Names bots are called, in order of preference.
@@ -189,12 +233,21 @@ func (h *Heuristic) Decide(_ context.Context, in Context) (Decision, error) {
 		in.Plan = ChoosePlan(in.State, in.BotID)
 	}
 	d := Decision{Move: h.pick(in), Plan: in.Plan}
-	// a weak player sometimes does not look
-	if eps := in.level().Blunder(); eps > 0 && h.rng.Float64() < eps {
+	// a weak player sometimes does not look: a sloppy move (easy: takes a
+	// table it could cover, passes with a card to throw), or merely a
+	// different card than the plan wanted
+	if eps := in.level().Slip(); eps > 0 && h.rng.Float64() < eps {
+		if m, ok := sloppyMove(h.rng, in.Moves, d.Move); ok {
+			d.Move = m
+		}
+	} else if eps := in.level().Blunder(); eps > 0 && h.rng.Float64() < eps {
 		if m, ok := randomCardMove(h.rng, in.Moves); ok {
 			d.Move = m
 		}
 	}
+	// What the rules say out loud. The memory stays in the play, not in the
+	// talk: lines about remembered cards were the ones people found wrong and
+	// tiresome, so a bot only comments on things everybody can see.
 	planChanged := in.Memory != nil && in.Memory.Plan(in.BotID) != in.Plan
 	defender := ""
 	if p := in.State.Defender(); p != nil && p.ID != in.BotID {
@@ -210,23 +263,43 @@ func (h *Heuristic) Decide(_ context.Context, in Context) (Decision, error) {
 	case in.AdminJokeDue && h.rng.Float64() < 0.3:
 		d.Say = AdminJokes[h.rng.IntN(len(AdminJokes))]
 		d.AdminJoke = true
-	case habit != "" && h.rng.Float64() < 0.7:
+	case habit != "" && h.rng.Float64() < 0.3:
 		d.Say = habit
-	case in.Memory != nil && in.Memory.TookFrom(d.Move.CardID) != "" && h.rng.Float64() < 0.8:
-		// returning a card the human threw at it: the memory speaks
-		d.Say = fill(ReturnLines[h.rng.IntN(len(ReturnLines))], nameOf(in.State, in.Memory.TookFrom(d.Move.CardID)), "")
-	case in.Memory != nil && in.Memory.Recall.Version == in.State.Version && in.Memory.Recall.PlayerID != "" && h.rng.Float64() < 0.6:
-		r := in.Memory.Recall
-		d.Say = fill(RecallLines[h.rng.IntN(len(RecallLines))], r.Name, cardText(r.Card))
-	case planChanged && h.rng.Float64() < 0.5:
+	case planChanged && (in.Plan == PlanHunt || in.Plan == PlanPress) && h.rng.Float64() < 0.4:
 		d.Say = PlanLine(h.rng, in.Plan, defender)
-	case in.SpeakDue():
+	case in.SpeakDue() && in.Event.Notable():
 		d.Say = Jab(h.rng, in.Event)
 	}
-	if d.Move.Type == game.MoveTake && h.rng.Float64() < 0.4 {
+	if d.Move.Type == game.MoveTake && h.rng.Float64() < 0.3 {
 		d.Emoji = []string{"💀", "😡", "🤔", "🚬", "🚬"}[h.rng.IntN(5)] // taking the table calls for a smoke
 	}
 	return d, nil
+}
+
+// isTrump reports whether c is a card of the active trump suit (specials have none).
+func isTrump(c game.Card, trump string) bool {
+	return trump != "" && c.Suit == trump && !c.IsSpecial()
+}
+
+// rankCount counts the plain cards of every rank in a hand: pairs lead
+// together, the second card thrown in right after the first.
+func rankCount(hand map[string]game.Card) map[int]int {
+	counts := map[int]int{}
+	for _, c := range hand {
+		if !c.IsSpecial() {
+			counts[c.Rank]++
+		}
+	}
+	return counts
+}
+
+// tableSize is how many cards a taker would pick up right now.
+func tableSize(s *game.GameState) int {
+	n := 0
+	for _, id := range s.TableOrder {
+		n += 1 + len(s.TableCards[id])
+	}
+	return n
 }
 
 type scored struct {
@@ -292,26 +365,40 @@ func (h *Heuristic) pick(in Context) game.Move {
 func (h *Heuristic) defend(in Context, byType map[game.MoveType][]scored, hand map[string]game.Card, trump string) game.Move {
 	s := in.State
 	deckLeft := s.DeckCount > 0
-	// transfer: aggressive bots always pass the buck, careful ones only with
-	// a card they do not mind losing
-	if ts := byType[game.MoveTransfer]; len(ts) > 0 {
-		c := hand[ts[0].move.CardID]
-		isTrump := trump != "" && c.Suit == trump
-		switch in.Mood {
-		case MoodAggressive:
-			return ts[0].move
-		case MoodDefensive:
-			if !isTrump && c.Rank <= 10 {
-				return ts[0].move
-			}
-		default:
-			if !isTrump {
-				return ts[0].move
-			}
-		}
+	handN := 0
+	if me := s.Player(in.BotID); me != nil {
+		handN = len(me.Hand)
 	}
 	defends := byType[game.MoveDefend]
 	take, canTake := game.Move{Type: game.MoveTake}, len(byType[game.MoveTake]) > 0
+	// how dear is the cheapest cover? a transfer is worth it before a trump or a special goes
+	coverDear := false
+	if len(defends) > 0 {
+		c := hand[defends[0].move.CardID]
+		coverDear = c.IsSpecial() || (isTrump(c, trump) && deckLeft)
+	}
+	// transfer: a card of the attack's rank passes the whole defence on.
+	// Aggressive bots always do it, careful ones only with a cheap card,
+	// everybody when the alternative is burning a trump or a special.
+	if ts := byType[game.MoveTransfer]; len(ts) > 0 {
+		c := hand[ts[0].move.CardID]
+		tr := isTrump(c, trump)
+		ok := false
+		switch in.Mood {
+		case MoodAggressive:
+			ok = true
+		case MoodDefensive:
+			ok = !tr && c.Rank <= 10
+		default:
+			ok = !tr || c.Rank <= 9 || !deckLeft
+		}
+		if !ok && (coverDear || len(defends) == 0) && !c.IsJoker() {
+			ok = true
+		}
+		if ok {
+			return ts[0].move
+		}
+	}
 	if len(defends) == 0 {
 		if canTake {
 			return take
@@ -343,21 +430,28 @@ func (h *Heuristic) defend(in Context, byType map[game.MoveType][]scored, hand m
 	}
 	sort.SliceStable(plan, func(i, j int) bool { return plan[i].weight < plan[j].weight })
 	cheapest := plan[0]
-	card := hand[cheapest.move.CardID]
-	// spending rules: specials and big trumps are kept while the deck lasts;
-	// a bloated hand covers with anything rather than grow
-	if canTake && deckLeft && in.Plan != PlanDump {
-		switch in.Mood {
-		case MoodDefensive:
-			if card.IsSpecial() || (trump != "" && card.Suit == trump && card.Rank >= 11) {
+	dearest := hand[plan[len(plan)-1].move.CardID] // the cover is only as cheap as its dearest card
+	pile := tableSize(s)                           // what taking would cost
+	// Spending rules. While the deck lasts, specials and big trumps are
+	// worth more than a small pile of cards: take instead. With the deck
+	// gone every card in hand is a liability, so cover whenever possible,
+	// keeping the Super card for the finishing attack when the pile is small.
+	if canTake && in.Plan != PlanDump {
+		switch {
+		case !deckLeft:
+			if dearest.IsSuper() && pile <= 1 && handN >= 3 {
 				return take
 			}
-		case MoodAggressive:
-			if card.IsSuper() && len(s.TableOrder) <= 1 {
+		case in.Mood == MoodAggressive:
+			if (dearest.IsSuper() && pile <= 2) || (dearest.IsJoker() && pile <= 1) {
+				return take
+			}
+		case in.Mood == MoodDefensive:
+			if dearest.IsSpecial() || (isTrump(dearest, trump) && dearest.Rank >= 10 && pile <= 3) {
 				return take
 			}
 		default:
-			if card.IsSuper() || (card.IsJoker() && len(s.TableOrder) <= 1) {
+			if (dearest.IsSpecial() && pile <= 2) || (isTrump(dearest, trump) && dearest.Rank >= 11 && pile <= 2 && handN <= 7) {
 				return take
 			}
 		}
@@ -365,99 +459,111 @@ func (h *Heuristic) defend(in Context, byType map[game.MoveType][]scored, hand m
 	return cheapest.move
 }
 
-// attack opens with a low card; aggressive bots lead the rank they hold most
-// of (to pile on later), careful ones keep trumps for defence.
+// attack opens a bout. Cheap cards go first and a pair beats a single
+// (the second card follows at once as a throw-in); trumps wait while the
+// deck lasts; specials are kept for the end, the Super card as the very
+// last card of the hand, an attack nobody can beat. With the deck gone the
+// odds decide: the card the defender is least likely to beat.
 func (h *Heuristic) attack(in Context, attacks []scored, hand map[string]game.Card, trump string) game.Move {
 	s := in.State
 	deckLeft := s.DeckCount > 0
-	var plain []scored
+	var plain, trumps []scored
 	for _, a := range attacks {
 		c := hand[a.move.CardID]
-		if c.IsSpecial() {
+		switch {
+		case c.IsSpecial():
 			continue
+		case isTrump(c, trump) && deckLeft:
+			trumps = append(trumps, a)
+		default:
+			plain = append(plain, a)
 		}
-		if trump != "" && c.Suit == trump && deckLeft && in.Mood != MoodAggressive {
-			continue
-		}
-		plain = append(plain, a)
 	}
 	if len(plain) == 0 {
-		return attacks[0].move // only specials or trumps left: lead the cheapest
-	}
-	// by the numbers: the card the defender is least likely to beat, the
-	// cheapest among equals (hunting accepts a dearer card for a surer kill)
-	if (in.Plan == PlanCount || in.Plan == PlanHunt) && in.level().Counts() {
-		if d := s.Defender(); d != nil {
-			best, bestP := plain[0], 2.0
-			for _, a := range plain {
-				p := in.Memory.BeatProb(s, d.ID, hand[a.move.CardID])
-				if in.Plan == PlanCount {
-					p += float64(a.weight) / 100 // a tie-break, not a reason
-				}
-				if p < bestP {
-					best, bestP = a, p
-				}
-			}
-			return best.move
+		if len(trumps) > 0 {
+			return trumps[0].move // only trumps: the smallest
 		}
+		return attacks[0].move // only specials: a Joker before the Super card
 	}
-	if in.Mood == MoodAggressive || in.Plan == PlanPress {
-		count := map[int]int{}
-		for _, c := range hand {
-			if !c.IsSpecial() {
-				count[c.Rank]++
+	counts := rankCount(hand)
+	counting := (in.Plan == PlanCount || in.Plan == PlanHunt) && in.level().Counts() && in.Memory != nil
+	d := s.Defender()
+	best, bestScore := plain[0], math.MaxFloat64
+	for _, a := range plain {
+		c := hand[a.move.CardID]
+		score := float64(a.weight) // cheap first
+		if counts[c.Rank] >= 2 {
+			score -= 6 // a pair: two cards for the price of one bout
+		}
+		if counts[c.Rank] >= 3 {
+			score -= 3
+		}
+		if in.Mood == MoodAggressive || in.Plan == PlanPress {
+			if counts[c.Rank] >= 2 {
+				score -= 6
 			}
 		}
-		best := plain[0]
-		for _, a := range plain {
-			c := hand[a.move.CardID]
-			if count[c.Rank] > count[hand[best.move.CardID].Rank] {
-				best = a
-			}
+		if counting && d != nil {
+			score += 25 * in.Memory.BeatProb(s, d.ID, c) // what they cannot beat goes first
 		}
-		return best.move
+		if score < bestScore {
+			best, bestScore = a, score
+		}
 	}
-	return plain[0].move
+	return best.move
 }
 
-// throwOrPass throws in cheap matching cards and otherwise says "bito".
+// throwOrPass throws in a matching card or says "bito". A taker gets the
+// junk, card after card (the scheduler makes that a quick pack); a defender
+// who is still beating only gets what they will struggle with, never a
+// high card or a trump they cover for free while the deck lasts.
 func (h *Heuristic) throwOrPass(in Context, byType map[game.MoveType][]scored, hand map[string]game.Card, trump string) game.Move {
 	s := in.State
 	deckLeft := s.DeckCount > 0
+	handN := len(hand)
+	taking := s.DefenderTaking
+	bloated := in.Plan == PlanDump || handN >= 9
+	counting := in.level().Counts() && in.Memory != nil
+	d := s.Defender()
+	// the dearest plain card worth throwing at a defender who is still beating
 	limit := 10
 	switch in.Mood {
 	case MoodAggressive:
-		limit = 14
+		limit = 12
 	case MoodDefensive:
-		limit = 8
+		limit = 9
 	}
-	if s.DefenderTaking || in.Plan == PlanPress || in.Plan == PlanDump {
-		limit = 14 // dump everything that matches on a taker, a drowning defender or out of a bloated hand
-		if in.Mood == MoodDefensive && !s.DefenderTaking {
-			limit = 10
-		}
+	if bloated {
+		limit = 13
 	}
-	counting := (in.Plan == PlanCount || in.Plan == PlanHunt) && in.level().Counts() && !s.DefenderTaking
-	for _, t := range byType[game.MoveThrowIn] {
+	for _, t := range byType[game.MoveThrowIn] { // cheapest first
 		c := hand[t.move.CardID]
 		if c.IsSpecial() {
 			continue
 		}
-		if trump != "" && c.Suit == trump && deckLeft && !(in.Mood == MoodAggressive && s.DefenderTaking) && in.Plan != PlanDump {
+		tr := isTrump(c, trump)
+		if taking {
+			// a taker is a bin: plain cards up to a queen, aces only out of a
+			// bloated hand or with the deck gone, trumps only small ones in the endgame
+			if tr && (deckLeft || c.Rank > 9) && !bloated {
+				continue
+			}
+			if !tr && c.Rank >= 13 && deckLeft && !bloated {
+				continue
+			}
+			return t.move
+		}
+		if tr && deckLeft && !bloated {
 			continue
 		}
-		if counting {
-			// with the deck gone every card is a bet: throw what they likely
-			// cannot beat, or what is cheap anyway; keep a trump that would
-			// only hand them a card they can cover
-			p := in.Memory.BeatProb(s, s.DefenderID, c)
-			isTrump := trump != "" && c.Suit == trump
-			if p < 0.5 || (c.Rank <= limit && !isTrump) {
+		if counting && d != nil {
+			p := in.Memory.BeatProb(s, d.ID, c)
+			if p < 0.45 || (c.Rank <= limit && !tr && p < 0.85) {
 				return t.move
 			}
 			continue
 		}
-		if c.Rank <= limit {
+		if c.Rank <= limit && (!tr || !deckLeft) {
 			return t.move
 		}
 	}
