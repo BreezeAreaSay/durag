@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Button } from './Button';
 import { Sticker } from './Sticker';
 import { useGame } from '../state/GameContext';
+import { useBackButton } from '../telegram/useTelegram';
 import { t } from '../i18n';
 import type { GameState } from '../types/protocol';
 
@@ -22,6 +23,7 @@ export function WaitingRoom({ state }: Props) {
   const [copied, setCopied] = useState(false);
   const me = state.players.find((p) => p.id === selfId);
   const link = shareLink(state.room_id);
+  useBackButton(leave);
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(link ?? state.room_id);
@@ -34,7 +36,12 @@ export function WaitingRoom({ state }: Props) {
   return (
     <main className="screen waiting">
       <header className="waiting__head">
-        <span className="tape tape--small">{t('waiting.title')}</span>
+        <div className="waiting__top">
+          <span className="tape tape--small">{t('waiting.title')}</span>
+          <button type="button" className="chip chip--link" onClick={leave}>
+            ← {t('waiting.menu')}
+          </button>
+        </div>
         <h1 className="zine-title zine-title--code">{state.room_id}</h1>
         <p className="muted">{t('waiting.share')}</p>
         <div className="row">

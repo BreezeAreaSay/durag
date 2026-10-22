@@ -92,29 +92,42 @@ func main() {
 					logger.Info("bots: models in play", "models", models)
 				}
 			}
-			refresh()
-			probeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-			if model, err := llm.Probe(probeCtx); err != nil {
-				logger.Warn("bots: LLM probe failed, bots play by the rules until a model answers", "err", err)
-			} else {
+			probe := func() bool {
+				probeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+				defer cancel()
+				model, err := llm.Probe(probeCtx)
+				if err != nil {
+					logger.Warn("bots: LLM probe failed, bots play by the rules until a model answers", "err", err, "cooling", llm.Status().Cooling)
+					return false
+				}
 				logger.Info("bots: LLM probe ok", "model", model)
+				return true
 			}
-			cancel()
+			refresh()
+			ok := probe()
 			ticker := time.NewTicker(time.Hour)
 			defer ticker.Stop()
+			retries := 0
 			for {
+				var retry <-chan time.Time // a failed probe is repeated a few times: free models come and go
+				if !ok && retries < 10 {
+					retry = time.After(2 * time.Minute)
+				}
 				select {
 				case <-ctx.Done():
 					return
 				case <-ticker.C:
 					refresh()
+				case <-retry:
+					retries++
+					ok = probe()
 				}
 			}
 		}()
 	default:
 		logger.Info("bots: rule-based brain only (set LLM_API_KEY for the LLM brain)")
 	}
-	hub := ws.NewHub(st, engine, auth, ws.Options{AllowedOrigins: cfg.AllowedOrigins, Logger: logger, Bots: bots, Monitor: recorder})
+	hub := ws.NewHub(st, engine, auth, ws.Options{AllowedOrigins: cfg.AllowedOrigins, Logger: logger, Bots: bots, Monitor: recorder, AdminIDs: cfg.AdminIDs})
 	var llmStatus ws.LLMStatus
 	if l, ok := bots.Brain.(*bot.LLM); ok {
 		llmStatus = l

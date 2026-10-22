@@ -16,7 +16,7 @@ interface Props {
 }
 
 export function GameScreen({ state }: Props) {
-  const { selfId, playCard, transfer, takeStump, lastError, reactions, react, connection } = useGame();
+  const { selfId, playCard, transfer, takeStump, lastError, reactions, react, connection, isAdmin } = useGame();
   const [panelOpen, setPanelOpen] = useState(false);
   const [hudTop, setHudTop] = useState(150);
   const [size, setSize] = useState({ w: window.innerWidth, h: window.innerHeight });
@@ -88,6 +88,7 @@ export function GameScreen({ state }: Props) {
       {panelOpen ? (
         <EmojiPanel
           xp={state.players.find((p) => p.id === selfId)?.xp ?? 0}
+          unlockAll={isAdmin}
           onPick={(emoji) => {
             react(emoji);
             haptic('light');

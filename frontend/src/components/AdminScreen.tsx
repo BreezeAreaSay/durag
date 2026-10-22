@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Button } from './Button';
 import { useGame } from '../state/GameContext';
+import { useBackButton } from '../telegram/useTelegram';
 import { t } from '../i18n';
 
 interface Overview {
@@ -15,6 +16,7 @@ interface Overview {
     ok: number;
     failed: number;
     last_error?: string;
+    cooling?: string[];
     last_model?: string;
     last_ok?: string;
   } | null;
@@ -58,6 +60,8 @@ const fmtUptime = (s: number) => `${Math.floor(s / 3600)}h ${Math.floor((s % 360
 /** Monitoring for the Telegram ids listed in ADMIN_IDS: live tables, players, errors, logs. */
 export function AdminScreen() {
   const { adminQuery, setAdminOpen } = useGame();
+  const close = useCallback(() => setAdminOpen(false), [setAdminOpen]);
+  useBackButton(close);
   const [tab, setTab] = useState<Tab>('overview');
   const [data, setData] = useState<Overview | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -154,6 +158,10 @@ export function AdminScreen() {
                 <tr>
                   <th>{t('admin.paused')}</th>
                   <td>{data.llm.paused ? data.llm.pause_reason || 'yes' : 'no'}</td>
+                </tr>
+                <tr>
+                  <th>{t('admin.cooling')}</th>
+                  <td className="admin__wrap">{data.llm.cooling?.length ? data.llm.cooling.join(', ') : '—'}</td>
                 </tr>
                 <tr>
                   <th>{t('admin.lastError')}</th>

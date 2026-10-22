@@ -44,8 +44,11 @@
   --tape-shadow: 5px 5px 0 rgba(0, 0, 0, 0.75);
   --display: 'Unbounded', 'Arial Black', Impact, sans-serif;
   --mono: ui-monospace, 'SF Mono', Menlo, Consolas, 'Courier New', monospace;
-  --safe-top: env(safe-area-inset-top, 0px);
-  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  /* Telegram exposes its own insets (notch, home indicator and, in fullscreen,
+     the Mini App header) as --tg-safe-area-inset-* / --tg-content-safe-area-inset-*;
+     a plain browser only has env(). Whichever is larger wins. */
+  --safe-top: max(env(safe-area-inset-top, 0px), calc(var(--tg-safe-area-inset-top, 0px) + var(--tg-content-safe-area-inset-top, 0px)));
+  --safe-bottom: max(env(safe-area-inset-bottom, 0px), calc(var(--tg-safe-area-inset-bottom, 0px) + var(--tg-content-safe-area-inset-bottom, 0px)));
 }
 
 * {
@@ -57,6 +60,10 @@ body,
 #root {
   height: 100%;
   margin: 0;
+}
+/* Telegram reports the visible height of the Mini App; the browser falls back to 100%. */
+#root {
+  height: var(--tg-viewport-stable-height, 100%);
 }
 
 body {
@@ -258,6 +265,21 @@ body::after {
 
 .lobby__head {
   padding-top: 6vh;
+}
+.lobby {
+  position: relative;
+}
+.lobby__admin {
+  position: absolute;
+  top: calc(14px + var(--safe-top));
+  right: 16px;
+  z-index: 2;
+  cursor: pointer;
+}
+.waiting__top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 .lobby__join {
   display: flex;
@@ -735,6 +757,17 @@ body::after {
 .emoji-panel__btn:active {
   background: var(--acid);
   transform: translate(2px, 2px);
+}
+/* narrow phones (320–359px): six columns still fit */
+@media (max-width: 359px) {
+  .emoji-panel__row {
+    grid-template-columns: repeat(6, 40px);
+  }
+  .emoji-panel__btn {
+    width: 40px;
+    height: 40px;
+    font-size: 22px;
+  }
 }
 
 /* trump chip with a big suit glyph */

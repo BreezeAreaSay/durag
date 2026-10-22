@@ -28,6 +28,9 @@ interface TelegramWebApp {
   close(): void;
   setHeaderColor(color: string): void;
   setBackgroundColor(color: string): void;
+  setBottomBarColor?(color: string): void;
+  lockOrientation?(): void;
+  isVersionAtLeast?(version: string): boolean;
   enableClosingConfirmation(): void;
   disableClosingConfirmation(): void;
   disableVerticalSwipes?(): void;
@@ -36,6 +39,13 @@ interface TelegramWebApp {
     notificationOccurred(type: 'error' | 'success' | 'warning'): void;
   };
   openTelegramLink?(url: string): void;
+  BackButton?: {
+    isVisible: boolean;
+    show(): void;
+    hide(): void;
+    onClick(cb: () => void): void;
+    offClick(cb: () => void): void;
+  };
 }
 
 interface Window {

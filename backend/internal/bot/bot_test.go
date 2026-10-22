@@ -274,6 +274,80 @@ func TestCandidatesTryTheFreeRouterLast(t *testing.T) {
 	}
 }
 
+func TestUpstreamRateLimitRestsOneModelOnly(t *testing.T) {
+	in := sampleContext(t)
+	var asked []string
+	// the exact shape OpenRouter returned on the production server
+	upstream := `{"error":{"message":"Provider returned error","code":429,"metadata":{"raw":"google/gemma-4-26b-a4b-it:free is temporarily rate-limited upstream. Please retry shortly, or add your own key to accumulate your rate limits: https://openrouter.ai/settings/integrations","provider_name":"Google AI Studio","is_byok":false,"provider_error_code":"429","limit_source":"upstream_provider_shared_pool"}},"user_id":"user_x"}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req map[string]any
+		_ = json.Unmarshal(body, &req)
+		model, _ := req["model"].(string)
+		asked = append(asked, model)
+		switch model {
+		case "google/gemma-4-26b-a4b-it:free":
+			http.Error(w, upstream, 429)
+		case "gone/model:free":
+			http.Error(w, `{"error":{"message":"No endpoints found for gone/model:free"}}`, 404)
+		default:
+			_ = json.NewEncoder(w).Encode(map[string]any{"model": model, "choices": []map[string]any{{"message": map[string]any{"content": `{"move": 1}`}}}})
+		}
+	}))
+	defer srv.Close()
+	l := NewLLM(srv.URL, "k", "google/gemma-4-26b-a4b-it:free,gone/model:free,nvidia/nemotron-3.5-lightning:free", 2*time.Second)
+	d, err := l.Decide(context.Background(), in)
+	if err != nil || d.Model != "nvidia/nemotron-3.5-lightning:free" {
+		t.Fatalf("the next model must answer: %+v %v", d, err)
+	}
+	if paused, _ := l.Paused(time.Now()); paused {
+		t.Fatal("an upstream limit of one model must not pause the whole brain")
+	}
+	if st := l.Status(); strings.Join(st.Cooling, ",") != "gone/model:free,google/gemma-4-26b-a4b-it:free" {
+		t.Fatalf("both failing models should be cooling: %v", st.Cooling)
+	}
+	if _, err := l.Decide(context.Background(), in); err != nil {
+		t.Fatal(err)
+	}
+	if len(asked) != 4 || asked[3] != "nvidia/nemotron-3.5-lightning:free" {
+		t.Fatalf("cooling models must be skipped on the next decision: %v", asked)
+	}
+	if st := l.Status(); st.Calls != 2 || st.OK != 2 || st.Failed != 0 {
+		t.Fatalf("status %+v", st)
+	}
+}
+
+func TestActiveSizeAndChatFilter(t *testing.T) {
+	for id, want := range map[string]int{
+		"google/gemma-4-26b-a4b-it:free":           4,
+		"google/gemma-4-31b-it:free":               31,
+		"nvidia/nemotron-3-ultra-550b-a55b:free":   55,
+		"nvidia/nemotron-3-super-120b-a12b:free":   12,
+		"nvidia/nemotron-3.5-lightning:free":       8,
+		"deepseek/deepseek-chat-v3-0324:free":      30,
+		"meta-llama/llama-3.3-70b-instruct:free":   70,
+		"qwen/qwen3-235b-a22b:free":                22,
+		"mistralai/mistral-small-3.2-24b-instruct": 24,
+	} {
+		if got := activeSize(id); got != want {
+			t.Errorf("activeSize(%s) = %d, want %d", id, got, want)
+		}
+	}
+	entry := func(id, modality string, params ...string) modelEntry {
+		var m modelEntry
+		m.ID = id
+		m.Architecture.Modality = modality
+		m.SupportedParameters = params
+		return m
+	}
+	if isChatModel(entry("google/lyria-3-pro-preview", "text->audio")) || isChatModel(entry("nvidia/nemotron-3.5-content-safety:free", "text->text")) || isChatModel(entry("x/chatty", "text->text", "temperature")) {
+		t.Fatal("music, safety classifiers and models without max_tokens are not chat models")
+	}
+	if !isChatModel(entry("google/gemma-4-31b-it:free", "text+image->text", "max_tokens", "temperature")) || !isChatModel(entry("x/plain", "")) {
+		t.Fatal("text-answering models must pass")
+	}
+}
+
 func TestLLMFallsThroughTheModelList(t *testing.T) {
 	in := sampleContext(t)
 	var asked []string
@@ -387,7 +461,13 @@ func TestDiscoverFreeRanksTheCatalog(t *testing.T) {
 		  {"id":"qwen/qwen2.5-vl-72b-instruct:free","context_length":32768,"pricing":{"prompt":"0","completion":"0"}},
 		  {"id":"openrouter/free","context_length":0,"pricing":{"prompt":"0","completion":"0"}},
 		  {"id":"meta-llama/llama-3.3-70b-instruct:free","context_length":131072,"pricing":{"prompt":"0","completion":"0"},"architecture":{"output_modalities":["text"]}},
-		  {"id":"some/image-model:free","context_length":4096,"pricing":{"prompt":"0","completion":"0"},"architecture":{"output_modalities":["image"]}}
+		  {"id":"some/image-model:free","context_length":4096,"pricing":{"prompt":"0","completion":"0"},"architecture":{"output_modalities":["image"]}},
+		  {"id":"google/gemma-4-31b-it:free","context_length":131072,"pricing":{"prompt":"0","completion":"0"},"architecture":{"modality":"text+image->text"}},
+		  {"id":"google/gemma-4-26b-a4b-it:free","context_length":131072,"pricing":{"prompt":"0","completion":"0"},"architecture":{"modality":"text+image->text"}},
+		  {"id":"nvidia/nemotron-3-ultra-550b-a55b:free","context_length":262144,"pricing":{"prompt":"0","completion":"0"}},
+		  {"id":"nvidia/nemotron-3.5-lightning:free","context_length":131072,"pricing":{"prompt":"0","completion":"0"}},
+		  {"id":"nvidia/nemotron-3.5-content-safety:free","context_length":32768,"pricing":{"prompt":"0","completion":"0"}},
+		  {"id":"google/lyria-3-pro-preview","context_length":0,"pricing":{"prompt":"0","completion":"0"},"architecture":{"modality":"text->audio","output_modalities":["audio"]}}
 		]}`))
 	}))
 	defer srv.Close()
@@ -395,18 +475,18 @@ func TestDiscoverFreeRanksTheCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"deepseek/deepseek-chat-v3-0324:free", "qwen/qwen3-235b-a22b:free", "meta-llama/llama-3.3-70b-instruct:free", "deepseek/deepseek-r1:free"}
+	want := []string{"deepseek/deepseek-chat-v3-0324:free", "qwen/qwen3-235b-a22b:free", "meta-llama/llama-3.3-70b-instruct:free", "google/gemma-4-26b-a4b-it:free", "google/gemma-4-31b-it:free", "nvidia/nemotron-3.5-lightning:free", "nvidia/nemotron-3-ultra-550b-a55b:free", "deepseek/deepseek-r1:free"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("got %v want %v", got, want)
 	}
 	l := NewLLM(srv.URL+"/api/v1", "k", "openrouter/free", time.Second)
 	l.Discover = true
 	models, err := l.RefreshModels(context.Background())
-	if err != nil || len(models) != 5 || models[0] != want[0] || models[4] != "openrouter/free" {
+	if err != nil || len(models) != len(want)+1 || models[0] != want[0] || models[len(want)] != "openrouter/free" {
 		t.Fatalf("discovered models first, the router last: %v %v", models, err)
 	}
 	st := l.Status()
-	if len(st.Discovered) != 4 || st.Calls != 0 {
+	if len(st.Discovered) != len(want) || st.Calls != 0 {
 		t.Fatalf("status %+v", st)
 	}
 }

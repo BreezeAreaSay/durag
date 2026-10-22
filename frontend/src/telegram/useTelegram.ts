@@ -30,17 +30,52 @@ export function useTelegram(): TelegramInfo {
   useEffect(() => {
     const tg = window.Telegram?.WebApp;
     if (!tg) return;
-    try {
-      tg.ready();
-      tg.expand();
-      tg.setHeaderColor('#f2f0ea');
-      tg.setBackgroundColor('#f2f0ea');
-      tg.disableVerticalSwipes?.();
-    } catch {
-      // older clients may not support every call
-    }
+    // Each call is optional on older clients, so every one gets its own try.
+    const attempt = (fn: () => void) => {
+      try {
+        fn();
+      } catch {
+        // unsupported on this client version
+      }
+    };
+    attempt(() => tg.ready());
+    attempt(() => tg.expand()); // a Mini App opened from a button starts half-height
+    // the Telegram chrome takes the app's dark paper so the header, the
+    // background behind the keyboard and the bottom bar match the table
+    attempt(() => tg.setHeaderColor('#161513'));
+    attempt(() => tg.setBackgroundColor('#161513'));
+    attempt(() => tg.setBottomBarColor?.('#161513'));
+    attempt(() => tg.disableVerticalSwipes?.()); // dragging a card must not pull the app down
+    attempt(() => tg.lockOrientation?.()); // the table is laid out for portrait
   }, []);
   return info;
+}
+
+/**
+ * Shows Telegram's native back button (the arrow in the Mini App header)
+ * while a screen can go back, and runs `onBack` when it is tapped. Outside
+ * Telegram it does nothing: the screens keep their own buttons.
+ */
+export function useBackButton(onBack: (() => void) | null): void {
+  useEffect(() => {
+    const bb = window.Telegram?.WebApp?.BackButton;
+    if (!bb || !onBack) return;
+    const handler = () => onBack();
+    try {
+      bb.onClick(handler);
+      bb.show();
+    } catch {
+      return;
+    }
+    return () => {
+      try {
+        bb.offClick(handler);
+        bb.hide();
+      } catch {
+        // older clients
+      }
+    };
+  }, [onBack]);
 }
 
 export function haptic(kind: 'light' | 'medium' | 'heavy' | 'error' | 'success'): void {

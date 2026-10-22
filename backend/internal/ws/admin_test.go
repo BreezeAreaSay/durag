@@ -22,7 +22,7 @@ func newAdminServer(t *testing.T) (*httptest.Server, *Hub, *store.Memory) {
 	st := store.NewMemory()
 	auth := TelegramAuth{BotToken: testToken, MaxAge: 0, AllowDev: true}
 	rec := monitor.New()
-	h := NewHub(st, game.NewEngine(game.NewRand(5, 6)), auth, Options{Logger: slog.New(rec.Handler(slog.NewTextHandler(io.Discard, nil), slog.LevelInfo)), Monitor: rec})
+	h := NewHub(st, game.NewEngine(game.NewRand(5, 6)), auth, Options{Logger: slog.New(rec.Handler(slog.NewTextHandler(io.Discard, nil), slog.LevelInfo)), Monitor: rec, AdminIDs: []string{"dev:admin", "123456"}})
 	mux := http.NewServeMux()
 	mux.Handle("/ws", h)
 	mux.Handle("/api/admin/", h.AdminHandler(AdminOptions{IDs: []string{"dev:admin", "123456"}, Auth: auth, BotsEnabled: true}))
@@ -223,5 +223,22 @@ func TestPremiumReactionsNeedExperience(t *testing.T) {
 	_ = json.Unmarshal(env.Payload, &free)
 	if free.Emoji != "👍" || free.Effect != "" {
 		t.Fatalf("free reactions carry no effect: %+v", free)
+	}
+}
+
+func TestAdminsHaveEveryPremiumReaction(t *testing.T) {
+	srv, _, _ := newAdminServer(t)
+	wsURL := "ws" + srv.URL[len("http"):] + "/ws"
+	adm := dialURL(t, wsURL)
+	adm.send(TypeJoinRoom, devJoin("ADMR", true, "admin", "Boss"))
+	if s := adm.state(); s.Players[0].XP != 0 {
+		t.Fatalf("a fresh admin has no XP: %d", s.Players[0].XP)
+	}
+	adm.send(TypeSendEmoji, ReactPayload{Emoji: "💣"})
+	env := adm.expect(TypeReaction)
+	var r ReactionPayload
+	_ = json.Unmarshal(env.Payload, &r)
+	if r.Emoji != "💣" || r.Effect != "boom" || r.PlayerID != "dev:admin" {
+		t.Fatalf("an admin gets the top reaction at 0 XP: %+v", r)
 	}
 }

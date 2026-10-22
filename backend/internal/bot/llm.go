@@ -46,6 +46,7 @@ type LLM struct {
 	pausedUntil time.Time
 	pauseReason string
 	discovered  []string
+	cooling     map[string]time.Time // model -> skipped until (upstream limit, 404, 5xx, too slow)
 	calls       int
 	ok          int
 	failed      int
@@ -68,6 +69,9 @@ type Status struct {
 	LastError   string    `json:"last_error,omitempty"`
 	LastModel   string    `json:"last_model,omitempty"`
 	LastOK      time.Time `json:"last_ok,omitempty"`
+	// Cooling lists models skipped for a while after an upstream rate limit,
+	// a 404/5xx or a timeout (the others are tried instead).
+	Cooling []string `json:"cooling,omitempty"`
 }
 
 // Status implements monitoring.
@@ -78,6 +82,7 @@ func (l *LLM) Status() Status {
 	return Status{
 		Configured:  append([]string{}, l.Models...),
 		Discovered:  append([]string{}, l.discovered...),
+		Cooling:     l.coolingLocked(time.Now()),
 		Paused:      now.Before(l.pausedUntil),
 		PauseReason: l.pauseReason,
 		PausedUntil: l.pausedUntil,
@@ -191,6 +196,61 @@ func pauseForRateLimit(body string, now time.Time) time.Duration {
 }
 
 // Paused reports whether the model is resting and why.
+const (
+	// modelCooldown is how long a model is skipped after an upstream rate
+	// limit, a 5xx or a timeout; a 404/400 (the id is gone or rejected)
+	// keeps it out for modelCooldownLong.
+	modelCooldown     = 2 * time.Minute
+	modelCooldownLong = 10 * time.Minute
+)
+
+// isUpstreamLimit tells an OpenRouter 429 that concerns one model's provider
+// ("temporarily rate-limited upstream", limit_source upstream_provider_shared_pool)
+// from the account-wide free-tier caps: the former means "try another model".
+func isUpstreamLimit(body string) bool {
+	b := strings.ToLower(body)
+	return strings.Contains(b, "upstream") || strings.Contains(b, "provider returned error") || strings.Contains(b, "temporarily rate-limited")
+}
+
+// coolDown skips a model for d.
+func (l *LLM) coolDown(model string, d time.Duration) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.cooling == nil {
+		l.cooling = map[string]time.Time{}
+	}
+	l.cooling[model] = time.Now().Add(d)
+}
+
+// coolingLocked returns the models still cooling down (l.mu held).
+func (l *LLM) coolingLocked(now time.Time) []string {
+	var out []string
+	for m, until := range l.cooling {
+		if until.After(now) {
+			out = append(out, m)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// ready filters out the cooling models; when every candidate is cooling they
+// are all tried anyway rather than giving up.
+func (l *LLM) ready(models []string, now time.Time) []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var out []string
+	for _, m := range models {
+		if until, ok := l.cooling[m]; !ok || !until.After(now) {
+			out = append(out, m)
+		}
+	}
+	if len(out) == 0 {
+		return models
+	}
+	return out
+}
+
 func (l *LLM) Paused(now time.Time) (bool, string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -295,6 +355,7 @@ func (l *LLM) Decide(ctx context.Context, in Context) (Decision, error) {
 	if len(models) == 0 {
 		models = []string{FreeRouter}
 	}
+	models = l.ready(models, time.Now())
 	l.mu.Lock()
 	l.calls++
 	l.mu.Unlock()
@@ -328,9 +389,16 @@ func (l *LLM) Decide(ctx context.Context, in Context) (Decision, error) {
 			case he.status == http.StatusPaymentRequired:
 				l.pause(pauseAfterNoCredits, "no credits (HTTP 402)")
 				return Decision{}, l.noteFailure(err)
+			case he.status == http.StatusTooManyRequests && isUpstreamLimit(he.body):
+				// one model's provider is saturated: rest it, the next model may answer
+				l.coolDown(model, modelCooldown)
 			case he.status == http.StatusTooManyRequests:
 				l.pause(pauseForRateLimit(he.body, time.Now()), "rate limited (HTTP 429)")
 				return Decision{}, l.noteFailure(err)
+			case he.status == http.StatusNotFound || he.status == http.StatusBadRequest:
+				l.coolDown(model, modelCooldownLong) // the id is gone or this model rejects our request
+			case he.status >= 500:
+				l.coolDown(model, modelCooldown)
 			}
 			break
 		}
@@ -344,6 +412,7 @@ func (l *LLM) Decide(ctx context.Context, in Context) (Decision, error) {
 		}
 		lastErr = err
 		if ctx.Err() != nil {
+			l.coolDown(model, modelCooldown)      // too slow for a move: let the others go first next time
 			return Decision{}, l.noteFailure(err) // out of time: the rules take over
 		}
 	}
@@ -369,8 +438,76 @@ type modelEntry struct {
 		Completion string `json:"completion"`
 	} `json:"pricing"`
 	Architecture struct {
+		Modality         string   `json:"modality"` // e.g. "text->text", "text+image->text", "text->audio"
+		InputModalities  []string `json:"input_modalities"`
 		OutputModalities []string `json:"output_modalities"`
 	} `json:"architecture"`
+	SupportedParameters []string `json:"supported_parameters"`
+}
+
+// notChat lists id fragments of models that do not play cards: vision, audio,
+// music and image generators, safety classifiers, embeddings and the like.
+var notChat = []string{"vision", "-vl", "image", "audio", "music", "lyria", "video", "veo", "imagen", "flux", "diffusion", "whisper", "transcri", "tts", "speech", "embed", "guard", "safety", "moderation", "rerank", "ocr"}
+
+// isChatModel keeps catalog entries that take text and answer with text.
+func isChatModel(m modelEntry) bool {
+	id := strings.ToLower(m.ID)
+	for _, k := range notChat {
+		if strings.Contains(id, k) {
+			return false
+		}
+	}
+	if parts := strings.SplitN(m.Architecture.Modality, "->", 2); len(parts) == 2 && !strings.Contains(parts[1], "text") {
+		return false
+	}
+	if len(m.Architecture.InputModalities) > 0 && !contains(m.Architecture.InputModalities, "text") {
+		return false
+	}
+	if len(m.Architecture.OutputModalities) > 0 && !contains(m.Architecture.OutputModalities, "text") {
+		return false
+	}
+	if len(m.SupportedParameters) > 0 && !contains(m.SupportedParameters, "max_tokens") {
+		return false
+	}
+	return true
+}
+
+// activeSize estimates the billions of parameters a model runs per token
+// from its id ("26b-a4b" -> 4, "31b" -> 31, "lightning"/"flash" -> 8), so
+// quicker models go first inside a family; unknown sizes count as 30.
+func activeSize(id string) int {
+	id = strings.ToLower(id)
+	active, total := 0, 0
+	for i := 0; i+1 < len(id); i++ {
+		if id[i] < '0' || id[i] > '9' {
+			continue
+		}
+		j := i
+		for j < len(id) && id[j] >= '0' && id[j] <= '9' {
+			j++
+		}
+		if j < len(id) && id[j] == 'b' && (j+1 == len(id) || !(id[j+1] >= 'a' && id[j+1] <= 'z')) {
+			n, _ := strconv.Atoi(id[i:j])
+			if i > 0 && id[i-1] == 'a' {
+				active = n
+			} else if n > total {
+				total = n
+			}
+		}
+		i = j
+	}
+	switch {
+	case active > 0:
+		return active
+	case total > 0:
+		return total
+	}
+	for _, k := range []string{"lightning", "flash", "lite", "mini", "small", "nano"} {
+		if strings.Contains(id, k) {
+			return 8
+		}
+	}
+	return 30
 }
 
 // families lists the model families bots play best with, most preferred first.
@@ -407,6 +544,7 @@ func rankFree(entries []modelEntry) []string {
 	type cand struct {
 		id   string
 		fam  int
+		size int
 		ctxL int
 	}
 	var cands []cand
@@ -420,13 +558,10 @@ func rankFree(entries []modelEntry) []string {
 		if c, err := strconv.ParseFloat(m.Pricing.Completion, 64); err != nil || c != 0 {
 			continue
 		}
+		if !isChatModel(m) {
+			continue
+		}
 		id := strings.ToLower(m.ID)
-		if strings.Contains(id, "vision") || strings.Contains(id, "-vl") || strings.Contains(id, "image") || strings.Contains(id, "audio") || strings.Contains(id, "whisper") || strings.Contains(id, "tts") || strings.Contains(id, "embed") || strings.Contains(id, "guard") || strings.Contains(id, "rerank") {
-			continue
-		}
-		if len(m.Architecture.OutputModalities) > 0 && !contains(m.Architecture.OutputModalities, "text") {
-			continue
-		}
 		fam := len(families)
 		for i, f := range families {
 			if strings.HasPrefix(id, f) {
@@ -437,11 +572,14 @@ func rankFree(entries []modelEntry) []string {
 		if thinksOnly(id) {
 			fam += len(families) + 1 // after every family: slow, and the answer hides in the thoughts
 		}
-		cands = append(cands, cand{id: m.ID, fam: fam, ctxL: m.ContextLength})
+		cands = append(cands, cand{id: m.ID, fam: fam, size: activeSize(id), ctxL: m.ContextLength})
 	}
 	sort.SliceStable(cands, func(i, j int) bool {
 		if cands[i].fam != cands[j].fam {
 			return cands[i].fam < cands[j].fam
+		}
+		if cands[i].size != cands[j].size {
+			return cands[i].size < cands[j].size // quicker first: a move has seconds, not minutes
 		}
 		return cands[i].ctxL > cands[j].ctxL
 	})

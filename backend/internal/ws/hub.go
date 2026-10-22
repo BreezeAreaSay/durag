@@ -31,6 +31,9 @@ type Options struct {
 	// Monitor collects counters, events and log lines for the admin panel
 	// (optional: a fresh recorder is created when nil).
 	Monitor *monitor.Recorder
+	// AdminIDs are the identities (Telegram user ids or "dev:<id>") that get
+	// every premium reaction regardless of XP.
+	AdminIDs []string
 }
 
 // Hub owns every local connection, routes intents to the engine and relays
@@ -52,7 +55,11 @@ type Hub struct {
 	botMu    sync.Mutex
 	botRooms map[string]*botRoom
 	mon      *monitor.Recorder
+	admins   map[string]bool
 }
+
+// isAdmin tells whether a player id is listed in ADMIN_IDS.
+func (h *Hub) isAdmin(playerID string) bool { return h.admins[playerID] }
 
 type roomSub struct {
 	clients map[*Client]struct{}
@@ -94,6 +101,12 @@ func NewHub(st store.Store, engine *game.Engine, auth Authenticator, opts Option
 		ReadBufferSize:  4096,
 		WriteBufferSize: 4096,
 		CheckOrigin:     originChecker(opts.AllowedOrigins),
+	}
+	h.admins = map[string]bool{}
+	for _, id := range opts.AdminIDs {
+		if id = strings.TrimSpace(id); id != "" {
+			h.admins[id] = true
+		}
 	}
 	if h.mon == nil {
 		h.mon = monitor.New()
@@ -337,7 +350,7 @@ func (h *Hub) react(c *Client, raw json.RawMessage) {
 				xp = pl.XP
 			}
 		}
-		if xp < prem.XP {
+		if xp < prem.XP && !h.isAdmin(playerID) {
 			c.sendError("LOCKED_EMOJI", fmt.Sprintf("this reaction unlocks at %d XP", prem.XP), "")
 			return
 		}
@@ -423,7 +436,7 @@ func (h *Hub) recordFinish(roomID string, state *game.GameState) {
 	// the victory joke: winners who earned the fanfare tier get it with a line
 	fanfare := PremiumEmoji["🏆"]
 	for _, r := range results {
-		if r.Won && xp[r.ID] >= fanfare.XP {
+		if r.Won && (xp[r.ID] >= fanfare.XP || h.isAdmin(r.ID)) {
 			line := VictoryLines[rand.IntN(len(VictoryLines))]
 			raw, err := json.Marshal(pubMessage{Kind: "reaction", Reaction: &ReactionPayload{PlayerID: r.ID, Emoji: "🏆", Text: line, Effect: fanfare.Effect, TS: time.Now().UnixMilli()}})
 			if err == nil {

@@ -76,6 +76,11 @@ export function Lobby({ prefillCode }: Props) {
 
   return (
     <main className="screen lobby">
+      {isAdmin ? (
+        <button type="button" className="chip chip--acid lobby__admin" onClick={() => setAdminOpen(true)}>
+          {t('admin.open')}
+        </button>
+      ) : null}
       <header className="lobby__head">
         <h1 className="zine-title">
           DU
@@ -124,11 +129,6 @@ export function Lobby({ prefillCode }: Props) {
           {t('lobby.join')}
         </Button>
       </form>
-      {isAdmin ? (
-        <Button variant="ink" onClick={() => setAdminOpen(true)}>
-          {t('admin.open')}
-        </Button>
-      ) : null}
       {connection !== 'open' ? <p className="muted">{t('lobby.connecting')}</p> : null}
     </main>
   );
