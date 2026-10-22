@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"math/rand/v2"
 	"net/http"
@@ -142,6 +143,18 @@ func TestParseValidatesTheAnswer(t *testing.T) {
 	if err != nil || !d.AdminJoke {
 		t.Fatalf("fourth-wall line not recognised: %+v %v", d, err)
 	}
+	// a thinking model: drafts, nested braces and the final answer at the end
+	thought := "Hmm, {move 1} is weak. Options: {\"a\": {\"b\": 1}}. I'll go with\n```json\n{\"move\": 2, \"say\": \"\"}\n```"
+	d, err = Parse(thought, in)
+	if err != nil || d.Move != in.Moves[1] {
+		t.Fatalf("answer after the thoughts not found: %+v %v", d, err)
+	}
+	if _, err := Parse("", in); !errors.Is(err, ErrEmptyAnswer) {
+		t.Fatalf("empty content must be ErrEmptyAnswer, got %v", err)
+	}
+	if _, err := Parse(`{"say": "no move here"}`, in); err == nil {
+		t.Fatal("an object without a move accepted")
+	}
 	if !strings.Contains(Prompt(in), "Легальные ходы") || !strings.Contains(Prompt(in), "четвёртую стену") {
 		t.Fatal("prompt must list the moves and offer the admin joke")
 	}
@@ -172,6 +185,92 @@ func TestLLMDecideOverHTTP(t *testing.T) {
 	}
 	if d.Move != in.Moves[0] || d.Say != "Зашёл" || gotAuth != "Bearer sk-test" || gotModel != "deepseek/deepseek-chat" {
 		t.Fatalf("decision %+v auth %q model %q", d, gotAuth, gotModel)
+	}
+}
+
+func TestLLMReadsTheAnswerFromTheThoughts(t *testing.T) {
+	in := sampleContext(t)
+	var reasoningOff []bool
+	mode := "thoughts"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req map[string]any
+		_ = json.Unmarshal(body, &req)
+		rs, _ := req["reasoning"].(map[string]any)
+		reasoningOff = append(reasoningOff, rs != nil && rs["enabled"] == false)
+		if mt, _ := req["max_tokens"].(float64); mt < 500 {
+			http.Error(w, "max_tokens too small for a thinking model", 500)
+			return
+		}
+		msg := map[string]any{"role": "assistant", "content": ""}
+		switch mode {
+		case "thoughts":
+			msg["reasoning"] = "Let me think... the first move is fine. {\"move\": 1, \"say\": \"Погнали\"}"
+		case "nothing":
+			// the budget ran out while thinking: no text anywhere
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"model":   "deepseek/deepseek-r1:free",
+			"choices": []map[string]any{{"message": msg, "finish_reason": "length"}},
+		})
+	}))
+	defer srv.Close()
+	l := NewLLM(srv.URL, "k", "openrouter/free", 2*time.Second)
+	d, err := l.Decide(context.Background(), in)
+	if err != nil || d.Move != in.Moves[0] || d.Say != "Погнали" || d.Model != "deepseek/deepseek-r1:free" {
+		t.Fatalf("answer inside the reasoning not used: %+v %v", d, err)
+	}
+	if len(reasoningOff) != 1 || !reasoningOff[0] {
+		t.Fatalf("thinking must be switched off in the request: %v", reasoningOff)
+	}
+	mode = "nothing"
+	_, err = l.Decide(context.Background(), in)
+	if !errors.Is(err, ErrEmptyAnswer) || !strings.Contains(err.Error(), "deepseek/deepseek-r1:free") || !strings.Contains(err.Error(), "length") {
+		t.Fatalf("an empty answer must name the model and the finish reason: %v", err)
+	}
+	if st := l.Status(); st.Calls != 2 || st.OK != 1 || st.Failed != 1 || !strings.Contains(st.LastError, "sent no text") {
+		t.Fatalf("status %+v", st)
+	}
+}
+
+func TestLLMRetriesWithoutTheReasoningSwitch(t *testing.T) {
+	in := sampleContext(t)
+	var seen []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req map[string]any
+		_ = json.Unmarshal(body, &req)
+		_, hasReasoning := req["reasoning"]
+		_, hasFormat := req["response_format"]
+		seen = append(seen, fmt.Sprintf("reasoning=%v format=%v", hasReasoning, hasFormat))
+		if hasReasoning {
+			http.Error(w, `{"error":{"message":"Unrecognized request argument supplied: reasoning"}}`, 400)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []map[string]any{{"message": map[string]any{"content": `{"move": 1}`}}}})
+	}))
+	defer srv.Close()
+	d, err := NewLLM(srv.URL, "k", "gpt-4o-mini", 2*time.Second).Decide(context.Background(), in)
+	if err != nil || d.Move != in.Moves[0] {
+		t.Fatalf("decision %+v %v", d, err)
+	}
+	if len(seen) != 2 || seen[0] != "reasoning=true format=true" || seen[1] != "reasoning=false format=true" {
+		t.Fatalf("expected one retry without the reasoning option, got %v", seen)
+	}
+}
+
+func TestCandidatesTryTheFreeRouterLast(t *testing.T) {
+	l := NewLLM("http://x", "k", "openrouter/free", time.Second)
+	if got := strings.Join(l.candidates(), ","); got != "openrouter/free" {
+		t.Fatalf("before discovery: %s", got)
+	}
+	l.discovered = []string{"a/one:free", "b/two:free"}
+	if got := strings.Join(l.candidates(), ","); got != "a/one:free,b/two:free,openrouter/free" {
+		t.Fatalf("after discovery the router must come last: %s", got)
+	}
+	l.Models = []string{"b/two:free", "openrouter/free"}
+	if got := strings.Join(l.candidates(), ","); got != "b/two:free,a/one:free,openrouter/free" {
+		t.Fatalf("explicit models first: %s", got)
 	}
 }
 
@@ -296,15 +395,15 @@ func TestDiscoverFreeRanksTheCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"deepseek/deepseek-chat-v3-0324:free", "deepseek/deepseek-r1:free", "qwen/qwen3-235b-a22b:free", "meta-llama/llama-3.3-70b-instruct:free"}
+	want := []string{"deepseek/deepseek-chat-v3-0324:free", "qwen/qwen3-235b-a22b:free", "meta-llama/llama-3.3-70b-instruct:free", "deepseek/deepseek-r1:free"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("got %v want %v", got, want)
 	}
 	l := NewLLM(srv.URL+"/api/v1", "k", "openrouter/free", time.Second)
 	l.Discover = true
 	models, err := l.RefreshModels(context.Background())
-	if err != nil || len(models) != 5 || models[0] != "openrouter/free" || models[1] != want[0] {
-		t.Fatalf("candidates %v %v", models, err)
+	if err != nil || len(models) != 5 || models[0] != want[0] || models[4] != "openrouter/free" {
+		t.Fatalf("discovered models first, the router last: %v %v", models, err)
 	}
 	st := l.Status()
 	if len(st.Discovered) != 4 || st.Calls != 0 {

@@ -90,17 +90,28 @@ func (l *LLM) Status() Status {
 	}
 }
 
-// candidates returns the configured models followed by the discovered ones.
+// candidates returns the models to try in order: the configured ones, then
+// the discovered free models. The generic free router goes last once the
+// catalog has been read: it picks a random free model, thinking ones
+// included, while the discovered list is ranked for quick JSON answers.
 func (l *LLM) candidates() []string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	seen := map[string]bool{}
 	var out []string
+	router := false
 	for _, m := range append(append([]string{}, l.Models...), l.discovered...) {
+		if m == FreeRouter && len(l.discovered) > 0 {
+			router = true
+			continue
+		}
 		if !seen[m] {
 			seen[m] = true
 			out = append(out, m)
 		}
+	}
+	if router {
+		out = append(out, FreeRouter)
 	}
 	return out
 }
@@ -121,6 +132,9 @@ var (
 	ErrBadAnswer = errors.New("llm: answer is not a legal move")
 	// ErrPaused is returned while the model is resting after a rate limit or an empty balance.
 	ErrPaused = errors.New("llm: paused")
+	// ErrEmptyAnswer is returned when the model sent no text at all (typically a
+	// thinking model that spent the whole token budget on its thoughts).
+	ErrEmptyAnswer = errors.New("llm: empty answer")
 )
 
 // httpError carries the status so Decide can tell a dead model from a dead quota.
@@ -199,12 +213,50 @@ type chatRequest struct {
 	Temperature    float64       `json:"temperature"`
 	MaxTokens      int           `json:"max_tokens"`
 	ResponseFormat *respFormat   `json:"response_format,omitempty"`
+	// OpenRouter's unified reasoning control: hybrid "thinking" models
+	// (Qwen3, DeepSeek V3.1, Gemini Flash) answer directly when it is off.
+	Reasoning *reasoningOpt `json:"reasoning,omitempty"`
+}
+
+type reasoningOpt struct {
+	Enabled bool `json:"enabled"`
 }
 
 type chatMessage struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
+	// Reasoning models put their thoughts here (OpenRouter: reasoning,
+	// other OpenAI-compatible servers: reasoning_content). When the token
+	// budget runs out before the answer, content is empty and the JSON we
+	// want may only exist in the thoughts.
+	Reasoning        string            `json:"reasoning,omitempty"`
+	ReasoningContent string            `json:"reasoning_content,omitempty"`
+	ReasoningDetails []reasoningDetail `json:"reasoning_details,omitempty"`
 }
+
+type reasoningDetail struct {
+	Text string `json:"text"`
+}
+
+// thoughts returns the reasoning text, whichever field carries it.
+func (m chatMessage) thoughts() string {
+	if m.Reasoning != "" {
+		return m.Reasoning
+	}
+	if m.ReasoningContent != "" {
+		return m.ReasoningContent
+	}
+	var b strings.Builder
+	for _, d := range m.ReasoningDetails {
+		b.WriteString(d.Text)
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// maxAnswerTokens leaves room for a model that thinks before it answers:
+// with a small budget the thoughts eat it all and the answer never comes.
+const maxAnswerTokens = 700
 
 type respFormat struct {
 	Type string `json:"type"`
@@ -213,7 +265,8 @@ type respFormat struct {
 type chatResponse struct {
 	Model   string `json:"model"` // the model that actually answered (routers resolve it)
 	Choices []struct {
-		Message chatMessage `json:"message"`
+		Message      chatMessage `json:"message"`
+		FinishReason string      `json:"finish_reason"`
 	} `json:"choices"`
 	Error *struct {
 		Message string `json:"message"`
@@ -222,7 +275,7 @@ type chatResponse struct {
 
 // answer is what the model is asked to produce.
 type answer struct {
-	Move  int    `json:"move"`
+	Move  *int   `json:"move"`
 	Say   string `json:"say"`
 	Emoji string `json:"emoji"`
 }
@@ -253,13 +306,25 @@ func (l *LLM) Decide(ctx context.Context, in Context) (Decision, error) {
 	defer cancel()
 	var lastErr error
 	for _, model := range models {
-		d, err := l.ask(ctx, model, in, true)
-		var he *httpError
-		if errors.As(err, &he) {
+		opts := askOptions{jsonMode: true, noThink: true}
+		d, err := l.ask(ctx, model, in, opts)
+		for retry := 0; retry < 2; retry++ {
+			var he *httpError
+			if !errors.As(err, &he) {
+				break
+			}
+			body := strings.ToLower(he.body)
 			switch {
-			case he.status == http.StatusBadRequest && strings.Contains(strings.ToLower(he.body), "response_format"):
+			case he.status == http.StatusBadRequest && opts.jsonMode && strings.Contains(body, "response_format"):
 				// the provider behind this model does not do JSON mode: the prompt asks for JSON anyway
-				d, err = l.ask(ctx, model, in, false)
+				opts.jsonMode = false
+				d, err = l.ask(ctx, model, in, opts)
+				continue
+			case he.status == http.StatusBadRequest && opts.noThink && strings.Contains(body, "reasoning"):
+				// a server that does not know the reasoning switch
+				opts.noThink = false
+				d, err = l.ask(ctx, model, in, opts)
+				continue
 			case he.status == http.StatusPaymentRequired:
 				l.pause(pauseAfterNoCredits, "no credits (HTTP 402)")
 				return Decision{}, l.noteFailure(err)
@@ -267,6 +332,7 @@ func (l *LLM) Decide(ctx context.Context, in Context) (Decision, error) {
 				l.pause(pauseForRateLimit(he.body, time.Now()), "rate limited (HTTP 429)")
 				return Decision{}, l.noteFailure(err)
 			}
+			break
 		}
 		if err == nil {
 			l.mu.Lock()
@@ -368,6 +434,9 @@ func rankFree(entries []modelEntry) []string {
 				break
 			}
 		}
+		if thinksOnly(id) {
+			fam += len(families) + 1 // after every family: slow, and the answer hides in the thoughts
+		}
 		cands = append(cands, cand{id: m.ID, fam: fam, ctxL: m.ContextLength})
 	}
 	sort.SliceStable(cands, func(i, j int) bool {
@@ -384,6 +453,16 @@ func rankFree(entries []modelEntry) []string {
 		out = append(out, c.id)
 	}
 	return out
+}
+
+// thinksOnly recognises models that always reason before answering.
+func thinksOnly(id string) bool {
+	for _, k := range []string{"-r1", "/r1", "qwq", "thinking", "reason", "-think"} {
+		if strings.Contains(id, k) {
+			return true
+		}
+	}
+	return false
 }
 
 func contains(list []string, s string) bool {
@@ -411,16 +490,26 @@ func (l *LLM) RefreshModels(ctx context.Context) ([]string, error) {
 	return l.candidates(), nil
 }
 
+// askOptions are the request features a provider may reject; Decide retries
+// without them.
+type askOptions struct {
+	jsonMode bool // response_format: json_object
+	noThink  bool // reasoning: {enabled: false}
+}
+
 // ask sends one request for one model and validates the answer.
-func (l *LLM) ask(ctx context.Context, model string, in Context, jsonMode bool) (Decision, error) {
+func (l *LLM) ask(ctx context.Context, model string, in Context, opts askOptions) (Decision, error) {
 	req := chatRequest{
 		Model:       model,
 		Messages:    []chatMessage{{Role: "system", Content: systemPrompt}, {Role: "user", Content: Prompt(in)}},
 		Temperature: 0.7,
-		MaxTokens:   160,
+		MaxTokens:   maxAnswerTokens,
 	}
-	if jsonMode {
+	if opts.jsonMode {
 		req.ResponseFormat = &respFormat{Type: "json_object"}
+	}
+	if opts.noThink {
+		req.Reasoning = &reasoningOpt{Enabled: false}
 	}
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -464,15 +553,40 @@ func (l *LLM) ask(ctx context.Context, model string, in Context, jsonMode bool) 
 	if len(cr.Choices) == 0 {
 		return Decision{}, errors.New("llm: no choices")
 	}
-	d, err := Parse(cr.Choices[0].Message.Content, in)
+	answered := cr.Model
+	if answered == "" {
+		answered = model
+	}
+	choice := cr.Choices[0]
+	content := strings.TrimSpace(choice.Message.Content)
+	thoughts := strings.TrimSpace(choice.Message.thoughts())
+	if content == "" && thoughts == "" {
+		return Decision{}, fmt.Errorf("%w: %s sent no text (finish_reason=%q)", ErrEmptyAnswer, answered, choice.FinishReason)
+	}
+	d, err := Parse(content, in)
+	if err != nil && thoughts != "" {
+		// the answer may only exist in the thoughts of a reasoning model
+		if d2, err2 := Parse(thoughts, in); err2 == nil {
+			d, err = d2, nil
+		}
+	}
 	if err != nil {
-		return Decision{}, err
+		if content == "" {
+			return Decision{}, fmt.Errorf("%w: %s only thought, %d chars, no JSON in it (finish_reason=%q)", ErrEmptyAnswer, answered, len([]rune(thoughts)), choice.FinishReason)
+		}
+		return Decision{}, fmt.Errorf("%w from %s (finish_reason=%q): %s", err, answered, choice.FinishReason, snippet(content))
 	}
-	d.Model = cr.Model
-	if d.Model == "" {
-		d.Model = model
-	}
+	d.Model = answered
 	return d, nil
+}
+
+// snippet shortens model output for an error message.
+func snippet(s string) string {
+	r := []rune(strings.Join(strings.Fields(s), " "))
+	if len(r) > 90 {
+		return string(r[:90]) + "…"
+	}
+	return string(r)
 }
 
 // Probe sends one tiny request so a deployment can see in its logs that the
@@ -581,34 +695,44 @@ func Prompt(in Context) string {
 	for i, m := range in.Moves {
 		fmt.Fprintf(&b, "%d. %s\n", i+1, moveText(m))
 	}
-	b.WriteString("Ответь JSON.")
+	b.WriteString("Ответь JSON, без рассуждений. /no_think")
 	return b.String()
 }
 
-// Parse validates the model's JSON against the legal moves.
+// Parse validates the model's JSON against the legal moves. The answer object
+// may sit inside prose, code fences or a reasoning model's thoughts, so the
+// last JSON object that has a "move" field counts.
 func Parse(content string, in Context) (Decision, error) {
 	content = strings.TrimSpace(content)
-	content = strings.TrimPrefix(content, "```json")
-	content = strings.TrimPrefix(content, "```")
-	content = strings.TrimSuffix(content, "```")
-	if i := strings.Index(content, "{"); i > 0 {
-		content = content[i:]
+	if content == "" {
+		return Decision{}, ErrEmptyAnswer
 	}
-	if i := strings.LastIndex(content, "}"); i >= 0 && i < len(content)-1 {
-		content = content[:i+1]
+	a, ok := findAnswer(content)
+	if !ok {
+		return Decision{}, errors.New(`llm: bad json: no {"move": n} object in the answer`)
 	}
-	var a answer
-	if err := json.Unmarshal([]byte(content), &a); err != nil {
-		return Decision{}, fmt.Errorf("llm: bad json: %w", err)
-	}
-	if a.Move < 1 || a.Move > len(in.Moves) {
+	if *a.Move < 1 || *a.Move > len(in.Moves) {
 		return Decision{}, ErrBadAnswer
 	}
-	d := Decision{Move: in.Moves[a.Move-1], Say: trimSay(a.Say), Emoji: a.Emoji}
+	d := Decision{Move: in.Moves[*a.Move-1], Say: trimSay(a.Say), Emoji: a.Emoji}
 	if d.Say != "" && in.AdminJokeDue && mentionsAdmin(d.Say) {
 		d.AdminJoke = true
 	}
 	return d, nil
+}
+
+// findAnswer tries every "{" from the last one backwards and returns the
+// first object that decodes and names a move; the final answer of a thinking
+// model comes after its drafts.
+func findAnswer(content string) (answer, bool) {
+	for i := strings.LastIndex(content, "{"); i >= 0; i = strings.LastIndex(content[:i], "{") {
+		var a answer
+		dec := json.NewDecoder(strings.NewReader(content[i:]))
+		if err := dec.Decode(&a); err == nil && a.Move != nil {
+			return a, true
+		}
+	}
+	return answer{}, false
 }
 
 func trimSay(s string) string {
