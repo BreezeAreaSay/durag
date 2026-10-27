@@ -20,6 +20,7 @@ var (
 	EndgameBudget     = 150 * time.Millisecond // wall clock per decision
 	EndgameSamples    = 6                      // determinizations
 	EndgameMaxUnknown = 16                     // more unknown cards: too many deals to matter
+	EndgameDeckMax    = 4                      // the search starts while this many cards are still in the deck
 	EndgameDepth      = 8                      // plies of alpha-beta
 	EndgameNodes      = 4000                   // alpha-beta nodes per deal
 	EndgameRollouts   = 4                      // rollouts per move per deal
@@ -33,7 +34,7 @@ var (
 // one to search (deck alive, trump hidden, too much unknown, nothing to choose).
 func (h *Heuristic) endgame(in Context) (game.Move, bool) {
 	s := in.State
-	if s.DeckCount > 0 || !s.TrumpRevealed || s.TrumpCard == nil || len(in.Moves) < 2 || in.Memory == nil {
+	if s.DeckCount > EndgameDeckMax || !s.TrumpRevealed || s.TrumpCard == nil || len(in.Moves) < 2 || in.Memory == nil {
 		return game.Move{}, false
 	}
 	me := s.Player(in.BotID)
@@ -120,7 +121,7 @@ func (h *Heuristic) unknownCards(in Context) ([]game.Card, int) {
 		}
 		pool = append(pool, c)
 	}
-	slots := 0
+	slots := s.DeckCount // what is still in the deck is unknown too
 	for _, p := range s.Players {
 		if p.Out {
 			continue
@@ -175,7 +176,11 @@ func (h *Heuristic) deal(in Context, pool []game.Card) *game.GameState {
 		}
 		p.Stump = stump
 	}
-	s.Deck = []game.Card{}
+	deck := take(s.DeckCount)
+	if deck == nil {
+		return nil
+	}
+	s.Deck = deck
 	return s
 }
 

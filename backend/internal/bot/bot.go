@@ -288,6 +288,34 @@ func (h *Heuristic) Decide(_ context.Context, in Context) (Decision, error) {
 	return d, nil
 }
 
+// Knobs of the hard level's extra habits (experiments switch them off one by one).
+var (
+	HardKeepsPairs = true
+	HardOddsAlive  = true
+	HardTakesEarly = true
+)
+
+// knownCover reports whether the memory places in who's hand a card that
+// beats c: throwing such a card is a gift, whatever the deck says.
+func knownCover(m *Memory, s *game.GameState, who string, c game.Card, trump string) bool {
+	if m == nil {
+		return false
+	}
+	for _, k := range m.Known(who) {
+		if game.CanBeat(c, k, trump) {
+			return true
+		}
+	}
+	return false
+}
+
+// nextAfterDefender tells whether the bot attacks next if the defender
+// takes: then every card the defender swallows is a card the bot leads
+// against, and pressing pays twice. Otherwise somebody else cashes in.
+func nextAfterDefender(s *game.GameState, botID string) bool {
+	return s.NextActive(s.DefenderID) == botID
+}
+
 // isTrump reports whether c is a card of the active trump suit (specials have none).
 func isTrump(c game.Card, trump string) bool {
 	return trump != "" && c.Suit == trump && !c.IsSpecial()
@@ -466,6 +494,11 @@ func (h *Heuristic) defend(in Context, byType map[game.MoveType][]scored, hand m
 			if (dearest.IsSpecial() && pile <= 2) || (isTrump(dearest, trump) && dearest.Rank >= 11 && pile <= 2 && handN <= 7) {
 				return take
 			}
+			// early in the game a lone low card is not worth a ten of trumps:
+			// take it, the deck tops the hand up anyway
+			if HardTakesEarly && in.level() == LevelHard && s.DeckCount >= 10 && isTrump(dearest, trump) && dearest.Rank >= 10 && pile <= 1 && handN <= 6 {
+				return take
+			}
 		}
 	}
 	return cheapest.move
@@ -498,7 +531,7 @@ func (h *Heuristic) attack(in Context, attacks []scored, hand map[string]game.Ca
 		return attacks[0].move // only specials: a Joker before the Super card
 	}
 	counts := rankCount(hand)
-	counting := !deckLeft && in.level().Counts() && in.Memory != nil
+	counting := in.level().Counts() && in.Memory != nil && (!deckLeft || (HardOddsAlive && in.level() == LevelHard))
 	d := s.Defender()
 	// the cheapest plain rank in hand: while the deck lasts nothing above a
 	// ten is led when something at or below a ten is there (no aces over sevens)
@@ -526,7 +559,11 @@ func (h *Heuristic) attack(in Context, attacks []scored, hand map[string]game.Ca
 			}
 		}
 		if counting && d != nil {
-			score += 12 * in.Memory.BeatProb(s, d.ID, c) // what they cannot beat goes first
+			if knownCover(in.Memory, s, d.ID, c, trump) {
+				score += 20 // they hold the cover: this card is a gift
+			} else {
+				score += 12 * in.Memory.BeatProb(s, d.ID, c) // what they cannot beat goes first
+			}
 		}
 		if score < bestScore {
 			best, bestScore = a, score
@@ -546,7 +583,11 @@ func (h *Heuristic) throwOrPass(in Context, byType map[game.MoveType][]scored, h
 	taking := s.DefenderTaking
 	bloated := in.Plan == PlanDump || handN >= 9
 	counting := in.level().Counts() && in.Memory != nil
+	hard := in.level() == LevelHard
 	d := s.Defender()
+	counts := rankCount(hand)
+	keepPairs := hard && HardKeepsPairs
+	oddsAlive := hard && HardOddsAlive
 	// the dearest plain card worth throwing at a defender who is still beating
 	limit := 9
 	switch in.Mood {
@@ -554,6 +595,12 @@ func (h *Heuristic) throwOrPass(in Context, byType map[game.MoveType][]scored, h
 		limit = 10
 	case MoodDefensive:
 		limit = 8
+	}
+	// who cashes in if the defender takes: the bot (press on) or somebody else (be stingy)
+	if nextAfterDefender(s, in.BotID) {
+		limit++
+	} else if len(s.ActivePlayers()) > 2 {
+		limit--
 	}
 	if bloated {
 		limit = 11
@@ -582,11 +629,20 @@ func (h *Heuristic) throwOrPass(in Context, byType map[game.MoveType][]scored, h
 		if tr && deckLeft && !bloated {
 			continue
 		}
-		if counting && d != nil && !deckLeft {
-			// the odds mean little while the deck is alive: only cheap cards go
-		} else if counting && d != nil {
+		if counting && d != nil && knownCover(in.Memory, s, d.ID, c, trump) {
+			continue // they are known to hold the cover: a free card for them
+		}
+		// a hard bot keeps a low pair while the deck lasts: the second card is
+		// a transfer waiting to happen and a cheap lead later
+		if keepPairs && deckLeft && !bloated && !tr && c.Rank <= 10 && counts[c.Rank] == 2 {
+			continue
+		}
+		if counting && d != nil && (!deckLeft || oddsAlive) {
 			p := in.Memory.BeatProb(s, d.ID, c)
-			if p < 0.45 || (c.Rank <= limit && !tr && p < 0.85) {
+			switch {
+			case !deckLeft && (p < 0.45 || (c.Rank <= limit && !tr && p < 0.85)):
+				return t.move
+			case deckLeft && c.Rank <= limit && !tr && p < 0.6:
 				return t.move
 			}
 			continue

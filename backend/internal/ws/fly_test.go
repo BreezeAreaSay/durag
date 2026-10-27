@@ -205,3 +205,31 @@ func TestEverybodyPicksANicknameAndGetsADish(t *testing.T) {
 		t.Fatal("food avatar")
 	}
 }
+
+func TestTheTalkBudgetMetersTheModel(t *testing.T) {
+	var b talkBudget
+	now := time.Now()
+	o := BotOptions{TalkShare: 1, TalkDaily: 3}
+	got := 0
+	for i := 0; i < 10; i++ {
+		if b.allow(o, now) {
+			got++
+		}
+	}
+	if got != 3 {
+		t.Fatalf("daily cap: %d calls allowed, want 3", got)
+	}
+	if !b.allow(o, now.Add(24*time.Hour)) {
+		t.Fatal("a new day opens the budget again")
+	}
+	half := BotOptions{TalkShare: 0.5}
+	hits := 0
+	for i := 0; i < 400; i++ {
+		if b.allow(half, now) {
+			hits++
+		}
+	}
+	if hits < 140 || hits > 260 {
+		t.Fatalf("a half share let %d of 400 through", hits)
+	}
+}

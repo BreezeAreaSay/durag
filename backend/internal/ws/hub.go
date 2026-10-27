@@ -60,6 +60,7 @@ type Hub struct {
 
 	flyMu sync.Mutex
 	flies map[string]*fly // room id -> the fly in the air
+	talk  talkBudget
 }
 
 // isAdmin tells whether a player id is listed in ADMIN_IDS.

@@ -25,6 +25,43 @@ type BotOptions struct {
 	// move and without holding the game up.
 	LLMMoves   bool
 	LLMTimeout time.Duration // how long a model may think before the rules take over
+	// TalkShare is the share of talk occasions that go to the model (the
+	// rest use the character's own lines); TalkDaily caps model calls per
+	// day. Free models have small quotas: this keeps a trickle going all day.
+	TalkShare float64
+	TalkDaily int
+}
+
+// talkBudget meters the model's lines: a share of the occasions and a cap
+// per day, so a free quota lasts the evening instead of the first hour.
+type talkBudget struct {
+	mu   sync.Mutex
+	day  int
+	used int
+}
+
+// allow spends one call when the share and the day's cap permit.
+func (b *talkBudget) allow(o BotOptions, now time.Time) bool {
+	share := o.TalkShare
+	if share <= 0 {
+		share = 1
+	}
+	if share < 1 && rand.Float64() >= share {
+		return false
+	}
+	if o.TalkDaily <= 0 {
+		return true
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if d := now.YearDay() + now.Year()*400; d != b.day {
+		b.day, b.used = d, 0
+	}
+	if b.used >= o.TalkDaily {
+		return false
+	}
+	b.used++
+	return true
 }
 
 var (
@@ -310,7 +347,7 @@ func (h *Hub) botAct(roomID, botID string, version int64) {
 	// With a model at the table it does the talking: on the occasions the
 	// rules would have used a stock line, and on the cadence. Without one
 	// the character's own lines go. The emoji is the rules' either way.
-	if _, talker := h.bots.Brain.(bot.Talker); talker && !h.bots.LLMMoves && (d.Say != "" || in.SpeakDue() || in.Event.Notable() || d.Move.Type == game.MoveTake) {
+	if _, talker := h.bots.Brain.(bot.Talker); talker && !h.bots.LLMMoves && (d.Say != "" || in.SpeakDue() || in.Event.Notable() || d.Move.Type == game.MoveTake) && h.talk.allow(h.bots, time.Now()) {
 		if d.Emoji != "" {
 			h.botSayRaw(roomID, botID, "", d.Emoji)
 		}

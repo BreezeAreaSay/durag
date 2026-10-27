@@ -47,6 +47,10 @@ type Config struct {
 	LLMDiscover bool // append the free models the catalog lists right now (default on)
 	LLMMoves    bool // let the model choose moves; off = the rules move and the model only talks
 	LLMTimeout  time.Duration
+	// LLMTalkShare is the share of talk occasions that reach the model,
+	// LLMDailyCalls the cap on model calls per day: a free quota lasts longer.
+	LLMTalkShare  float64
+	LLMDailyCalls int
 }
 
 // LoadDotEnv loads KEY=VALUE pairs from path into the process environment
@@ -140,6 +144,12 @@ func FromEnv() (Config, error) {
 	}
 	if c.BotDelayMax, err = time.ParseDuration(getenv("BOT_DELAY_MAX", "2200ms")); err != nil {
 		return c, fmt.Errorf("config: BOT_DELAY_MAX: %w", err)
+	}
+	if c.LLMTalkShare, err = strconv.ParseFloat(getenv("LLM_TALK_SHARE", "0.4"), 64); err != nil || c.LLMTalkShare < 0 || c.LLMTalkShare > 1 {
+		return c, fmt.Errorf("config: LLM_TALK_SHARE must be a number in 0..1")
+	}
+	if c.LLMDailyCalls, err = strconv.Atoi(getenv("LLM_DAILY_CALLS", "300")); err != nil || c.LLMDailyCalls < 0 {
+		return c, fmt.Errorf("config: LLM_DAILY_CALLS must be a whole number")
 	}
 	if c.FlyChance, err = strconv.ParseFloat(getenv("FLY_CHANCE", "0.35"), 64); err != nil || c.FlyChance < 0 || c.FlyChance > 1 {
 		return c, fmt.Errorf("config: FLY_CHANCE must be a number in 0..1")
