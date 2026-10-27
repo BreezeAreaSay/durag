@@ -69,8 +69,13 @@ func TestLevelsDiffer(t *testing.T) {
 	const n = 120
 	// a small search keeps the test quick; the forced-win test covers the full one
 	samples, nodes, budget := EndgameSamples, EndgameNodes, EndgameBudget
+	hs, hr, hb := HardSamples, HardRollouts, HardBudget
 	EndgameSamples, EndgameNodes, EndgameBudget = 2, 300, 15*time.Millisecond
-	defer func() { EndgameSamples, EndgameNodes, EndgameBudget = samples, nodes, budget }()
+	HardSamples, HardRollouts, HardBudget = 2, 2, 15*time.Millisecond
+	defer func() {
+		EndgameSamples, EndgameNodes, EndgameBudget = samples, nodes, budget
+		HardSamples, HardRollouts, HardBudget = hs, hr, hb
+	}()
 	lost := func(a, b Level) int {
 		k := 0
 		for seed := uint64(1); seed <= n; seed++ {

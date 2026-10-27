@@ -28,13 +28,34 @@ var (
 	// EndgameNegamax searches two-player endings with alpha-beta instead of
 	// rollouts (an experiment knob: rollouts proved steadier).
 	EndgameNegamax = false
+	// The hard level searches harder: from this many deck cards, with this
+	// many deals and rollouts per move and this much wall clock.
+	HardDeckMax  = 8
+	HardSamples  = 8
+	HardRollouts = 6
+	HardBudget   = 260 * time.Millisecond
+	// EvalQuality weighs the strength of the cards left, not only their count.
+	EvalQuality = true
+	// RolloutsCount lets everybody in a rollout play with the deal in full
+	// view (the sampled world is known): sharper playouts, sharper estimates.
+	RolloutsCount = true
+	// NormalSearches lets the normal level use the search too (experiments switch it off).
+	NormalSearches = true
 )
 
 // endgame returns the searched move, or false when the position is not
 // one to search (deck alive, trump hidden, too much unknown, nothing to choose).
 func (h *Heuristic) endgame(in Context) (game.Move, bool) {
 	s := in.State
-	if s.DeckCount > EndgameDeckMax || !s.TrumpRevealed || s.TrumpCard == nil || len(in.Moves) < 2 || in.Memory == nil {
+	hard := in.level() == LevelHard
+	deckMax, budget := EndgameDeckMax, EndgameBudget
+	if hard {
+		deckMax, budget = HardDeckMax, HardBudget
+	}
+	if !hard && !NormalSearches {
+		return game.Move{}, false
+	}
+	if s.DeckCount > deckMax || !s.TrumpRevealed || s.TrumpCard == nil || len(in.Moves) < 2 || in.Memory == nil {
 		return game.Move{}, false
 	}
 	me := s.Player(in.BotID)
@@ -45,15 +66,17 @@ func (h *Heuristic) endgame(in Context) (game.Move, bool) {
 	if len(pool) > EndgameMaxUnknown || len(pool) < slots {
 		return game.Move{}, false
 	}
-	deadline := time.Now().Add(EndgameBudget)
+	deadline := time.Now().Add(budget)
 	engine := game.NewEngine(game.NewRand(1, 1)) // never deals: the states are complete
 	engine.MaxAttacks = s.MaxAttacks
 	engine.Now = func() time.Time { return time.Unix(0, 0) }
 	active := len(s.ActivePlayers())
 	totals := make([]float64, len(in.Moves))
 	counted := 0
-	samples := EndgameSamples
-	if in.level() != LevelHard && samples > 2 {
+	samples, rollouts := EndgameSamples, EndgameRollouts
+	if hard {
+		samples, rollouts = HardSamples, HardRollouts
+	} else if samples > 2 {
 		samples = (samples + 1) / 2 // the normal level looks at fewer deals
 	}
 	for sample := 0; sample < samples; sample++ {
@@ -61,7 +84,7 @@ func (h *Heuristic) endgame(in Context) (game.Move, bool) {
 		if full == nil {
 			break
 		}
-		sr := &searcher{engine: engine, bot: in.BotID, deadline: deadline, rng: h.rng}
+		sr := &searcher{engine: engine, bot: in.BotID, deadline: deadline, rng: h.rng, playouts: rollouts}
 		for i, m := range in.Moves {
 			child := full.Clone()
 			if err := engine.ApplyMove(child, in.BotID, m); err != nil {
@@ -190,6 +213,7 @@ type searcher struct {
 	deadline time.Time
 	rng      *rand.Rand
 	nodes    int
+	playouts int
 }
 
 // outcome scores a finished game from the bot's seat: +1 out and not the
@@ -208,15 +232,24 @@ func (sr *searcher) outcome(s *game.GameState) float64 {
 // the average of the others.
 func (sr *searcher) eval(s *game.GameState) float64 {
 	mine, others, n := 0, 0, 0
+	myQ, otherQ := 0.0, 0.0
+	trump := s.ActiveTrump()
 	for _, p := range s.Players {
 		if p.Out {
 			continue
 		}
 		cards := len(p.Hand) + len(p.Stump)
+		q := 0.0
+		if EvalQuality {
+			for _, c := range p.Hand {
+				q += float64(weight(c, trump))
+			}
+		}
 		if p.ID == sr.bot {
-			mine = cards
+			mine, myQ = cards, q
 		} else {
 			others += cards
+			otherQ += q
 			n++
 		}
 	}
@@ -224,6 +257,11 @@ func (sr *searcher) eval(s *game.GameState) float64 {
 		return 0
 	}
 	v := (float64(others)/float64(n) - float64(mine)) / 12
+	if EvalQuality {
+		// what is left in the hands: the side holding the trumps and the
+		// specials is the side that sheds its cards last and wins the bouts
+		v += (myQ - otherQ/float64(n)) / 300
+	}
 	if v > 0.9 {
 		v = 0.9
 	}
@@ -306,7 +344,15 @@ func (sr *searcher) negamax(s *game.GameState, depth int, alpha, beta float64) f
 // a few times and averages the outcomes (three or more players).
 func (sr *searcher) rollouts(s *game.GameState) float64 {
 	total := 0.0
-	for r := 0; r < EndgameRollouts; r++ {
+	n := sr.playouts
+	if n <= 0 {
+		n = EndgameRollouts
+	}
+	var mem *Memory
+	if RolloutsCount {
+		mem = fullMemory(s)
+	}
+	for r := 0; r < n; r++ {
 		brain := NewHeuristic(rand.New(rand.NewPCG(sr.rng.Uint64(), sr.rng.Uint64())))
 		cur := s.Clone()
 		steps := 0
@@ -320,7 +366,12 @@ func (sr *searcher) rollouts(s *game.GameState) float64 {
 			if len(moves) == 0 {
 				break
 			}
-			d, _ := brain.Decide(context.Background(), Context{State: cur.Sanitized(id), BotID: id, Moves: moves, Level: LevelNormal})
+			var m *Memory
+			if mem != nil {
+				m = mem
+				mem.refresh(cur)
+			}
+			d, _ := brain.Decide(context.Background(), Context{State: cur.Sanitized(id), BotID: id, Moves: moves, Level: LevelNormal, Memory: m})
 			if err := sr.engine.ApplyMove(cur, id, d.Move); err != nil {
 				break
 			}
@@ -331,5 +382,26 @@ func (sr *searcher) rollouts(s *game.GameState) float64 {
 			total += sr.eval(cur)
 		}
 	}
-	return total / float64(EndgameRollouts)
+	return total / float64(n)
+}
+
+// fullMemory builds a memory that places every card of a complete state:
+// inside a sampled world there is nothing unknown.
+func fullMemory(s *game.GameState) *Memory {
+	m := NewMemory()
+	m.refresh(s)
+	return m
+}
+
+// refresh re-reads the hands of a complete state into the memory's holder
+// map (cards that left the hands are no longer placed).
+func (m *Memory) refresh(s *game.GameState) {
+	for id := range m.holder {
+		delete(m.holder, id)
+	}
+	for _, p := range s.Players {
+		for _, c := range p.Hand {
+			m.holder[c.ID] = p.ID
+		}
+	}
 }

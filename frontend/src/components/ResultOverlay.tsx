@@ -2,6 +2,7 @@ import { Button } from './Button';
 import { useGame } from '../state/GameContext';
 import { t } from '../i18n';
 import type { GameState } from '../types/protocol';
+import { VodkaToy } from './VodkaToy';
 
 interface Props {
   state: GameState;
@@ -18,6 +19,7 @@ export function ResultOverlay({ state }: Props) {
       <div className="overlay__card">
         <h1 className="zine-title zine-title--result">{title}</h1>
         {state.finished_order[0] === selfId ? <p className="sticker-text result__win">{t('result.win', { n: wins })}</p> : null}
+        {state.finished_order[0] === selfId ? <VodkaToy /> : null}
         {state.loser_id === selfId ? <p className="sticker-text result__scar">{t('result.scar')}</p> : null}
         {winners.length ? (
           <p className="muted">

@@ -173,6 +173,48 @@ class Sound {
     osc.stop(t + 0.22);
   }
 
+  /** liquid into a glass: a rising gurgle */
+  pour(): void {
+    const ctx = this.ready();
+    if (!ctx) return;
+    const t = ctx.currentTime;
+    for (let i = 0; i < 6; i++) {
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      const f = 300 + i * 90 + Math.random() * 60;
+      osc.frequency.setValueAtTime(f, t + i * 0.09);
+      osc.frequency.exponentialRampToValueAtTime(f * 1.6, t + i * 0.09 + 0.08);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t + i * 0.09);
+      g.gain.exponentialRampToValueAtTime(0.05, t + i * 0.09 + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + i * 0.09 + 0.09);
+      osc.connect(g).connect(this.master!);
+      osc.start(t + i * 0.09);
+      osc.stop(t + i * 0.09 + 0.1);
+    }
+  }
+
+  /** a glass knocked back: two gulps and a sigh */
+  gulp(): void {
+    const ctx = this.ready();
+    if (!ctx) return;
+    const t = ctx.currentTime;
+    [0, 0.22].forEach((d) => {
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(180, t + d);
+      osc.frequency.exponentialRampToValueAtTime(90, t + d + 0.12);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t + d);
+      g.gain.exponentialRampToValueAtTime(0.25, t + d + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + d + 0.14);
+      osc.connect(g).connect(this.master!);
+      osc.start(t + d);
+      osc.stop(t + d + 0.16);
+    });
+    this.burst(ctx, 0.25, 500, 0.4, 0.12, 0.5);
+  }
+
   /** a thumb across the deck: a quick run of snaps */
   riffle(): void {
     const ctx = this.ready();
