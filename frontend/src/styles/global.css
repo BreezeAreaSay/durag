@@ -1998,3 +1998,8 @@ body.fx-shake--firecracker {
   border: 1.5px solid rgba(236, 233, 225, 0.5);
   background: repeating-linear-gradient(45deg, var(--toxic) 0 6px, var(--acid) 6px 12px);
 }
+
+/* the talk toggle in the header, switched off */
+.chip--off {
+  opacity: 0.55;
+}

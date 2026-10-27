@@ -7,6 +7,7 @@ import { TimerRing } from './TimerRing';
 import { useGame, type Reaction } from '../state/GameContext';
 import { frameWins } from '../util/progress';
 import { t, type Key } from '../i18n';
+import { setTalkOn, talkOn } from '../util/talk';
 import { SUIT_SYMBOL } from '../util/cards';
 import { roleOf, tablePairs } from '../util/rules';
 import { lastMove } from '../util/moves';
@@ -82,6 +83,7 @@ function statusLine(state: GameState, selfId: string): string {
 export function Hud({ state, handTop, reactions, onAvatarClick, onTopHeight, handMiddle, sort, onSort }: Props) {
   const { selfId, take, pass, takeStump, leave, connection, theme, setTheme } = useGame();
   const [soundOn, setSoundOn] = useState(sound.enabled);
+  const [talk, setTalk] = useState(talkOn);
   const topRef = useRef<HTMLElement>(null);
   const [topH, setTopH] = useState(150);
 
@@ -135,6 +137,18 @@ export function Hud({ state, handTop, reactions, onAvatarClick, onTopHeight, han
           </button>
           <button className="chip chip--ghost chip--icon" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} aria-label={t('ui.theme')} title={t('ui.theme')}>
             {theme === 'dark' ? '☀' : '☾'}
+          </button>
+          <button
+            className={`chip chip--ghost chip--icon ${talk ? '' : 'chip--off'}`}
+            onClick={() => {
+              setTalkOn(!talk);
+              setTalk(!talk);
+            }}
+            aria-label={t('ui.talk')}
+            aria-pressed={talk}
+            title={t('ui.talk')}
+          >
+            {talk ? '💬' : '🚫'}
           </button>
           <button className="chip chip--link" onClick={leave}>
             {t('game.leave')}

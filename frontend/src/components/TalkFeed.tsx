@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Reaction } from '../state/GameContext';
 import type { Player } from '../types/protocol';
+import { TALK_EVENT, talkOn } from '../util/talk';
 
 interface Props {
   reactions: Record<string, Reaction>;
@@ -25,6 +26,12 @@ const MAX_LINES = 2;
  */
 export function TalkFeed({ reactions, players, top }: Props) {
   const [lines, setLines] = useState<Line[]>([]);
+  const [on, setOn] = useState(talkOn);
+  useEffect(() => {
+    const follow = (e: Event) => setOn(Boolean((e as CustomEvent<boolean>).detail));
+    window.addEventListener(TALK_EVENT, follow);
+    return () => window.removeEventListener(TALK_EVENT, follow);
+  }, []);
   const seen = useRef(new Map<string, number>());
   const timers = useRef(new Set<number>());
 
@@ -53,7 +60,7 @@ export function TalkFeed({ reactions, players, top }: Props) {
     };
   }, []);
 
-  if (lines.length === 0) return null;
+  if (!on || lines.length === 0) return null;
   return (
     <ol className={`talk ${top === undefined ? 'talk--static' : ''}`} aria-live="polite" style={top === undefined ? undefined : { top }}>
       {lines.map((l) => {

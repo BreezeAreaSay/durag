@@ -629,8 +629,8 @@ func TestParseSayIsLenient(t *testing.T) {
 	if _, err := ParseSay(""); !errors.Is(err, ErrEmptyAnswer) {
 		t.Fatalf("empty content: %v", err)
 	}
-	long := strings.Repeat("а", 120)
-	if d, _ := ParseSay(`{"say": "` + long + `"}`); len([]rune(d.Say)) > 81 {
+	long := strings.Repeat("а", 200)
+	if d, _ := ParseSay(`{"say": "` + long + `"}`); len([]rune(d.Say)) > 141 {
 		t.Fatalf("lines are trimmed: %d runes", len([]rune(d.Say)))
 	}
 }
@@ -705,5 +705,22 @@ func TestNoQueensThrownAtABeatingDefender(t *testing.T) {
 	d, _ := h.Decide(context.Background(), in)
 	if d.Move.Type == game.MoveThrowIn {
 		t.Fatalf("threw %s at a defender who is still beating with the deck alive", d.Move)
+	}
+}
+
+func TestTrimSayCutsAtASentenceNeverInAWord(t *testing.T) {
+	short := "Хорошо, Бабуля, я заходил. Только голову мою мочить не надо."
+	if got := trimSay(short); got != short {
+		t.Fatalf("a short line is kept whole: %q", got)
+	}
+	long := strings.Repeat("Это первая фраза про стол. ", 4) + "А это длинный хвост, который никому не нужен и который можно смело отрезать вместе со всем остальным"
+	got := trimSay(long)
+	if len([]rune(got)) > 141 || !strings.HasSuffix(got, ".") {
+		t.Fatalf("a long line ends at a sentence: %q", got)
+	}
+	words := strings.Repeat("слово ", 40)
+	got = trimSay(words)
+	if !strings.HasSuffix(got, "слово…") {
+		t.Fatalf("no sentence end: cut at a space: %q", got)
 	}
 }
