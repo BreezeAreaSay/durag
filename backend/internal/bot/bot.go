@@ -282,9 +282,10 @@ func (h *Heuristic) Decide(_ context.Context, in Context) (Decision, error) {
 	case d.Move.Type == game.MoveTake && in.SpeakDue() && h.rng.Float64() < 0.5:
 		d.Say = ch.Say(h.rng, "take", "", 0)
 	}
-	if d.Move.Type == game.MoveTake && h.rng.Float64() < 0.3 {
+	if d.Move.Type == game.MoveTake && h.rng.Float64() < 0.3 && !ch.Barks {
 		d.Emoji = []string{"💀", "😡", "🤔", "🚬", "🚬"}[h.rng.IntN(5)] // taking the table calls for a smoke
 	}
+	d.Say = ch.Voice(h.rng, d.Say)
 	return d, nil
 }
 

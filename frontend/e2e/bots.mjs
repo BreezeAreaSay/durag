@@ -42,7 +42,7 @@ try {
   const seat = (await p.locator('.players__item >> nth=1').textContent())?.replace(/\s+/g, ' ').trim();
   log('bot seated:', seat);
   if (!/бот/i.test(seat ?? '')) problems.push('the bot seat has no bot badge');
-  if (!/Вася|Бабуля|Крест/.test(seat ?? '')) problems.push(`the bot is not one of the characters: ${seat}`);
+  if (!/Вася|Бабуля|Крест|Гоша|Вика|Бутово|Шарик|Петрович/.test(seat ?? '')) problems.push(`the bot is not one of the characters: ${seat}`);
   const faces = await p.locator('.players__item >> nth=1 >> .sticker__face').count();
   if (faces !== 1) problems.push('the bot has no emoji face on its sticker');
   await p.screenshot({ path: join(here, 'shot-bot-lobby.png') });
@@ -54,7 +54,7 @@ try {
   await p.locator('.players__item >> nth=3').waitFor({ timeout: 5000 });
   const names = await p.locator('.players__item .players__name').allTextContents();
   log('seats:', names.map((n) => n.replace(/\s+/g, ' ').trim()).join(' / '));
-  if (new Set(names.map((n) => (n.match(/Вася|Бабуля|Крест/) ?? [''])[0]).filter(Boolean)).size !== 3) problems.push('three bots must be the three different characters');
+  if (new Set(names.map((n) => (n.match(/Вася|Бабуля|Крест|Гоша|Вика|Бутово|Шарик|Петрович/) ?? [''])[0]).filter(Boolean)).size !== 3) problems.push('three bots must be three different characters');
   if (await p.locator('button:has-text("ДОБАВИТЬ БОТА")').count()) problems.push('a fifth seat was offered: the table holds four');
   await p.locator('.players__item >> nth=3 >> .players__remove').click();
   await p.locator('.players__item >> nth=3').waitFor({ state: 'detached', timeout: 5000 });
@@ -89,7 +89,7 @@ try {
     const boutText = (await p.locator('.chip', { hasText: 'ЗАХОД' }).textContent().catch(() => '')) ?? '';
     const bout = Number((boutText.match(/\d+/) ?? ['0'])[0]);
     if (bout !== lastBout) { lastBout = bout; bouts = bout; log(`bout ${bout}: ${st} | ${text}`); }
-    if (/Вася|Бабуля|Крест/.test(text)) botMoves++;
+    if (/Вася|Бабуля|Крест|Гоша|Вика|Бутово|Шарик|Петрович/.test(text)) botMoves++;
     if (!feedSeen && (await p.locator('.talk__line').count())) { feedSeen = true; log('talk feed:', await p.locator('.talk__line').first().textContent()); await p.screenshot({ path: join(here, 'shot-bot-talk.png') }); }
     if (bout >= 4) break;
     if (await p.locator('button:has-text("ВЗЯТЬ ПЕНЁК")').count()) { await p.click('button:has-text("ВЗЯТЬ ПЕНЁК")'); continue; }

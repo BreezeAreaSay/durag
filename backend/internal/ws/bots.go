@@ -188,10 +188,14 @@ func pickCharacter(s *game.GameState) bot.Character {
 	for _, p := range s.Players {
 		used[p.Name] = true
 	}
+	var free []bot.Character
 	for _, c := range bot.Characters {
 		if !used[c.Name] {
-			return c
+			free = append(free, c)
 		}
+	}
+	if len(free) > 0 {
+		return free[rand.IntN(len(free))] // whoever is around: a random one of the free characters
 	}
 	c := bot.Characters[len(s.Players)%len(bot.Characters)]
 	c.Name = fmt.Sprintf("%s-%d", c.Name, len(s.Players)+1)
@@ -535,16 +539,17 @@ func (h *Hub) botSay(roomID, botID, text, emoji string) {
 	if text == "" && emoji == "" {
 		return
 	}
-	h.botSayRaw(roomID, botID, text, emoji)
-	if text == "" || h.bots.Disabled {
-		return
-	}
 	state, err := h.store.Load(h.ctx, roomID)
 	if err != nil {
 		return
 	}
 	speaker := state.Player(botID)
 	if speaker == nil {
+		return
+	}
+	text = bot.CharacterOf(speaker.Name).Voice(rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64())), text) // a dog barks whatever the model wrote
+	h.botSayRaw(roomID, botID, text, emoji)
+	if text == "" || h.bots.Disabled {
 		return
 	}
 	br := h.botRoomFor(roomID)
@@ -565,7 +570,9 @@ func (h *Hub) botSay(roomID, botID, text, emoji string) {
 	if p := state.Player(replier); p != nil {
 		replierName = p.Name
 	}
-	line := bot.RetortAs(bot.CharacterOf(replierName), rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64())), speaker.Name, len(speaker.Hand))
+	replierCh := bot.CharacterOf(replierName)
+	rng := rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64()))
+	line := replierCh.Voice(rng, bot.RetortAs(replierCh, rng, speaker.Name, len(speaker.Hand)))
 	time.AfterFunc(lineCooldown+time.Duration(rand.Int64N(int64(2*time.Second))), func() {
 		select {
 		case <-h.ctx.Done():
@@ -633,7 +640,9 @@ func (h *Hub) botGreet(roomID string, state *game.GameState, humanIDs []string) 
 		if sp := state.Player(speaker); sp != nil {
 			speakerName = sp.Name
 		}
-		line := bot.GreetAs(bot.CharacterOf(speakerName), rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64())), d)
+		greetCh := bot.CharacterOf(speakerName)
+		greetRng := rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64()))
+		line := greetCh.Voice(greetRng, bot.GreetAs(greetCh, greetRng, d))
 		delay := 1200*time.Millisecond + time.Duration(i)*lineCooldown + time.Duration(rand.Int64N(int64(800*time.Millisecond)))
 		time.AfterFunc(delay, func() {
 			select {

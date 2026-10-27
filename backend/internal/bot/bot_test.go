@@ -764,3 +764,32 @@ func TestPaidFallbackAnswersWhenTheFreeModelsAreLimited(t *testing.T) {
 		t.Fatalf("status %+v served %v", st, served)
 	}
 }
+
+func TestTheDogOnlyBarksAndTheCastIsFull(t *testing.T) {
+	names := map[string]bool{}
+	for _, c := range Characters {
+		if c.Name == "" || c.Avatar == "" || c.Persona == "" || len(c.Greet) == 0 || len(c.Took) == 0 || len(c.Retort) == 0 {
+			t.Fatalf("character %q is missing pieces", c.Name)
+		}
+		if names[c.Name] {
+			t.Fatalf("duplicate character %q", c.Name)
+		}
+		names[c.Name] = true
+	}
+	if len(Characters) < 8 {
+		t.Fatalf("only %d characters", len(Characters))
+	}
+	dog := CharacterOf("Шарик")
+	if !dog.Barks {
+		t.Fatal("the dog must bark")
+	}
+	rng := rand.New(rand.NewPCG(1, 2))
+	for _, line := range []string{"Привет, я модель, вот длинная реплика", GreetAs(dog, rng, Dossier{Name: "Alice"}), RetortAs(dog, rng, "Вася", 5)} {
+		if v := dog.Voice(rng, line); !strings.Contains(v, "ав") && !strings.Contains(v, "Р-р") {
+			t.Fatalf("the dog said %q", v)
+		}
+	}
+	if CharacterOf("Вася").Voice(rng, "Ик") != "Ик" {
+		t.Fatal("people keep their words")
+	}
+}
