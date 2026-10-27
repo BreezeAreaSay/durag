@@ -966,7 +966,7 @@ func TalkPrompt(in Context, move game.Move) string {
 	var b strings.Builder
 	ch := CharacterOf(nameOf(s, in.BotID))
 	fmt.Fprintf(&b, "Ты — %s. %s\n", ch.Name, ch.Persona)
-	b.WriteString("Говори про игру: кто как зашёл, кто взял и сколько, кто тонет, кто переводит; обращайся к людям по имени.\n")
+	b.WriteString("Держи характер жёстко и смешно, это игра для своих: едко, без сглаживания и вежливости. Говори про игру: кто как зашёл, кто взял и сколько, кто тонет, кто переводит; обращайся к людям по имени.\n")
 	switch in.Mood {
 	case MoodAggressive:
 		b.WriteString("Тебя провоцируют эмодзи: отвечай дерзко.\n")
