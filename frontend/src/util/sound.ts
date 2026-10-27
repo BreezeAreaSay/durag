@@ -78,5 +78,27 @@ export function playEffect(effect: Effect): void {
       tone(ac, 'sine', 90, 30, t0, 0.6, 0.3);
       noise(ac, t0, 0.55, 0.35, 2500, 80);
       break;
+    case 'shake': // two pats on the back
+      noise(ac, t0, 0.08, 0.25, 900, 200);
+      noise(ac, t0 + 0.16, 0.08, 0.25, 900, 200);
+      break;
+    case 'firecracker': // a fuse, then a crack
+      noise(ac, t0, 0.45, 0.05, 6000, 3000);
+      noise(ac, t0 + 0.5, 0.12, 0.5, 8000, 400);
+      tone(ac, 'square', 400, 60, t0 + 0.5, 0.1, 0.2);
+      break;
+    case 'rooster': // a four-note crow
+      [660, 880, 990, 740].forEach((f, i) => tone(ac, 'sawtooth', f, f * 0.9, t0 + i * 0.18, 0.2, 0.1));
+      tone(ac, 'sawtooth', 740, 500, t0 + 0.75, 0.5, 0.1);
+      break;
+    case 'crown': // a bright arpeggio upwards
+      [659, 784, 988, 1319].forEach((f, i) => tone(ac, 'triangle', f, f, t0 + i * 0.1, 0.4, 0.14));
+      noise(ac, t0 + 0.4, 0.4, 0.05, 8000, 2000);
+      break;
+    case 'clink': // two glasses, a long ring
+      tone(ac, 'sine', 2093, 2080, t0, 1.2, 0.12);
+      tone(ac, 'sine', 2637, 2620, t0 + 0.05, 1.0, 0.08);
+      tone(ac, 'sine', 3136, 3120, t0 + 0.12, 0.8, 0.05);
+      break;
   }
 }

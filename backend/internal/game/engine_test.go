@@ -605,7 +605,7 @@ func TestRandomPlayoutsTerminateAndConserveCards(t *testing.T) {
 		rng := NewRand(seed, seed*7)
 		e := NewEngine(rng)
 		s := NewGameState("r")
-		n := 2 + int(seed%5) // 2..6 players
+		n := 2 + int(seed%3) // 2..4 players
 		for i := 0; i < n; i++ {
 			if err := e.Join(s, string(rune('A'+i)), "", ""); err != nil {
 				t.Fatal(err)

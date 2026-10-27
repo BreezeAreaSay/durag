@@ -41,12 +41,23 @@ try {
   await p.locator('.players__item >> nth=1').waitFor({ timeout: 5000 });
   const seat = (await p.locator('.players__item >> nth=1').textContent())?.replace(/\s+/g, ' ').trim();
   log('bot seated:', seat);
-  if (!seat?.includes('🤖')) problems.push('the bot seat has no robot marker');
+  if (!/бот/i.test(seat ?? '')) problems.push('the bot seat has no bot badge');
+  if (!/Вася|Бабуля|Крест/.test(seat ?? '')) problems.push(`the bot is not one of the characters: ${seat}`);
+  const faces = await p.locator('.players__item >> nth=1 >> .sticker__face').count();
+  if (faces !== 1) problems.push('the bot has no emoji face on its sticker');
   await p.screenshot({ path: join(here, 'shot-bot-lobby.png') });
 
-  // a second bot can be added and removed
+  // three bots fill the table (four seats); the add button goes away; the third one can be removed
   await p.click('button:has-text("ДОБАВИТЬ БОТА")');
   await p.locator('.players__item >> nth=2').waitFor({ timeout: 5000 });
+  await p.click('button:has-text("ДОБАВИТЬ БОТА")');
+  await p.locator('.players__item >> nth=3').waitFor({ timeout: 5000 });
+  const names = await p.locator('.players__item .players__name').allTextContents();
+  log('seats:', names.map((n) => n.replace(/\s+/g, ' ').trim()).join(' / '));
+  if (new Set(names.map((n) => (n.match(/Вася|Бабуля|Крест/) ?? [''])[0]).filter(Boolean)).size !== 3) problems.push('three bots must be the three different characters');
+  if (await p.locator('button:has-text("ДОБАВИТЬ БОТА")').count()) problems.push('a fifth seat was offered: the table holds four');
+  await p.locator('.players__item >> nth=3 >> .players__remove').click();
+  await p.locator('.players__item >> nth=3').waitFor({ state: 'detached', timeout: 5000 });
   await p.locator('.players__item >> nth=2 >> .players__remove').click();
   await p.waitForFunction(() => document.querySelectorAll('.players__item').length === 2, null, { timeout: 5000 });
 
@@ -71,13 +82,15 @@ try {
   let lastBout = -1;
   const deadline = Date.now() + 60000;
   let botMoves = 0;
+  let feedSeen = false;
   while (Date.now() < deadline) {
     const st = (await status()) ?? '';
     const text = (await p.locator('.lastmove').textContent().catch(() => '')) ?? '';
     const boutText = (await p.locator('.chip', { hasText: 'ЗАХОД' }).textContent().catch(() => '')) ?? '';
     const bout = Number((boutText.match(/\d+/) ?? ['0'])[0]);
     if (bout !== lastBout) { lastBout = bout; bouts = bout; log(`bout ${bout}: ${st} | ${text}`); }
-    if (/Нейронка/.test(text)) botMoves++;
+    if (/Вася|Бабуля|Крест/.test(text)) botMoves++;
+    if (!feedSeen && (await p.locator('.talk__line').count())) { feedSeen = true; log('talk feed:', await p.locator('.talk__line').first().textContent()); await p.screenshot({ path: join(here, 'shot-bot-talk.png') }); }
     if (bout >= 4) break;
     if (await p.locator('button:has-text("ВЗЯТЬ ПЕНЁК")').count()) { await p.click('button:has-text("ВЗЯТЬ ПЕНЁК")'); continue; }
     if (st.includes('АТАКУЙ')) {
@@ -96,6 +109,8 @@ try {
   log(`reached bout ${bouts}; bot moves seen in the log line: ${botMoves}; bot reactions: ${botLines.length} ${botLines.slice(0, 3).join(' | ')}`);
   if (bouts < 4) problems.push(`the game did not reach bout 4 (got ${bouts})`);
   if (botMoves === 0) problems.push('no bot move was ever shown in the last-move line');
+  if (await p.locator('.reaction--text').count()) problems.push('an in-row bubble is still rendered at the table');
+  log('talk feed seen:', feedSeen, '(bots talk rarely: not required)');
 } catch (err) {
   problems.push(String(err?.stack ?? err));
 } finally {

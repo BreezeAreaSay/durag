@@ -8,23 +8,22 @@ import (
 )
 
 // Memory is what the bots of one room remember about the cards: a bot sees
-// only counts of the other hands, but it watches the table. Everything
+// only counts of the other hands, but it reads the table log. Everything
 // that went to the discard is gone for good; everything a player took is
 // known to sit in that hand until it shows up on the table again; and a
-// bot remembers who threw it the cards it took, so it can return them with
-// a word.
+// bot remembers who threw it the cards it took.
 //
 // The memory is fed every state the room publishes (Observe) and is read
 // through a Snapshot, so a bot thinking outside the room lock never races
-// with the next state.
+// with the next state. It follows the log by sequence number, so a bout
+// that was cleared between two looks is still filed in full.
 type Memory struct {
-	resolved int64             // ResolveAt of the last bout whose outcome was recorded
-	recorded bool              // the bout on the table was already filed (resolving phase)
+	seq      int64             // the last log entry processed
+	bout     []string          // cards put on the table since the last bout ended
 	seen     map[string]bool   // card id -> gone to the discard
 	holder   map[string]string // card id -> player known to hold it
 	origin   map[string]string // card id -> who last put it on the table
 	tookFrom map[string]string // card id -> the human who threw it before a bot took it
-	table    map[string]bool   // cards on the table at the last look
 	plans    map[string]Plan   // bot id -> the plan it is following
 	// Recall is the last card a human played that the memory had already
 	// seen in that hand: the thing to needle about ("that one again?").
@@ -48,71 +47,66 @@ func NewMemory() *Memory {
 
 // Reset forgets everything: a new game, a new deck.
 func (m *Memory) Reset() {
-	m.resolved = 0
+	m.seq = 0
+	m.bout = nil
 	m.seen = map[string]bool{}
 	m.holder = map[string]string{}
 	m.origin = map[string]string{}
 	m.tookFrom = map[string]string{}
-	m.table = map[string]bool{}
 	m.plans = map[string]Plan{}
 	m.Recall = Recall{}
 }
 
 // Observe updates the memory with a state (any view: the table and the log
-// are the same for everybody).
+// are the same for everybody). Entries already processed are skipped, so
+// the same state can be observed twice.
 func (m *Memory) Observe(s *game.GameState) {
 	if s.Status != game.StatusPlaying {
 		return
 	}
-	now := map[string]bool{}
-	for _, id := range s.TableOrder {
-		now[id] = true
-		for _, d := range s.TableCards[id] {
-			now[d.ID] = true
-		}
-	}
-	// cards that landed since the last look: who played them, and were they known to be somewhere
-	for id := range now {
-		if m.table[id] {
+	for _, e := range s.Log {
+		if e.Seq <= m.seq {
 			continue
 		}
-		who := playedBy(s, id)
-		if who == "" {
-			continue
-		}
-		m.origin[id] = who
-		if h, known := m.holder[id]; known && h == who {
-			if p := s.Player(who); p != nil && !p.IsBot {
-				if c, ok := game.CardByID(id); ok {
-					m.Recall = Recall{Card: c, PlayerID: who, Name: p.Name, Version: s.Version}
-				}
+		m.seq = e.Seq
+		switch e.Type {
+		case "attack", "throw_in", "defend", "transfer", "timeout":
+			if e.CardID != "" {
+				m.played(s, e.CardID, e.PlayerID)
 			}
-		}
-		delete(m.holder, id)
-	}
-	// the bout's outcome, once per bout: read off the resolving phase while
-	// the table is still shown, or off the log when the table was cleared
-	// at once (no resolve delay)
-	switch {
-	case s.Phase == game.PhaseResolving && s.ResolveAt != m.resolved:
-		m.resolved = s.ResolveAt
-		m.recorded = true
-		m.record(s, now, s.ResolveOutcome, s.DefenderID)
-	case len(now) == 0 && len(m.table) > 0:
-		if !m.recorded {
-			if outcome, defender := lastOutcome(s); outcome != "" {
-				m.record(s, m.table, outcome, defender)
+		case "took":
+			m.record(s, game.OutcomeTook, e.PlayerID)
+		case "bito":
+			m.record(s, game.OutcomeBito, e.PlayerID)
+		case "trump_revealed":
+			if e.CardID != "" && e.PlayerID != "" {
+				m.holder[e.CardID] = e.PlayerID
 			}
+		case "start", "lobby":
+			m.bout = nil
 		}
-		m.recorded = false
 	}
-	m.table = now
 }
 
-// record files the cards of a finished bout: taken into a hand or gone.
-func (m *Memory) record(s *game.GameState, cards map[string]bool, outcome, defenderID string) {
+// played files a card that landed on the table: who put it there, and was
+// it known to sit in that hand.
+func (m *Memory) played(s *game.GameState, id, who string) {
+	m.origin[id] = who
+	if h, known := m.holder[id]; known && h == who {
+		if p := s.Player(who); p != nil && !p.IsBot {
+			if c, ok := game.CardByID(id); ok {
+				m.Recall = Recall{Card: c, PlayerID: who, Name: p.Name, Version: s.Version}
+			}
+		}
+	}
+	delete(m.holder, id)
+	m.bout = append(m.bout, id)
+}
+
+// record files the cards of the finished bout: taken into a hand or gone.
+func (m *Memory) record(s *game.GameState, outcome, defenderID string) {
 	defender := s.Player(defenderID)
-	for id := range cards {
+	for _, id := range m.bout {
 		switch outcome {
 		case game.OutcomeTook:
 			m.holder[id] = defenderID
@@ -128,46 +122,17 @@ func (m *Memory) record(s *game.GameState, cards map[string]bool, outcome, defen
 			delete(m.tookFrom, id)
 		}
 	}
-}
-
-// lastOutcome reads the latest bout outcome and its defender from the log.
-func lastOutcome(s *game.GameState) (string, string) {
-	for i := len(s.Log) - 1; i >= 0; i-- {
-		switch s.Log[i].Type {
-		case "took":
-			return game.OutcomeTook, s.Log[i].PlayerID
-		case "bito":
-			return game.OutcomeBito, s.Log[i].PlayerID
-		case "attack", "throw_in", "defend", "transfer":
-			return "", ""
-		}
-	}
-	return "", ""
-}
-
-// playedBy finds in the log who put a card on the table.
-func playedBy(s *game.GameState, cardID string) string {
-	for i := len(s.Log) - 1; i >= 0; i-- {
-		e := s.Log[i]
-		if e.CardID != cardID {
-			continue
-		}
-		switch e.Type {
-		case "attack", "throw_in", "defend", "transfer", "timeout":
-			return e.PlayerID
-		}
-	}
-	return ""
+	m.bout = nil
 }
 
 // Snapshot copies the memory for a bot to think on outside the lock.
 func (m *Memory) Snapshot() *Memory {
-	c := &Memory{resolved: m.resolved, recorded: m.recorded, Recall: m.Recall}
+	c := &Memory{seq: m.seq, Recall: m.Recall}
+	c.bout = append([]string{}, m.bout...)
 	c.seen = copyBools(m.seen)
 	c.holder = copyStrings(m.holder)
 	c.origin = copyStrings(m.origin)
 	c.tookFrom = copyStrings(m.tookFrom)
-	c.table = copyBools(m.table)
 	c.plans = map[string]Plan{}
 	for k, v := range m.plans {
 		c.plans[k] = v

@@ -42,8 +42,13 @@ describe('skins', () => {
     expect(isUnlocked(dots, 9)).toBe(false);
     expect(isUnlocked(dots, 10)).toBe(true);
     expect(nextSkin(0)?.id).toBe('dots');
-    expect(nextSkin(10)).toBeNull();
+    expect(nextSkin(10)?.id).toBe('checks');
+    expect(nextSkin(50)).toBeNull();
     expect(skinProgress(5)).toBe(0.5);
-    expect(skinProgress(25)).toBe(1);
+    expect(skinProgress(60)).toBe(1);
+  });
+  it('opens a back every ten wins up to the acid one', () => {
+    expect(SKINS.map((s) => s.unlockAt)).toEqual([0, 10, 20, 30, 40, 50]);
+    expect(SKINS.map((s) => s.id)).toEqual(['classic', 'dots', 'checks', 'stars', 'waves', 'acid']);
   });
 });

@@ -42,8 +42,25 @@ export class CardView {
     this.buildGlow();
     this.buildShadow();
     this.buildFace();
-    if (skin === 'dots') this.buildDotsBack();
-    else this.buildBack();
+    switch (skin) {
+      case 'dots':
+        this.buildDotsBack();
+        break;
+      case 'checks':
+        this.buildChecksBack();
+        break;
+      case 'stars':
+        this.buildStarsBack();
+        break;
+      case 'waves':
+        this.buildWavesBack();
+        break;
+      case 'acid':
+        this.buildAcidBack();
+        break;
+      default:
+        this.buildBack();
+    }
     this.buildHighlight();
     this.root.addChild(this.glow, this.shadow, this.back, this.face, this.highlight);
     this.setFaceUp(faceUp);
@@ -289,6 +306,100 @@ export class CardView {
     dots.fill({ color: PAPER, alpha: 0.9 });
     const frame = new Graphics().rect(-w / 2 + inset - 2, -h / 2 + inset - 2, w - 2 * inset + 4, h - 2 * inset + 4).stroke({ width: 1.5, color: PAPER, alpha: 0.5 });
     this.back.addChild(plate, frame, dots);
+  }
+
+  /** the plate every back starts from: black, a paper rim, an inner frame */
+  private backPlate(inset = 7): Graphics {
+    const { w, h } = this;
+    const plate = new Graphics().roundRect(-w / 2, -h / 2, w, h, CORNER).fill({ color: INK }).stroke({ width: 2, color: PAPER, alpha: 0.9 });
+    plate.rect(-w / 2 + inset - 2, -h / 2 + inset - 2, w - 2 * inset + 4, h - 2 * inset + 4).stroke({ width: 1.5, color: PAPER, alpha: 0.5 });
+    return plate;
+  }
+
+  /** a mask for the area inside the frame */
+  private backMask(inset = 7): Graphics {
+    const { w, h } = this;
+    return new Graphics().rect(-w / 2 + inset, -h / 2 + inset, w - 2 * inset, h - 2 * inset).fill({ color: 0xffffff });
+  }
+
+  /** a check: paper and ink squares on the diagonal */
+  private buildChecksBack(): void {
+    const { w, h } = this;
+    const inset = 7;
+    const cell = Math.max(5, w / 8);
+    const g = new Graphics();
+    for (let j = 0, y = -h / 2 + inset; y < h / 2 - inset; j++, y += cell) {
+      for (let i = 0, x = -w / 2 + inset; x < w / 2 - inset; i++, x += cell) {
+        if ((i + j) % 2 === 0) g.rect(x, y, cell, cell);
+      }
+    }
+    g.fill({ color: PAPER, alpha: 0.92 });
+    const mask = this.backMask(inset);
+    g.mask = mask;
+    this.back.addChild(this.backPlate(inset), g, mask);
+  }
+
+  /** a sky of small five-point stars, a bigger acid one in the middle */
+  private buildStarsBack(): void {
+    const { w, h } = this;
+    const inset = 7;
+    const g = new Graphics();
+    let seed = 7;
+    const rnd = () => {
+      seed = (seed * 1664525 + 1013904223) >>> 0;
+      return seed / 4294967296;
+    };
+    for (let i = 0; i < 18; i++) {
+      const x = -w / 2 + inset + 4 + rnd() * (w - 2 * inset - 8);
+      const y = -h / 2 + inset + 4 + rnd() * (h - 2 * inset - 8);
+      g.star(x, y, 5, 2 + rnd() * 2.5, 1, rnd() * Math.PI);
+    }
+    g.fill({ color: PAPER, alpha: 0.9 });
+    const big = new Graphics().star(0, 0, 5, w * 0.22, w * 0.09, -Math.PI / 2).fill({ color: ACID }).stroke({ width: 1.5, color: PAPER });
+    const mask = this.backMask(inset);
+    g.mask = mask;
+    this.back.addChild(this.backPlate(inset), g, big, mask);
+  }
+
+  /** stacked sine waves in paper on ink */
+  private buildWavesBack(): void {
+    const { w, h } = this;
+    const inset = 7;
+    const g = new Graphics();
+    const amp = w * 0.06;
+    const period = w * 0.5;
+    for (let y = -h / 2 + inset + amp; y < h / 2 - inset; y += amp * 2.6) {
+      g.moveTo(-w / 2 + inset, y);
+      for (let x = -w / 2 + inset; x <= w / 2 - inset; x += 2) {
+        g.lineTo(x, y + Math.sin(((x + w / 2) / period) * Math.PI * 2) * amp);
+      }
+    }
+    g.stroke({ width: 1.6, color: PAPER, alpha: 0.9 });
+    const mask = this.backMask(inset);
+    g.mask = mask;
+    this.back.addChild(this.backPlate(inset), g, mask);
+  }
+
+  /** acid: toxic magenta and acid-yellow diagonal stripes */
+  private buildAcidBack(): void {
+    const { w, h } = this;
+    const inset = 7;
+    const base = new Graphics().rect(-w / 2 + inset, -h / 2 + inset, w - 2 * inset, h - 2 * inset).fill({ color: RED });
+    const stripes = new Graphics();
+    const step = Math.max(8, w / 5);
+    for (let i = -h - w; i < h + w; i += step) {
+      stripes.moveTo(-w / 2 + i, h / 2).lineTo(-w / 2 + i + h, -h / 2);
+    }
+    stripes.stroke({ width: step * 0.45, color: ACID });
+    const mask = this.backMask(inset);
+    stripes.mask = mask;
+    const word = new Text({ text: 'ACID', style: { fontFamily: FONT, fontWeight: '900', fontSize: Math.round(w * 0.22), fill: PAPER, letterSpacing: 1 } });
+    word.anchor.set(0.5, 0.5);
+    const wordBg = new Graphics().rect(-word.width / 2 - 6, -word.height / 2 - 2, word.width + 12, word.height + 4).fill({ color: INK });
+    const wordBox = new Container();
+    wordBox.addChild(wordBg, word);
+    wordBox.rotation = -Math.PI / 2 + 0.08;
+    this.back.addChild(this.backPlate(inset), base, stripes, mask, wordBox);
   }
 
   private buildBack(): void {

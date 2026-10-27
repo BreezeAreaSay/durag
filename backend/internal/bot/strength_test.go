@@ -16,7 +16,7 @@ import (
 func playMatch(seed uint64, a, b Level, mem bool) string {
 	e := game.NewEngine(game.NewRand(seed, 11))
 	s := game.NewGameState("STR")
-	_ = e.AddBot(s, "b1", "b1")
+	_ = e.AddBot(s, "b1", "b1", "")
 	_ = e.Join(s, "h", "Human", "")
 	_ = e.SetReady(s, "h", true)
 	brainA := NewHeuristic(rand.New(rand.NewPCG(seed, 5)))
@@ -67,6 +67,10 @@ func playMatch(seed uint64, a, b Level, mem bool) string {
 // and both must beat a player who moves at random.
 func TestLevelsDiffer(t *testing.T) {
 	const n = 120
+	// a small search keeps the test quick; the forced-win test covers the full one
+	samples, nodes, budget := EndgameSamples, EndgameNodes, EndgameBudget
+	EndgameSamples, EndgameNodes, EndgameBudget = 2, 300, 15*time.Millisecond
+	defer func() { EndgameSamples, EndgameNodes, EndgameBudget = samples, nodes, budget }()
 	lost := func(a, b Level) int {
 		k := 0
 		for seed := uint64(1); seed <= n; seed++ {
@@ -87,4 +91,28 @@ func TestLevelsDiffer(t *testing.T) {
 			fmt.Printf("%s vs %s: %s loses %d/%d\n", pair[0], pair[1], pair[0], lost(pair[0], pair[1]), n)
 		}
 	}
+}
+
+func TestEndgameSearchExperiment(t *testing.T) {
+	if os.Getenv("STRENGTH") == "" {
+		t.Skip("set STRENGTH=1")
+	}
+	const n = 40
+	run := func(label string) {
+		lost := 0
+		for seed := uint64(1); seed <= n; seed++ {
+			if playMatch(seed, LevelHard, LevelEasy, true) == "b1" {
+				lost++
+			}
+		}
+		fmt.Printf("%s: hard loses %d/%d\n", label, lost, n)
+	}
+	samples := EndgameSamples
+	EndgameSamples = 0
+	run("no search")
+	EndgameSamples = samples
+	EndgameNegamax = true
+	run("negamax")
+	EndgameNegamax = false
+	run("rollouts")
 }

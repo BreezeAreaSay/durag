@@ -173,6 +173,17 @@ try {
   if (fxButtons !== 5) problems.push(`expected 5 premium buttons, got ${fxButtons}`);
   if (locked !== expectLocked) problems.push(`expected ${expectLocked} locked buttons at XP ${myXP}, got ${locked}`);
 
+  // the phrases row is locked below ten wins, the second page lists the wins reactions
+  const lockedPhrases = await p.locator('.emoji-panel__say--locked').count();
+  log('phrase chips locked:', lockedPhrases);
+  if (lockedPhrases !== 8) problems.push(`expected 8 locked phrase chips for a player without wins, got ${lockedPhrases}`);
+  await p.click('.emoji-panel__dot >> nth=1');
+  const winsButtons = await p.locator('.emoji-panel__row--wins .emoji-panel__btn--fx').count();
+  const winsLocked = await p.locator('.emoji-panel__row--wins .emoji-panel__btn--locked').count();
+  log(`page 2: wins buttons=${winsButtons} locked=${winsLocked} hint="${await p.locator('.emoji-panel__hint').textContent()}"`);
+  if (winsButtons !== 5 || winsLocked !== 5) problems.push(`page 2 must show five locked wins reactions, got ${winsButtons}/${winsLocked}`);
+  await p.screenshot({ path: join(here, 'shot-premium-page2.png') });
+  await p.click('.emoji-panel__dot >> nth=0');
   await p.click('.emoji-panel__btn--fx:has-text("🏆")');
   await p.locator('.effects-layer').waitFor({ timeout: 5000 });
   await p.locator('.fx--fanfare').waitFor({ timeout: 5000 });
@@ -196,6 +207,13 @@ try {
   log(`Bob (XP ${bobXP}) 💣:`, refused ? 'refused LOCKED_EMOJI' : accepted ? 'accepted with boom' : 'no answer');
   if (bobXP < 15 && !refused) problems.push(`LOCKED_EMOJI was not returned for a player with ${bobXP} XP`);
   if (bobXP >= 15 && !accepted) problems.push(`💣 was not accepted for a player with ${bobXP} XP`);
+  // a quick phrase needs ten wins: refused with LOCKED_PHRASE; the wins page with LOCKED_EMOJI
+  bob.send({ type: 'SAY', payload: { text: 'ха' } });
+  await new Promise((r) => setTimeout(r, 1300)); // past the reaction rate limit
+  bob.send({ type: 'SEND_EMOJI', payload: { emoji: '🤝' } });
+  await new Promise((r) => setTimeout(r, 500));
+  if (!bob.errors.find((e) => e.code === 'LOCKED_PHRASE')) problems.push('LOCKED_PHRASE was not returned for a player without wins');
+  if (bob.errors.filter((e) => e.code === 'LOCKED_EMOJI').length < 2) problems.push('LOCKED_EMOJI was not returned for the handshake without wins');
 
   // Admin panel for an ADMIN_IDS identity.
   const a = await openAs({ id: 'admin-e2e', name: 'Admin' }, null);

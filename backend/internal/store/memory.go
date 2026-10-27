@@ -206,6 +206,17 @@ func (m *Memory) AddWin(_ context.Context, playerID string) (int, error) {
 	return m.wins[playerID], nil
 }
 
+// AddXP implements Store.
+func (m *Memory) AddXP(_ context.Context, playerID string, n int) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	u := m.users[playerID]
+	u.ID = playerID
+	u.XP += n
+	m.users[playerID] = u
+	return u.XP, nil
+}
+
 // Wins implements Store.
 func (m *Memory) Wins(_ context.Context, playerID string) (int, error) {
 	m.mu.Lock()

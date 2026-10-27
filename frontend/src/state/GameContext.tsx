@@ -26,6 +26,15 @@ export interface Reaction {
   nonce: number;
 }
 
+/** The fly in the air (caught: who slapped it, with their new XP). */
+export interface LiveFly {
+  id: string;
+  seed: number;
+  caughtBy?: string;
+  xp?: number;
+  nonce: number;
+}
+
 export interface LiveEffect {
   effect: Effect;
   playerId: string;
@@ -59,6 +68,8 @@ export interface GameContextValue {
   reactions: Record<string, Reaction>;
   /** The latest premium reaction; the EffectLayer plays each nonce once. */
   lastEffect: LiveEffect | null;
+  /** The fly over the table, if any. */
+  fly: LiveFly | null;
   /** Lifetime wins of the viewer: counted by the server, remembered locally. */
   wins: number;
   /** The chosen card back. */
@@ -74,6 +85,9 @@ export interface GameContextValue {
   notice: string | null;
   clearNotice(): void;
   react(emoji: string): void;
+  /** a quick phrase from the list (unlocked by wins) */
+  say(text: string): void;
+  catchFly(id: string): void;
   join(roomId: string, create: boolean): void;
   leave(): void;
   addBot(level?: BotLevel): void;
@@ -154,6 +168,8 @@ export function GameProvider({ children }: { children: ReactNode }) {
   const [replaced, setReplaced] = useState(false);
   const [reactions, setReactions] = useState<Record<string, Reaction>>({});
   const [lastEffect, setLastEffect] = useState<LiveEffect | null>(null);
+  const [fly, setFly] = useState<LiveFly | null>(null);
+  const flyTimer = useRef(0);
   const [isAdmin, setIsAdmin] = useState(false);
   const [adminOpen, setAdminOpen] = useState(false);
   const [wins, setWins] = useState<number>(loadWins);
@@ -343,6 +359,13 @@ export function GameProvider({ children }: { children: ReactNode }) {
               });
             }, text ? 5200 : 3200),
           );
+        } else if (msg.type === 'FLY') {
+          nonceRef.current += 1;
+          const { id, seed, caught_by: caughtBy, xp } = msg.payload;
+          setFly({ id, seed, caughtBy, xp, nonce: nonceRef.current });
+          window.clearTimeout(flyTimer.current);
+          // the fly leaves on its own after a while; a slapped one lies there a moment
+          flyTimer.current = window.setTimeout(() => setFly((prev) => (prev?.id === id ? null : prev)), caughtBy ? 2500 : 9000);
         } else if (msg.type === 'ERROR') {
           nonceRef.current += 1;
           const err: GameError = { message: msg.payload.message, code: msg.payload.code, cardId: msg.payload.card_id, nonce: nonceRef.current };
@@ -439,6 +462,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
       replaced,
       reactions,
       lastEffect,
+      fly,
       wins,
       skin,
       setSkin,
@@ -450,6 +474,8 @@ export function GameProvider({ children }: { children: ReactNode }) {
       notice,
       clearNotice,
       react: (emoji) => send({ type: 'SEND_EMOJI', payload: { emoji } }),
+      say: (text) => send({ type: 'SAY', payload: { text } }),
+      catchFly: (id) => send({ type: 'CATCH_FLY', payload: { id } }),
       join,
       leave,
       setReady: (ready) => send({ type: 'READY', payload: { ready } }),
@@ -463,7 +489,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
       setDevName,
       clearError,
     }),
-    [connection, config, state, roomId, identity, isAdmin, adminQuery, adminOpen, lastError, replaced, reactions, lastEffect, wins, skin, setSkin, theme, setTheme, fx, fxLevel, setFx, notice, join, leave, send, setDevName],
+    [connection, config, state, roomId, identity, isAdmin, adminQuery, adminOpen, lastError, replaced, reactions, lastEffect, fly, wins, skin, setSkin, theme, setTheme, fx, fxLevel, setFx, notice, join, leave, send, setDevName],
   );
 
   return <GameContext.Provider value={value}>{children}</GameContext.Provider>;

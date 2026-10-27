@@ -55,6 +55,31 @@ type botRoom struct {
 	overheard  bot.Overheard          // the last line a bot said
 	promoted   map[string]bot.Level   // bots that lost here and came back stronger, until they say so
 	talking    map[string]bool        // bots with a model request for a line in flight
+	lastLineAt time.Time              // when any bot last said a line: the room talks one at a time
+}
+
+// lineCooldown is the least time between two bot lines in one room, so the
+// people at the table can read one before the next appears.
+const lineCooldown = 9 * time.Second
+
+// mayTalk reserves the floor for a line now, or says no while the last line
+// is still fresh.
+func (br *botRoom) mayTalk(now time.Time) bool {
+	br.mu.Lock()
+	defer br.mu.Unlock()
+	if now.Sub(br.lastLineAt) < lineCooldown {
+		return false
+	}
+	br.lastLineAt = now
+	return true
+}
+
+// freshGame clears the room's talk cooldown: the greeting in the lobby must
+// not silence the first line at the table.
+func (br *botRoom) freshGame() {
+	br.mu.Lock()
+	br.lastLineAt = time.Time{}
+	br.mu.Unlock()
 }
 
 func newBotRoom() *botRoom {
@@ -120,18 +145,20 @@ func legalMove(moves []game.Move, m game.Move) bool {
 // newBotID returns a fresh seat id for a bot.
 func newBotID() string { return fmt.Sprintf("bot:%08x", rand.Uint32()) }
 
-// pickBotName hands out the next free name from bot.Names.
-func pickBotName(s *game.GameState) string {
+// pickCharacter hands out the next free character of the communal flat.
+func pickCharacter(s *game.GameState) bot.Character {
 	used := map[string]bool{}
 	for _, p := range s.Players {
 		used[p.Name] = true
 	}
-	for _, n := range bot.Names {
-		if !used[n] {
-			return n
+	for _, c := range bot.Characters {
+		if !used[c.Name] {
+			return c
 		}
 	}
-	return fmt.Sprintf("Бот-%d", len(s.Players)+1)
+	c := bot.Characters[len(s.Players)%len(bot.Characters)]
+	c.Name = fmt.Sprintf("%s-%d", c.Name, len(s.Players)+1)
+	return c
 }
 
 func (h *Hub) botDelay() time.Duration {
@@ -280,10 +307,16 @@ func (h *Hub) botAct(roomID, botID string, version int64) {
 	if d.AdminJoke {
 		br.markJoke(botID)
 	}
-	if d.Say != "" || d.Emoji != "" {
-		h.botSay(roomID, botID, d.Say, d.Emoji)
-	} else if h.bots.Brain != nil && !h.bots.LLMMoves && in.SpeakDue() {
+	// With a model at the table it does the talking: on the occasions the
+	// rules would have used a stock line, and on the cadence. Without one
+	// the character's own lines go. The emoji is the rules' either way.
+	if _, talker := h.bots.Brain.(bot.Talker); talker && !h.bots.LLMMoves && (d.Say != "" || in.SpeakDue()) {
+		if d.Emoji != "" {
+			h.botSayRaw(roomID, botID, "", d.Emoji)
+		}
 		go h.botTalk(roomID, botID, in, d.Move) // the model speaks after the move, never holding it up
+	} else if d.Say != "" || d.Emoji != "" {
+		h.botSay(roomID, botID, d.Say, d.Emoji)
 	}
 	h.afterUpdate(roomID, newState)
 }
@@ -459,6 +492,12 @@ func (h *Hub) botHearEmoji(roomID, from, emoji string) {
 // line (not a retort itself) may draw a retort from another bot at the
 // table a couple of seconds later; retorts never chain.
 func (h *Hub) botSay(roomID, botID, text, emoji string) {
+	if text != "" && !h.botRoomFor(roomID).mayTalk(time.Now()) {
+		text = "" // somebody just spoke: the emoji may still go, the words wait for another time
+	}
+	if text == "" && emoji == "" {
+		return
+	}
 	h.botSayRaw(roomID, botID, text, emoji)
 	if text == "" || h.bots.Disabled {
 		return
@@ -485,19 +524,26 @@ func (h *Hub) botSay(roomID, botID, text, emoji string) {
 		return
 	}
 	replier := others[rand.IntN(len(others))]
-	line := bot.Retort(rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64())), speaker.Name, len(speaker.Hand))
-	time.AfterFunc(1500*time.Millisecond+time.Duration(rand.Int64N(int64(2*time.Second))), func() {
+	replierName := ""
+	if p := state.Player(replier); p != nil {
+		replierName = p.Name
+	}
+	line := bot.RetortAs(bot.CharacterOf(replierName), rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64())), speaker.Name, len(speaker.Hand))
+	time.AfterFunc(lineCooldown+time.Duration(rand.Int64N(int64(3*time.Second))), func() {
 		select {
 		case <-h.ctx.Done():
 			return
 		default:
+		}
+		if !br.mayTalk(time.Now()) {
+			return
 		}
 		h.botSayRaw(roomID, replier, line, "")
 	})
 }
 
 // retortChance is how often a bot's line gets an answer from another bot.
-const retortChance = 0.35
+const retortChance = 0.2
 
 func (h *Hub) botSayRaw(roomID, botID, text, emoji string) {
 	raw, err := json.Marshal(pubMessage{Kind: "reaction", Reaction: &ReactionPayload{PlayerID: botID, Emoji: emoji, Text: text, TS: time.Now().UnixMilli()}})
@@ -538,6 +584,7 @@ func (h *Hub) botGreet(roomID string, state *game.GameState, humanIDs []string) 
 	if len(bots) == 0 {
 		return
 	}
+	br := h.botRoomFor(roomID)
 	for i, id := range humanIDs {
 		p := state.Player(id)
 		if p == nil || p.IsBot {
@@ -545,13 +592,20 @@ func (h *Hub) botGreet(roomID string, state *game.GameState, humanIDs []string) 
 		}
 		d := h.dossier(roomID, p)
 		speaker := bots[rand.IntN(len(bots))]
-		line := bot.Greet(rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64())), d)
-		delay := 1200*time.Millisecond + time.Duration(i)*1800*time.Millisecond + time.Duration(rand.Int64N(int64(800*time.Millisecond)))
+		speakerName := ""
+		if sp := state.Player(speaker); sp != nil {
+			speakerName = sp.Name
+		}
+		line := bot.GreetAs(bot.CharacterOf(speakerName), rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64())), d)
+		delay := 1200*time.Millisecond + time.Duration(i)*lineCooldown + time.Duration(rand.Int64N(int64(800*time.Millisecond)))
 		time.AfterFunc(delay, func() {
 			select {
 			case <-h.ctx.Done():
 				return
 			default:
+			}
+			if !br.mayTalk(time.Now()) {
+				return
 			}
 			h.botSayRaw(roomID, speaker, line, "")
 		})
@@ -563,5 +617,31 @@ func (h *Hub) botPromote(roomID, botID string, to bot.Level) {
 	br := h.botRoomFor(roomID)
 	br.mu.Lock()
 	br.promoted[botID] = to
+	br.mu.Unlock()
+}
+
+// botHearText files a human's quick phrase with the bots: the model reads
+// it in the recent reactions, as it reads an emoji.
+func (h *Hub) botHearText(roomID, from, text string) {
+	if h.bots.Disabled {
+		return
+	}
+	state, err := h.store.Load(h.ctx, roomID)
+	if err != nil || !hasBots(state) {
+		return
+	}
+	name := from
+	if p := state.Player(from); p != nil {
+		if p.IsBot {
+			return
+		}
+		name = p.Name
+	}
+	br := h.botRoomFor(roomID)
+	br.mu.Lock()
+	br.recent = append(br.recent, bot.EmojiEvent{From: from, FromName: name, Emoji: "«" + text + "»", At: time.Now()})
+	if len(br.recent) > recentEmojiMax {
+		br.recent = br.recent[len(br.recent)-recentEmojiMax:]
+	}
 	br.mu.Unlock()
 }

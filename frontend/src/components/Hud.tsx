@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { sound } from '../util/audio';
 import { Button } from './Button';
 import { Sticker } from './Sticker';
+import { TalkFeed } from './TalkFeed';
 import { TimerRing } from './TimerRing';
 import { useGame, type Reaction } from '../state/GameContext';
 import { frameWins } from '../util/progress';
@@ -82,11 +83,16 @@ export function Hud({ state, handTop, reactions, onAvatarClick, onTopHeight, han
   const { selfId, take, pass, takeStump, leave, connection, theme, setTheme } = useGame();
   const [soundOn, setSoundOn] = useState(sound.enabled);
   const topRef = useRef<HTMLElement>(null);
+  const [topH, setTopH] = useState(150);
 
   useEffect(() => {
     const el = topRef.current;
     if (!el) return;
-    const report = () => onTopHeight(el.getBoundingClientRect().height);
+    const report = () => {
+      const h = el.getBoundingClientRect().height;
+      setTopH(h);
+      onTopHeight(h);
+    };
     report();
     const observer = new ResizeObserver(report);
     observer.observe(el);
@@ -105,7 +111,9 @@ export function Hud({ state, handTop, reactions, onAvatarClick, onTopHeight, han
   const last = lastMove(state);
   const trumpKnown = state.trump_revealed && state.trump_suit !== '';
   const trumpRed = state.trump_suit === 'Hearts' || state.trump_suit === 'Diamonds';
-  const opponents = state.players.filter((p) => p.id !== selfId);
+  // the seats go round the table from the viewer: the neighbour on the left stays on the left
+  const selfIdx = state.players.findIndex((p) => p.id === selfId);
+  const opponents = selfIdx < 0 ? state.players : [...state.players.slice(selfIdx + 1), ...state.players.slice(0, selfIdx)];
   const myRole = me ? roleKey(state, me) : 'wait';
 
   return (
@@ -132,27 +140,18 @@ export function Hud({ state, handTop, reactions, onAvatarClick, onTopHeight, han
             {t('game.leave')}
           </button>
         </div>
-        <ul className={`opponents ${opponents.length > 3 ? 'opponents--many' : ''}`}>
+        <ul className={`opponents ${opponents.length >= 3 ? 'opponents--three' : ''}`}>
           {opponents.map((p) => {
             const key = roleKey(state, p);
             const hot = HOT_ROLES.includes(key) && !resolving;
-            const reaction = reactions[p.id];
             return (
               <li key={p.id} className={`opponent ${p.out ? 'opponent--out' : ''}`}>
                 <button type="button" className="avatar-btn" onClick={() => onAvatarClick(p.id)} aria-label={p.name}>
-                  <Sticker name={p.name} avatarUrl={p.avatar_url} seed={p.id} size={40} muted={!p.connected || p.out} wins={frameWins(p)} playerId={p.id} scar={p.scar} />
+                  <Sticker name={p.name} avatarUrl={p.avatar_url} avatar={p.avatar} seed={p.id} size={40} muted={!p.connected || p.out} wins={frameWins(p)} playerId={p.id} scar={p.scar} />
                   {timerFor(p.id) ? <TimerRing deadline={timerFor(p.id)} timeoutMs={state.turn_timeout_ms} size={64} /> : null}
                 </button>
-                {reaction?.text ? (
-                  <span className="reaction reaction--text" key={reaction.nonce}>
-                    <span className="reaction__text">{reaction.text}</span>
-                  </span>
-                ) : null}
                 <div className="opponent__info">
-                  <span className="opponent__name">
-                    {p.is_bot ? <span aria-hidden="true">🤖 </span> : null}
-                    {p.name}
-                  </span>
+                  <span className="opponent__name">{p.name}</span>
                   <span className="opponent__cards">
                     {p.hand_count}
                     {p.stump_count ? <small> +{p.stump_count}</small> : null}
@@ -164,6 +163,7 @@ export function Hud({ state, handTop, reactions, onAvatarClick, onTopHeight, han
           })}
         </ul>
       </header>
+      <TalkFeed reactions={reactions} players={state.players} top={topH + 4} />
 
       {/* Status, last move and the action buttons live right above the hand. */}
       <div className="actionband" style={{ top: Math.max(0, handTop - 96) }}>

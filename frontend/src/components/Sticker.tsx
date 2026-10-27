@@ -4,6 +4,8 @@ import { frameClass, frameStyle } from '../util/progress';
 interface Props {
   name: string;
   avatarUrl?: string;
+  /** an emoji face (bots): drawn big instead of initials */
+  avatar?: string;
   size?: number;
   seed?: string;
   muted?: boolean;
@@ -17,7 +19,7 @@ interface Props {
 }
 
 /** A Telegram avatar cut out like a sloppily glued black & white sticker. */
-export function Sticker({ name, avatarUrl, size = 44, seed, muted, badge, wins = 0, playerId, scar }: Props) {
+export function Sticker({ name, avatarUrl, avatar, size = 44, seed, muted, badge, wins = 0, playerId, scar }: Props) {
   const tilt = useMemo(() => {
     const s = seed ?? name;
     let h = 0;
@@ -37,7 +39,15 @@ export function Sticker({ name, avatarUrl, size = 44, seed, muted, badge, wins =
       title={name}
       data-player={playerId}
     >
-      {avatarUrl ? <img src={avatarUrl} alt="" referrerPolicy="no-referrer" /> : <span className="sticker__initials">{initials || '?'}</span>}
+      {avatarUrl ? (
+        <img src={avatarUrl} alt="" referrerPolicy="no-referrer" />
+      ) : avatar ? (
+        <span className="sticker__face" style={{ fontSize: Math.round(size * 0.62) }}>
+          {avatar}
+        </span>
+      ) : (
+        <span className="sticker__initials">{initials || '?'}</span>
+      )}
       {badge ? <span className="sticker__badge">{badge}</span> : null}
       {scar ? (
         <span className="sticker__scar" title="Дурак прошлой игры" aria-label="клеймо дурака">

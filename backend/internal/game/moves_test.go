@@ -103,7 +103,7 @@ func TestBotsInTheLobby(t *testing.T) {
 	if err := e.Join(s, "h1", "Human", ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.AddBot(s, "bot:1", "Нейронка"); err != nil {
+	if err := e.AddBot(s, "bot:1", "Вася", "🥴"); err != nil {
 		t.Fatal(err)
 	}
 	if b := s.Player("bot:1"); b == nil || !b.IsBot || !b.IsReady || !b.Connected {
@@ -113,14 +113,14 @@ func TestBotsInTheLobby(t *testing.T) {
 		t.Fatalf("human count %d", s.HumanCount())
 	}
 	wantErr(t, e.RemoveBot(s, "h1"), ErrNotABot)
-	// at least one human seat stays free: with max 6 at most 5 bots
-	for i := 2; i <= 5; i++ {
-		if err := e.AddBot(s, "bot:"+string(rune('0'+i)), "Bot"); err != nil {
+	// at least one human seat stays free: with max 4 at most 3 bots
+	for i := 2; i <= 3; i++ {
+		if err := e.AddBot(s, "bot:"+string(rune('0'+i)), "Bot", ""); err != nil {
 			t.Fatalf("bot %d: %v", i, err)
 		}
 	}
-	wantErr(t, e.AddBot(s, "bot:9", "Bot"), ErrRoomFull)
-	if err := e.RemoveBot(s, "bot:5"); err != nil {
+	wantErr(t, e.AddBot(s, "bot:9", "Bot", ""), ErrRoomFull)
+	if err := e.RemoveBot(s, "bot:3"); err != nil {
 		t.Fatal(err)
 	}
 	// a human's ready starts the game against the (always ready) bots
@@ -130,5 +130,5 @@ func TestBotsInTheLobby(t *testing.T) {
 	if s.Status != StatusPlaying {
 		t.Fatalf("status %s", s.Status)
 	}
-	wantErr(t, e.AddBot(s, "bot:7", "Late"), ErrGameInProgress)
+	wantErr(t, e.AddBot(s, "bot:7", "Late", ""), ErrGameInProgress)
 }

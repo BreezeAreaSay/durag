@@ -21,6 +21,14 @@ export interface Metrics {
 const PILE_SCALE = 0.72;
 /** room on the left of the hand for the player's own sticker */
 export const HAND_INSET = 46;
+/** from this many cards the hand is dealt in two rows */
+export const HAND_ROWS_FROM = 9;
+/** how far the upper row sticks out above the lower one, in card heights */
+const ROW_LIFT = 0.55;
+
+export function handRows(n: number): number {
+  return n >= HAND_ROWS_FROM ? 2 : 1;
+}
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
@@ -29,12 +37,14 @@ function clamp(v: number, lo: number, hi: number): number {
 /**
  * @param topInset rendered height of the HTML panel at the top (opponents,
  *                 chips); the piles and the table start below it.
+ * @param handCount cards in the viewer's hand: from HAND_ROWS_FROM the hand
+ *                  takes two rows and the hand zone starts higher.
  */
-export function computeMetrics(width: number, height: number, topInset = 0): Metrics {
+export function computeMetrics(width: number, height: number, topInset = 0, handCount = 0): Metrics {
   const cardW = clamp(Math.floor(Math.min(width / 6.2, height / 9.5)), 44, 112);
   const cardH = Math.round(cardW * 1.45);
   const topZone = clamp(Math.max(Math.round(height * 0.2), Math.round(topInset) + 6), 120, Math.round(height * 0.5));
-  const handTop = height - cardH - 66; // leaves room for the bottom HUD strip
+  const handTop = height - cardH - 66 - (handRows(handCount) - 1) * Math.round(cardH * ROW_LIFT); // leaves room for the bottom HUD strip
   return {
     width,
     height,
@@ -47,22 +57,36 @@ export function computeMetrics(width: number, height: number, topInset = 0): Met
   };
 }
 
-/** Fanned hand along the bottom edge; cards overlap when there are many. */
-export function handSlots(n: number, m: Metrics): Slot[] {
+/** One fanned row of cards, centred in the hand zone. */
+function fanRow(n: number, m: Metrics, y: number, shrink = 0): Slot[] {
   if (n <= 0) return [];
   const maxSpacing = m.cardW * 0.74;
   // the player's sticker holds the fan from the left: the cards keep clear of it
-  const available = Math.max(0, m.width - 28 - m.cardW - HAND_INSET);
+  const available = Math.max(0, m.width - 28 - m.cardW - HAND_INSET - 2 * shrink);
   const spacing = n > 1 ? Math.min(maxSpacing, available / (n - 1)) : 0;
   const total = spacing * (n - 1);
   const x0 = HAND_INSET + (m.width - HAND_INSET) / 2 - total / 2;
-  const y = m.height - m.cardH / 2 - 58;
   const slots: Slot[] = [];
   for (let i = 0; i < n; i++) {
     const k = i - (n - 1) / 2;
     slots.push({ x: x0 + i * spacing, y: y + Math.abs(k) * 2.2, rotation: k * 0.03, scale: 1 });
   }
   return slots;
+}
+
+/**
+ * Fanned hand along the bottom edge; cards overlap when there are many.
+ * From HAND_ROWS_FROM cards the hand splits in two rows: the first half of
+ * the cards in an upper row that peeks out above the lower one (and sits a
+ * little inside it), so every card stays wide enough to tap.
+ */
+export function handSlots(n: number, m: Metrics): Slot[] {
+  if (n <= 0) return [];
+  const y = m.height - m.cardH / 2 - 58;
+  if (handRows(n) === 1) return fanRow(n, m, y);
+  const upper = Math.ceil(n / 2);
+  const lift = Math.round(m.cardH * ROW_LIFT);
+  return [...fanRow(upper, m, y - lift, m.cardW * 0.3), ...fanRow(n - upper, m, y)];
 }
 
 /** Attack/defence pairs on a centred grid; shrinks when the table is crowded. */

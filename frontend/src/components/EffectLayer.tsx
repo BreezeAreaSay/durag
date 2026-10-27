@@ -16,8 +16,8 @@ interface Piece {
   style: CSSProperties;
 }
 
-const TEXT: Partial<Record<Effect, string>> = { laugh: 'ХА-ХА-ХА', boom: 'БУМ!', fanfare: 'ПОБЕДА' };
-const SHAKES: Effect[] = ['finger', 'laugh', 'boom'];
+const TEXT: Partial<Record<Effect, string>> = { laugh: 'ХА-ХА-ХА', boom: 'БУМ!', fanfare: 'ПОБЕДА', rooster: 'КУ-КА-РЕ-КУ', clink: 'ДЗЫНЬ' };
+const SHAKES: Effect[] = ['finger', 'laugh', 'boom', 'firecracker'];
 const BURST_MS = 2600;
 
 /** Deterministic pseudo-random numbers so a burst looks the same across re-renders. */
@@ -62,6 +62,51 @@ function pieces(effect: Effect, seed: number): Piece[] {
           style: { left: `${48 + (rnd(i + 20) - 0.5) * 8}%`, top: `${45 + (rnd(i + 40) - 0.5) * 8}%`, animationDelay: `${rnd(i + 60) * 0.15}s`, ...vars },
         };
       });
+    case 'shake': // a rain of hands
+      return Array.from({ length: 16 }, (_, i) => ({
+        key: i,
+        cls: 'fx-tear',
+        char: '🤝',
+        style: { left: `${rnd(i) * 100}%`, animationDelay: `${rnd(i + 50) * 0.7}s`, fontSize: `${22 + rnd(i + 90) * 18}px` },
+      }));
+    case 'firecracker': // a flash and a burst of red sparks
+      return Array.from({ length: 30 }, (_, i) => {
+        const angle = rnd(i + 7) * Math.PI * 2;
+        const dist = 60 + rnd(i) * 200;
+        const vars = { '--dx': `${Math.cos(angle) * dist}px`, '--dy': `${Math.sin(angle) * dist}px` } as CSSProperties;
+        return {
+          key: i,
+          cls: 'fx-spark fx-spark--red',
+          char: '',
+          style: { left: `${48 + (rnd(i + 20) - 0.5) * 6}%`, top: `${50 + (rnd(i + 40) - 0.5) * 6}%`, animationDelay: `${rnd(i + 60) * 0.3}s`, ...vars },
+        };
+      });
+    case 'crown': // golden confetti
+      return Array.from({ length: 42 }, (_, i) => ({
+        key: i,
+        cls: 'fx-confetti',
+        char: '',
+        style: {
+          left: `${rnd(i) * 100}%`,
+          background: ['#ffd700', '#ffb300', '#fff1a8', '#e6ff00'][i % 4],
+          animationDelay: `${rnd(i + 30) * 0.8}s`,
+          animationDuration: `${1.6 + rnd(i + 60)}s`,
+        },
+      }));
+    case 'rooster':
+      return Array.from({ length: 8 }, (_, i) => ({
+        key: i,
+        cls: 'fx-feather',
+        char: '🪶',
+        style: { left: `${10 + rnd(i) * 80}%`, animationDelay: `${rnd(i + 50) * 0.9}s`, fontSize: `${18 + rnd(i + 90) * 14}px` },
+      }));
+    case 'clink':
+      return Array.from({ length: 10 }, (_, i) => ({
+        key: i,
+        cls: 'fx-bubble',
+        char: '',
+        style: { left: `${30 + rnd(i) * 40}%`, animationDelay: `${rnd(i + 50) * 1.2}s`, width: `${6 + rnd(i + 9) * 10}px`, height: `${6 + rnd(i + 9) * 10}px` },
+      }));
     default:
       return [];
   }
@@ -113,7 +158,7 @@ export function EffectLayer() {
     <div className="effects-layer" aria-hidden="true">
       {bursts.map((b) => (
         <div key={b.id} className={`fx fx--${b.effect}`}>
-          {b.effect === 'boom' ? <div className="fx-flash" /> : null}
+          {b.effect === 'boom' || b.effect === 'firecracker' ? <div className="fx-flash" /> : null}
           {pieces(b.effect, b.seed).map((p) => (
             <span key={p.key} className={p.cls} style={p.style}>
               {p.char}

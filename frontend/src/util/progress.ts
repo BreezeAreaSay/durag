@@ -10,13 +10,17 @@ export const TIER_MAX = 20; // 100 wins
 export const EFFECT_TIER = 10; // 50 wins: frames start to glow and spin
 
 export interface Skin {
-  id: 'classic' | 'dots';
+  id: 'classic' | 'dots' | 'checks' | 'stars' | 'waves' | 'acid';
   unlockAt: number;
 }
 
 export const SKINS: readonly Skin[] = [
   { id: 'classic', unlockAt: 0 },
   { id: 'dots', unlockAt: 10 },
+  { id: 'checks', unlockAt: 20 },
+  { id: 'stars', unlockAt: 30 },
+  { id: 'waves', unlockAt: 40 },
+  { id: 'acid', unlockAt: 50 },
 ] as const;
 
 export type SkinId = Skin['id'];

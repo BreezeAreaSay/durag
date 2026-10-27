@@ -19,8 +19,9 @@ import (
 // N ≥ 2, yet the pattern does not repeat.
 
 // SpeakEvery is the mean number of a bot's own moves between two lines.
-// Four: a line now and then, not a commentary track.
-const SpeakEvery = 4
+// Six: a line now and then, not a commentary track; the room cooldown in
+// the hub keeps two bots from talking over each other.
+const SpeakEvery = 6
 
 const phi = 1.618033988749895
 

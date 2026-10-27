@@ -471,7 +471,7 @@ func TestRandomPlayoutsWithResolvingPhase(t *testing.T) {
 		clock := time.Unix(1_700_000_000, 0)
 		e.Now = func() time.Time { return clock }
 		s := NewGameState("r")
-		n := 2 + int(seed%5)
+		n := 2 + int(seed%3)
 		for i := 0; i < n; i++ {
 			_ = e.Join(s, string(rune('A'+i)), "", "")
 		}
@@ -672,10 +672,10 @@ func TestCarriedStumpsDissolveWhenCardsRunShort(t *testing.T) {
 	for i := 0; i < MaxPlayers; i++ {
 		_ = e.Join(s, string(rune('A'+i)), "", "")
 	}
-	// six players with 4-card stumps would need 1 + 36 + 6*5 = 67 cards
+	// four players with 9-card stumps would need 1 + 24 + 4*10 = 65 cards
 	deck := NewDeck()
 	for i := range s.Players {
-		s.Players[i].Stump = append([]Card{}, deck[i*4:i*4+4]...)
+		s.Players[i].Stump = append([]Card{}, deck[i*9:i*9+9]...)
 	}
 	if err := e.Start(s); err != nil {
 		t.Fatal(err)

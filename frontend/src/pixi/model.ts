@@ -18,6 +18,8 @@ export interface SceneModel {
   lastEvent: string;
   /** the player of the last log entry */
   lastEventBy: string;
+  /** the game is over: the room flares warm once */
+  finished: boolean;
   /** The finished bout is still shown on the table (server-side pause). */
   resolving: boolean;
   resolveOutcome: Outcome;
@@ -89,6 +91,7 @@ export function toSceneModel(state: GameState, selfId: string, skin: SkinId = 'c
     playable: playableCards(state, role, hand),
     table: tablePairs(state),
     deckCount: state.deck_count,
+    finished: state.status === 'finished',
     trumpCard: state.trump_card,
     trumpRevealed: state.trump_revealed,
     trumpDrawnBy: state.trump_drawn_by,

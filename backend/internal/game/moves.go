@@ -102,7 +102,7 @@ var ErrNotABot = ruleErr("NOT_A_BOT", "that seat is not a bot")
 
 // AddBot seats a server-driven player. Bots are always ready; a room keeps
 // at least one human seat free so the game is never bots only.
-func (e *Engine) AddBot(s *GameState, id, name string) error {
+func (e *Engine) AddBot(s *GameState, id, name, avatar string) error {
 	if s.Status == StatusFinished {
 		e.resetToLobby(s)
 	}
@@ -121,6 +121,7 @@ func (e *Engine) AddBot(s *GameState, id, name string) error {
 	s.Players = append(s.Players, Player{
 		ID:        id,
 		Name:      name,
+		Avatar:    avatar,
 		Hand:      []Card{},
 		Stump:     []Card{},
 		Connected: true,

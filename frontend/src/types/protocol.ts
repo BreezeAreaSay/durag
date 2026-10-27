@@ -17,6 +17,7 @@ export interface Player {
   stump: Card[]; // always empty on the client
   is_ready: boolean;
   avatar_url?: string;
+  avatar?: string; // a bot's emoji face
   connected: boolean;
   passed: boolean;
   out: boolean;
@@ -93,10 +94,20 @@ export interface ReactionPayload {
   effect?: string; // premium reaction: cry | finger | fanfare | laugh | boom
 }
 
+/** A fly over the table (no caught_by), or the news that somebody slapped it. */
+export interface FlyPayload {
+  id: string;
+  seed: number;
+  ts: number;
+  caught_by?: string;
+  xp?: number;
+}
+
 export type ServerMessage =
   | { type: 'STATE_UPDATE'; payload: GameState }
   | { type: 'ERROR'; payload: ErrorPayload }
   | { type: 'REACTION'; payload: ReactionPayload }
+  | { type: 'FLY'; payload: FlyPayload }
   | { type: 'PONG' };
 
 export interface DevUser {
@@ -124,6 +135,8 @@ export type ClientMessage =
   | { type: 'ADD_BOT'; payload?: { level: BotLevel } } // lobby: seat a server-driven opponent
   | { type: 'REMOVE_BOT'; payload: { player_id: string } }
   | { type: 'SEND_EMOJI'; payload: { emoji: string } } // alias REACT on the server
+  | { type: 'SAY'; payload: { text: string } } // a quick phrase from the list (10 wins)
+  | { type: 'CATCH_FLY'; payload: { id: string } }
   | { type: 'PING' };
 
 export interface ClientConfig {

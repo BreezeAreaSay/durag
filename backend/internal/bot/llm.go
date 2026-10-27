@@ -964,7 +964,9 @@ const talkPrompt = `Ты — бот за столом в «Дураке» (ва�
 func TalkPrompt(in Context, move game.Move) string {
 	s := in.State
 	var b strings.Builder
-	fmt.Fprintf(&b, "Ты — %s. ", nameOf(s, in.BotID))
+	ch := CharacterOf(nameOf(s, in.BotID))
+	fmt.Fprintf(&b, "Ты — %s. %s\n", ch.Name, ch.Persona)
+	b.WriteString("Говори про игру: кто как зашёл, кто взял и сколько, кто тонет, кто переводит; обращайся к людям по имени.\n")
 	switch in.Mood {
 	case MoodAggressive:
 		b.WriteString("Тебя провоцируют эмодзи: отвечай дерзко.\n")

@@ -325,6 +325,17 @@ func (r *Redis) AddWin(ctx context.Context, playerID string) (int, error) {
 	return int(n), err
 }
 
+// AddXP implements Store.
+func (r *Redis) AddXP(ctx context.Context, playerID string, n int) (int, error) {
+	pipe := r.client.TxPipeline()
+	total := pipe.HIncrBy(ctx, r.userKey(playerID), "xp", int64(n))
+	pipe.ZIncrBy(ctx, r.xpKey(), float64(n), playerID)
+	if _, err := pipe.Exec(ctx); err != nil {
+		return 0, err
+	}
+	return int(total.Val()), nil
+}
+
 // Wins implements Store.
 func (r *Redis) Wins(ctx context.Context, playerID string) (int, error) {
 	n, err := r.client.Get(ctx, r.winsKey(playerID)).Int()

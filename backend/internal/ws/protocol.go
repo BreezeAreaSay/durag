@@ -3,7 +3,10 @@
 // sanitized STATE_UPDATE messages to every connection in the room.
 package ws
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 // Envelope is the wire format in both directions: {"type": ..., "payload": ...}.
 type Envelope struct {
@@ -27,6 +30,8 @@ const (
 	TypeResolveBout  = "RESOLVE_BOUT" // v10 name of PASS: "nothing more to throw in, resolve the bout"
 	TypeAddBot       = "ADD_BOT"      // v10 §2: seat a server-driven opponent (lobby only)
 	TypeRemoveBot    = "REMOVE_BOT"   // v10 §2: free a bot's seat (lobby only)
+	TypeSay          = "SAY"          // a quick phrase from the list (unlocked by wins)
+	TypeCatchFly     = "CATCH_FLY"    // the player slapped the fly
 )
 
 // Server -> client messages.
@@ -35,6 +40,7 @@ const (
 	TypeError       = "ERROR"
 	TypePong        = "PONG"
 	TypeReaction    = "REACTION"
+	TypeFly         = "FLY" // a fly appears over the table, or was caught
 )
 
 // JoinPayload is the payload of JOIN_ROOM.
@@ -98,20 +104,80 @@ type ReactionPayload struct {
 // cigarette by the sender's avatar instead of flying to the table.
 var AllowedEmoji = []string{"👍", "👎", "😂", "😡", "😎", "🤔", "🔥", "💀", "🤡", "❤️", "👏", "🙏", "👊", "🚬"}
 
-// Premium is a reaction with an effect (and a sound) that experience unlocks.
+// SayPayload is the payload of SAY: one of AllowedPhrases.
+type SayPayload struct {
+	Text string `json:"text"`
+}
+
+// AllowedPhrases are the quick lines a human can drop on the table; they
+// unlock at PhraseWins lifetime wins (admins have them at once).
+var AllowedPhrases = []string{"easy", "бери давай", "ну и ход", "не спи", "это всё?", "ха", "заберёшь", "ой"}
+
+// PhraseWins is how many wins open the quick phrases.
+const PhraseWins = 10
+
+var allowedPhraseSet = func() map[string]bool {
+	m := make(map[string]bool, len(AllowedPhrases))
+	for _, p := range AllowedPhrases {
+		m[p] = true
+	}
+	return m
+}()
+
+// CatchFlyPayload is the payload of CATCH_FLY.
+type CatchFlyPayload struct {
+	ID string `json:"id"`
+}
+
+// FlyPayload is the payload of FLY: a fly takes off over the table (Seed
+// draws its path), or somebody caught it (CaughtBy, with their new XP).
+type FlyPayload struct {
+	ID       string `json:"id"`
+	Seed     int64  `json:"seed"`
+	TS       int64  `json:"ts"`
+	CaughtBy string `json:"caught_by,omitempty"`
+	XP       int    `json:"xp,omitempty"`
+}
+
+// Premium is a reaction with an effect (and a sound) that experience (XP)
+// or lifetime wins unlock: whichever threshold is set.
 type Premium struct {
-	XP     int    `json:"xp"`
+	XP     int    `json:"xp,omitempty"`
+	Wins   int    `json:"wins,omitempty"`
 	Effect string `json:"effect"`
 }
 
-// PremiumEmoji maps the reactions with effects to the XP they need: crying,
-// the finger, the victory fanfare, the laugh, the bomb (thresholds 3..15).
+// Unlocked tells whether a player with xp and wins (or an admin) has it.
+func (p Premium) Unlocked(xp, wins int, admin bool) bool {
+	if admin {
+		return true
+	}
+	return (p.XP > 0 && xp >= p.XP) || (p.Wins > 0 && wins >= p.Wins)
+}
+
+// Locked describes what the reaction still needs.
+func (p Premium) Locked() string {
+	if p.Wins > 0 {
+		return fmt.Sprintf("this reaction unlocks at %d wins", p.Wins)
+	}
+	return fmt.Sprintf("this reaction unlocks at %d XP", p.XP)
+}
+
+// PremiumEmoji maps the reactions with effects to what they need: the XP
+// page (crying, the finger, the victory fanfare, the laugh, the bomb at
+// 3..15 XP) and the wins page (the handshake, the firecracker, the rooster,
+// the crown, the glasses at 5..30 wins).
 var PremiumEmoji = map[string]Premium{
 	"😭": {XP: 3, Effect: "cry"},
 	"🖕": {XP: 6, Effect: "finger"},
 	"🏆": {XP: 9, Effect: "fanfare"},
 	"🤣": {XP: 12, Effect: "laugh"},
 	"💣": {XP: 15, Effect: "boom"},
+	"🤝": {Wins: 5, Effect: "shake"},
+	"🧨": {Wins: 10, Effect: "firecracker"},
+	"🐓": {Wins: 15, Effect: "rooster"},
+	"👑": {Wins: 20, Effect: "crown"},
+	"🥂": {Wins: 30, Effect: "clink"},
 }
 
 // VictoryLines are what the fanfare says when a player with the tier wins.

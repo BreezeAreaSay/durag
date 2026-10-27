@@ -73,6 +73,9 @@ type Store interface {
 	TopUsers(ctx context.Context, n int) ([]UserStats, error)
 	// AddWin increments a player's lifetime win counter and returns the new value.
 	AddWin(ctx context.Context, playerID string) (int, error)
+	// AddXP credits a player with n experience points (a caught fly) and
+	// returns the new total.
+	AddXP(ctx context.Context, playerID string, n int) (int, error)
 	// Wins returns a player's lifetime win counter (0 for an unknown player).
 	Wins(ctx context.Context, playerID string) (int, error)
 	// Profile returns what the table remembers about a player (zero for a stranger).

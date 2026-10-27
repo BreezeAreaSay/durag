@@ -57,6 +57,9 @@ type Hub struct {
 	botRooms map[string]*botRoom
 	mon      *monitor.Recorder
 	admins   map[string]bool
+
+	flyMu sync.Mutex
+	flies map[string]*fly // room id -> the fly in the air
 }
 
 // isAdmin tells whether a player id is listed in ADMIN_IDS.
@@ -73,6 +76,7 @@ type pubMessage struct {
 	Kind     string           `json:"kind"` // "state" | "reaction"
 	State    *game.GameState  `json:"state,omitempty"`
 	Reaction *ReactionPayload `json:"reaction,omitempty"`
+	Fly      *FlyPayload      `json:"fly,omitempty"`
 }
 
 const reactMinInterval = 1200 * time.Millisecond
@@ -96,6 +100,7 @@ func NewHub(st store.Store, engine *game.Engine, auth Authenticator, opts Option
 		rooms:    map[string]*roomSub{},
 		bots:     opts.Bots,
 		botRooms: map[string]*botRoom{},
+		flies:    map[string]*fly{},
 		mon:      opts.Monitor,
 	}
 	h.upgrader = websocket.Upgrader{
@@ -180,6 +185,10 @@ func (h *Hub) handle(c *Client, env Envelope) {
 		c.enqueue(encode(TypePong, nil))
 	case TypeReact, TypeSendEmoji:
 		h.react(c, env.Payload)
+	case TypeSay:
+		h.say(c, env.Payload)
+	case TypeCatchFly:
+		h.catchFly(c, env.Payload)
 	case TypePlayCard, TypeTransferTurn, TypeTakeCards, TypePass, TypeResolveBout, TypeTakeStump, TypeReady, TypeLeaveRoom, TypeAddBot, TypeRemoveBot:
 		h.intent(c, env)
 	default:
@@ -308,7 +317,8 @@ func (h *Hub) intent(c *Client, env Envelope) {
 				_ = json.Unmarshal(env.Payload, &p) // a bad payload is just a normal bot
 			}
 			id := newBotID()
-			if err := h.engine.AddBot(s, id, pickBotName(s)); err != nil {
+			ch := pickCharacter(s)
+			if err := h.engine.AddBot(s, id, ch.Name, ch.Avatar); err != nil {
 				return err
 			}
 			if seat := s.Player(id); seat != nil {
@@ -379,14 +389,9 @@ func (h *Hub) react(c *Client, raw json.RawMessage) {
 	}
 	payload := ReactionPayload{PlayerID: playerID, Emoji: p.Emoji, TS: now.UnixMilli()}
 	if prem, ok := PremiumEmoji[p.Emoji]; ok {
-		xp := 0
-		if state, err := h.store.Load(h.ctx, roomID); err == nil {
-			if pl := state.Player(playerID); pl != nil {
-				xp = pl.XP
-			}
-		}
-		if xp < prem.XP && !h.isAdmin(playerID) {
-			c.sendError("LOCKED_EMOJI", fmt.Sprintf("this reaction unlocks at %d XP", prem.XP), "")
+		xp, wins := h.standing(roomID, playerID)
+		if !prem.Unlocked(xp, wins, h.isAdmin(playerID)) {
+			c.sendError("LOCKED_EMOJI", prem.Locked(), "")
 			return
 		}
 		payload.Effect = prem.Effect
@@ -401,6 +406,48 @@ func (h *Hub) react(c *Client, raw json.RawMessage) {
 	h.botHearEmoji(roomID, playerID, p.Emoji)
 }
 
+// standing reads a player's XP and wins off the room state.
+func (h *Hub) standing(roomID, playerID string) (xp, wins int) {
+	if state, err := h.store.Load(h.ctx, roomID); err == nil {
+		if pl := state.Player(playerID); pl != nil {
+			return pl.XP, pl.Wins
+		}
+	}
+	return 0, 0
+}
+
+// say drops one of the quick phrases on the table: it travels as a
+// reaction with text, like a bot's line, and needs PhraseWins wins.
+func (h *Hub) say(c *Client, raw json.RawMessage) {
+	roomID, playerID := c.room()
+	if roomID == "" {
+		c.sendError("NOT_IN_ROOM", "join a room first", "")
+		return
+	}
+	var p SayPayload
+	if err := json.Unmarshal(raw, &p); err != nil || !allowedPhraseSet[p.Text] {
+		c.sendError("BAD_PHRASE", "unknown phrase", "")
+		return
+	}
+	_, wins := h.standing(roomID, playerID)
+	if wins < PhraseWins && !h.isAdmin(playerID) {
+		c.sendError("LOCKED_PHRASE", fmt.Sprintf("quick phrases unlock at %d wins", PhraseWins), "")
+		return
+	}
+	now := time.Now()
+	if !c.allowReact(now, reactMinInterval) {
+		return
+	}
+	raw2, err := json.Marshal(pubMessage{Kind: "reaction", Reaction: &ReactionPayload{PlayerID: playerID, Text: p.Text, TS: now.UnixMilli()}})
+	if err != nil {
+		return
+	}
+	if err := h.store.Publish(h.ctx, roomID, raw2); err != nil {
+		h.log.Error("ws: publish phrase", "err", err)
+	}
+	h.botHearText(roomID, playerID, p.Text)
+}
+
 // afterUpdate broadcasts the new state and schedules the next server-side
 // deadline of the room: the end of the resolving pause, the automatic stump
 // pickup or the turn timer, whichever comes first.
@@ -412,6 +459,10 @@ func (h *Hub) afterUpdate(roomID string, state *game.GameState) {
 	h.scheduleTick(roomID, state)
 	h.scheduleBots(roomID, state)
 	if last := lastLogType(state); last == "start" {
+		h.scheduleFly(roomID)
+		if hasBots(state) {
+			h.botRoomFor(roomID).freshGame()
+		}
 		h.mon.Inc("games.started")
 		h.mon.Event("game.start", roomID, "players", len(state.Players), "humans", state.HumanCount())
 	} else if last == "finish" && state.Status == game.StatusFinished {
@@ -715,6 +766,11 @@ func (h *Hub) relay(roomID string, ch <-chan []byte) {
 			}
 		case msg.Kind == "reaction" && msg.Reaction != nil:
 			frame := encode(TypeReaction, msg.Reaction)
+			for _, c := range targets {
+				c.enqueue(frame)
+			}
+		case msg.Kind == "fly" && msg.Fly != nil:
+			frame := encode(TypeFly, msg.Fly)
 			for _, c := range targets {
 				c.enqueue(frame)
 			}

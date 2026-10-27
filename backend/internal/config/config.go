@@ -33,6 +33,11 @@ type Config struct {
 	// Bots (spec v10 §2). The rule-based brain always works; the LLM brain
 	// is used when LLM_API_KEY is set (OpenRouter by default).
 	BotsEnabled bool
+	// The fly over the table (+1 XP to the first slap): chance per game and
+	// when it takes off after the start.
+	FlyChance   float64
+	FlyDelayMin time.Duration
+	FlyDelayMax time.Duration
 	BotDelayMin time.Duration
 	BotDelayMax time.Duration
 	LLMBaseURL  string
@@ -135,6 +140,15 @@ func FromEnv() (Config, error) {
 	}
 	if c.BotDelayMax, err = time.ParseDuration(getenv("BOT_DELAY_MAX", "2200ms")); err != nil {
 		return c, fmt.Errorf("config: BOT_DELAY_MAX: %w", err)
+	}
+	if c.FlyChance, err = strconv.ParseFloat(getenv("FLY_CHANCE", "0.35"), 64); err != nil || c.FlyChance < 0 || c.FlyChance > 1 {
+		return c, fmt.Errorf("config: FLY_CHANCE must be a number in 0..1")
+	}
+	if c.FlyDelayMin, err = time.ParseDuration(getenv("FLY_DELAY_MIN", "20s")); err != nil {
+		return c, fmt.Errorf("config: FLY_DELAY_MIN: %w", err)
+	}
+	if c.FlyDelayMax, err = time.ParseDuration(getenv("FLY_DELAY_MAX", "90s")); err != nil {
+		return c, fmt.Errorf("config: FLY_DELAY_MAX: %w", err)
 	}
 	if c.LLMTimeout, err = time.ParseDuration(getenv("LLM_TIMEOUT", "10s")); err != nil {
 		return c, fmt.Errorf("config: LLM_TIMEOUT: %w", err)

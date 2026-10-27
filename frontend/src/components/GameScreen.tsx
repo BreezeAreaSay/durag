@@ -4,6 +4,7 @@ import { ResultOverlay } from './ResultOverlay';
 import { EmojiPanel } from './EmojiPanel';
 import { EffectLayer } from './EffectLayer';
 import { ReactionLayer } from './ReactionLayer';
+import { FlyLayer } from './FlyLayer';
 import { SLAM_EMOJI } from '../util/emoji';
 import { sound } from '../util/audio';
 import { PixiTable } from '../pixi/PixiTable';
@@ -19,7 +20,7 @@ interface Props {
 }
 
 export function GameScreen({ state }: Props) {
-  const { selfId, playCard, transfer, takeStump, lastError, reactions, react, connection, isAdmin, skin, theme } = useGame();
+  const { selfId, playCard, transfer, takeStump, lastError, reactions, react, say, connection, isAdmin, skin, theme } = useGame();
   const [panelOpen, setPanelOpen] = useState(false);
   const [hudTop, setHudTop] = useState(150);
   const [size, setSize] = useState({ w: window.innerWidth, h: window.innerHeight });
@@ -84,7 +85,8 @@ export function GameScreen({ state }: Props) {
     return () => observer.disconnect();
   }, []);
 
-  const metrics = useMemo(() => computeMetrics(size.w, size.h, hudTop), [size, hudTop]);
+  const handCount = state.players.find((p) => p.id === selfId)?.hand_count ?? 0;
+  const metrics = useMemo(() => computeMetrics(size.w, size.h, hudTop, handCount), [size, hudTop, handCount]);
   const model = useMemo(() => (selfId ? toSceneModel(state, selfId, skin, sort) : null), [state, selfId, skin, sort]);
   const reject = useMemo(() => (lastError?.cardId ? { cardId: lastError.cardId, nonce: lastError.nonce } : null), [lastError]);
   const labels = useMemo(() => ({ trump: t('game.trump'), stump: t('game.stump').toUpperCase() }), []);
@@ -141,12 +143,19 @@ export function GameScreen({ state }: Props) {
         </div>
       ) : null}
       <EffectLayer />
+      <FlyLayer host={gameRef} top={metrics.tableTop} bottom={metrics.handTop} />
       {panelOpen ? (
         <EmojiPanel
           xp={state.players.find((p) => p.id === selfId)?.xp ?? 0}
+          wins={state.players.find((p) => p.id === selfId)?.wins ?? 0}
           unlockAll={isAdmin}
           onPick={(emoji) => {
             react(emoji);
+            haptic('light');
+            setPanelOpen(false);
+          }}
+          onSay={(text) => {
+            say(text);
             haptic('light');
             setPanelOpen(false);
           }}

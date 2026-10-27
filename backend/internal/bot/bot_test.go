@@ -23,10 +23,10 @@ func TestHeuristicPlaysWholeGames(t *testing.T) {
 	for seed := uint64(1); seed <= 15; seed++ {
 		e := game.NewEngine(game.NewRand(seed, 11))
 		s := game.NewGameState("BOTS")
-		n := 1 + int(seed%5) // 1..5 bots + one human: a room keeps a human seat
-		ids := []string{"b1", "b2", "b3", "b4", "b5"}[:n]
+		n := 1 + int(seed%3) // 1..3 bots + one human: a room keeps a human seat
+		ids := []string{"b1", "b2", "b3"}[:n]
 		for _, id := range ids {
-			if err := e.AddBot(s, id, id); err != nil {
+			if err := e.AddBot(s, id, id, ""); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -566,7 +566,7 @@ func TestLastEventAndJabs(t *testing.T) {
 	}
 	// the prompt carries the event and the permission to speak
 	in.Event = Event{Kind: "lonely", Name: human}
-	in.Turn = 2 // frac(2φ) ≈ 0.236 < 0.5: due
+	in.Turn = 5 // frac(5φ) ≈ 0.09 < 1/SpeakEvery: due
 	p := Prompt(in)
 	if !strings.Contains(p, "одна карта") || !strings.Contains(p, "очередь что-то сказать") {
 		t.Fatalf("prompt lacks event or permission:\n%s", p)
@@ -632,5 +632,78 @@ func TestParseSayIsLenient(t *testing.T) {
 	long := strings.Repeat("а", 120)
 	if d, _ := ParseSay(`{"say": "` + long + `"}`); len([]rune(d.Say)) > 81 {
 		t.Fatalf("lines are trimmed: %d runes", len([]rune(d.Say)))
+	}
+}
+
+// leadTest builds a context where the bot attacks with the given hand.
+func leadTest(t *testing.T, hand []string, deck int) Context {
+	t.Helper()
+	s := game.NewGameState("LEAD")
+	s.Status = game.StatusPlaying
+	s.MaxPlayers = 4
+	s.Players = []game.Player{{ID: "b", Name: "Крест", IsBot: true, Connected: true}, {ID: "h", Name: "Вася", Connected: true}}
+	for _, id := range hand {
+		c, _ := game.CardByID(id)
+		s.Players[0].Hand = append(s.Players[0].Hand, c)
+	}
+	s.Players[1].Hand = []game.Card{}
+	for _, id := range []string{"H_2", "H_3", "H_4", "H_5", "H_6", "H_8"} {
+		c, _ := game.CardByID(id)
+		s.Players[1].Hand = append(s.Players[1].Hand, c)
+	}
+	s.CurrentTurn, s.DefenderID = "b", "h"
+	s.TableCards = map[string][]game.Card{}
+	s.Deck = game.NewDeck()[:deck]
+	s.DeckCount = deck
+	s.TrumpSuit = game.SuitSpades
+	s.TrumpRevealed = deck == 0
+	view := s.Sanitized("b")
+	return Context{State: view, BotID: "b", Moves: s.LegalMoves("b"), Level: LevelHard, Plan: PlanPress, Mood: MoodAggressive}
+}
+
+func TestNoAcesOverSevensWhileTheDeckLasts(t *testing.T) {
+	h := NewHeuristic(rand.New(rand.NewPCG(1, 2)))
+	for seed := 0; seed < 20; seed++ {
+		in := leadTest(t, []string{"C_14", "D_14", "H_14", "C_7", "D_9", "S_12"}, 20)
+		d, _ := h.Decide(context.Background(), in)
+		if d.Move.Type != game.MoveAttack || d.Move.CardID == "C_14" || d.Move.CardID == "D_14" || d.Move.CardID == "H_14" {
+			t.Fatalf("led %s with a seven in hand and the deck alive", d.Move)
+		}
+	}
+	// with the deck gone and a defender who cannot beat an ace of a plain suit, the aces may go
+	in := leadTest(t, []string{"C_14", "D_14", "C_7"}, 0)
+	in.Memory = NewMemory()
+	d, _ := h.Decide(context.Background(), in)
+	if d.Move.Type != game.MoveAttack {
+		t.Fatalf("expected an attack, got %s", d.Move)
+	}
+}
+
+func TestNoQueensThrownAtABeatingDefender(t *testing.T) {
+	s := game.NewGameState("THROW")
+	s.Status = game.StatusPlaying
+	s.MaxPlayers = 4
+	s.Players = []game.Player{{ID: "a", Name: "Вася", Connected: true}, {ID: "h", Name: "Бабуля", Connected: true}, {ID: "b", Name: "Крест", IsBot: true, Connected: true}}
+	give := func(i int, ids ...string) {
+		for _, id := range ids {
+			c, _ := game.CardByID(id)
+			s.Players[i].Hand = append(s.Players[i].Hand, c)
+		}
+	}
+	give(0, "C_2", "C_3", "C_4", "C_5", "C_6")
+	give(1, "H_2", "H_3", "H_4", "H_5", "H_6", "H_8")
+	give(2, "D_12", "H_12", "S_7", "C_9", "D_10")
+	s.CurrentTurn, s.DefenderID = "a", "h"
+	s.TableOrder = []string{"C_12"}
+	s.TableCards = map[string][]game.Card{"C_12": {}}
+	s.Deck = game.NewDeck()[:20]
+	s.DeckCount = 20
+	s.TrumpSuit = game.SuitSpades
+	view := s.Sanitized("b")
+	in := Context{State: view, BotID: "b", Moves: s.LegalMoves("b"), Level: LevelHard, Mood: MoodAggressive, Plan: PlanSave}
+	h := NewHeuristic(rand.New(rand.NewPCG(3, 4)))
+	d, _ := h.Decide(context.Background(), in)
+	if d.Move.Type == game.MoveThrowIn {
+		t.Fatalf("threw %s at a defender who is still beating with the deck alive", d.Move)
 	}
 }

@@ -28,7 +28,7 @@ const (
 	HandSize   = 6 // cards dealt to every hand and refilled to after each bout
 	StumpSize  = 2 // hidden cards of every player's "stump" (пенёк)
 	MinPlayers = 2
-	MaxPlayers = 6 // 6 players * (6 + 2) = 48 cards, 7 remain in the deck
+	MaxPlayers = 4 // 4 players * (6 + 2) = 32 cards: a table you can read on a phone
 	MaxLog     = 40
 )
 
@@ -42,6 +42,7 @@ type Player struct {
 
 	// Extensions (not in the original data model).
 	AvatarURL  string `json:"avatar_url,omitempty"`
+	Avatar     string `json:"avatar,omitempty"` // an emoji face for a seat without a photo (bots)
 	Connected  bool   `json:"connected"`
 	Passed     bool   `json:"passed"`              // "бито" said in the current bout
 	Out        bool   `json:"out"`                 // got rid of all cards, left the game as a non-loser
@@ -72,6 +73,10 @@ type LogEntry struct {
 	CardID   string `json:"card_id,omitempty"`
 	TargetID string `json:"target_id,omitempty"`
 	Text     string `json:"text,omitempty"`
+	// Seq numbers the entries of one room in order: the log keeps only
+	// the last MaxLog, so a reader that comes back finds what it missed
+	// by the sequence, not by the position.
+	Seq int64 `json:"seq,omitempty"`
 }
 
 // GameState is the authoritative server state of one room. The JSON
@@ -103,6 +108,7 @@ type GameState struct {
 	Version        int64      `json:"version"`
 	UpdatedAt      int64      `json:"updated_at"`
 	Log            []LogEntry `json:"log"`
+	LogSeq         int64      `json:"log_seq,omitempty"`
 	ViewerID       string     `json:"viewer_id,omitempty"` // filled by Sanitized(): who this view belongs to
 	TransferCount  int        `json:"transfer_count"`      // transfers in the current bout (informational)
 	BoutNumber     int        `json:"bout_number"`
@@ -387,6 +393,8 @@ func (p *Player) HasRank(rank int) bool {
 // --- bookkeeping ---------------------------------------------------------
 
 func (s *GameState) addLog(e LogEntry) {
+	s.LogSeq++
+	e.Seq = s.LogSeq
 	s.Log = append(s.Log, e)
 	if len(s.Log) > MaxLog {
 		s.Log = s.Log[len(s.Log)-MaxLog:]

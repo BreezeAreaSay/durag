@@ -70,15 +70,15 @@ export function WaitingRoom({ state }: Props) {
         <ul className="players__list">
           {state.players.map((p) => (
             <li key={p.id} className={`players__item ${p.is_ready ? 'players__item--ready' : ''}`}>
-              <Sticker name={p.name} avatarUrl={p.avatar_url} seed={p.id} wins={frameWins(p)} playerId={p.id} scar={p.scar} />
+              <Sticker name={p.name} avatarUrl={p.avatar_url} avatar={p.avatar} seed={p.id} wins={frameWins(p)} playerId={p.id} scar={p.scar} />
               {reactions[p.id]?.text ? (
                 <span className="reaction reaction--text reaction--lobby" key={reactions[p.id]!.nonce}>
                   <span className="reaction__text">{reactions[p.id]!.text}</span>
                 </span>
               ) : null}
               <span className="players__name">
-                {p.is_bot ? <span className="players__bot" aria-hidden="true">🤖 </span> : null}
                 {p.name}
+                {p.is_bot ? <span className="players__bot">{t('waiting.bot')}</span> : null}
                 {p.id === state.host_id ? <small> · {t('waiting.host')}</small> : null}
                 {p.is_bot ? <small> · {t(`waiting.level.${p.bot_level ?? 'normal'}`).toLowerCase()}</small> : <small> · XP {p.xp ?? 0}</small>}
               </span>

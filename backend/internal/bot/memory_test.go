@@ -20,7 +20,7 @@ func twoSeats(t *testing.T) (*game.Engine, *game.GameState) {
 	if err := e.Join(s, "H", "Вася", ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.AddBot(s, "B", "Нейронка"); err != nil {
+	if err := e.AddBot(s, "B", "Крест", "🕶"); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.SetReady(s, "H", true); err != nil {
@@ -199,4 +199,55 @@ func indexOf(s, sub string) int {
 		}
 	}
 	return -1
+}
+
+// TestMemoryTracksTheDiscardExactly plays whole games with the memory
+// watching and checks after every move that it counts the discard to the
+// card and never places a card in a hand that does not hold it.
+func TestMemoryTracksTheDiscardExactly(t *testing.T) {
+	for seed := uint64(1); seed <= 12; seed++ {
+		e := game.NewEngine(game.NewRand(seed, 11))
+		s := game.NewGameState("MEMX")
+		_ = e.AddBot(s, "b1", "b1", "")
+		_ = e.Join(s, "h", "Human", "")
+		if seed%2 == 0 {
+			_ = e.AddBot(s, "b2", "b2", "")
+		}
+		_ = e.SetReady(s, "h", true)
+		brain := NewHeuristic(rand.New(rand.NewPCG(seed, 5)))
+		memory := NewMemory()
+		for steps := 0; s.Status == game.StatusPlaying && steps < 4000; steps++ {
+			e.ResolveIfDue(s, time.Now().Add(time.Hour))
+			e.StumpsIfDue(s, time.Now().Add(time.Hour))
+			memory.Observe(s)
+			if memory.Gone() != s.DiscardCount {
+				t.Fatalf("seed %d step %d: memory sees %d gone, discard holds %d", seed, steps, memory.Gone(), s.DiscardCount)
+			}
+			for id, who := range memory.holder {
+				p := s.Player(who)
+				held := false
+				for _, c := range p.Hand {
+					held = held || c.ID == id
+				}
+				if !held {
+					t.Fatalf("seed %d step %d: memory places %s with %s, who does not hold it", seed, steps, id, who)
+				}
+			}
+			actors := append([]string{}, s.Actors()...)
+			actors = append(actors, s.StumpPending...)
+			if len(actors) == 0 {
+				continue
+			}
+			id := actors[steps%len(actors)]
+			moves := s.LegalMoves(id)
+			if len(moves) == 0 {
+				continue
+			}
+			in := Context{State: s.Sanitized(id), BotID: id, Moves: moves, Level: LevelNormal, Memory: memory.Snapshot()}
+			d, _ := brain.Decide(context.Background(), in)
+			if err := e.ApplyMove(s, id, d.Move); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 }

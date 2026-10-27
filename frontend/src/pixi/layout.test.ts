@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { computeMetrics, deckSlot, discardSlot, handSlots, hitSlot, nextAttackSlot, tableSlots, trumpSlot, jitterSlot, HAND_INSET } from './layout';
+import { computeMetrics, deckSlot, discardSlot, handRows, handSlots, hitSlot, nextAttackSlot, tableSlots, trumpSlot, jitterSlot, HAND_INSET } from './layout';
 
 const phone = computeMetrics(390, 844);
 const tablet = computeMetrics(1024, 768);
@@ -44,7 +44,34 @@ describe('hand', () => {
     const [a, , c] = handSlots(3, phone);
     expect(a!.rotation).toBeCloseTo(-c!.rotation);
   });
+  it('deals nine or more cards in two rows, the upper one higher and narrower', () => {
+    expect(handRows(8)).toBe(1);
+    expect(handRows(9)).toBe(2);
+    const eight = handSlots(8, phone);
+    expect(Math.max(...eight.map((s) => s.y)) - Math.min(...eight.map((s) => s.y))).toBeLessThan(12); // one row (the fan's bend aside)
+    const twelve = handSlots(12, phone);
+    const upper = twelve.slice(0, 6);
+    const lower = twelve.slice(6);
+    expect(Math.max(...upper.map((s) => s.y))).toBeLessThan(Math.min(...lower.map((s) => s.y)) - phone.cardH * 0.4);
+    const span = (row: typeof upper) => Math.max(...row.map((s) => s.x)) - Math.min(...row.map((s) => s.x));
+    expect(span(upper)).toBeLessThan(span(lower));
+    // every card keeps a tappable strip: the spacing in a row of six is wider than in a row of twelve
+    const gap = (row: { x: number }[]) => row[1]!.x - row[0]!.x;
+    expect(gap(lower)).toBeGreaterThan(gap(fanOf(12)));
+    // the hand zone starts higher with two rows, so the table shrinks instead of overlapping
+    expect(computeMetrics(390, 844, 0, 12).handTop).toBeLessThan(computeMetrics(390, 844, 0, 8).handTop);
+  });
 });
+
+/** a single twelve-card row, for comparison: the layout of a hand below the two-row threshold scaled up */
+function fanOf(n: number) {
+  const wide = computeMetrics(390, 844);
+  const xs: { x: number }[] = [];
+  const available = Math.max(0, wide.width - 28 - wide.cardW - HAND_INSET);
+  const spacing = Math.min(wide.cardW * 0.74, available / (n - 1));
+  for (let i = 0; i < n; i++) xs.push({ x: i * spacing });
+  return xs;
+}
 
 describe('table', () => {
   it('keeps pairs inside the table zone and shrinks crowded tables', () => {

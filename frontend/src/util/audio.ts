@@ -109,6 +109,50 @@ class Sound {
     osc.stop(t + 0.55);
   }
 
+  /** a fly in the room: a wobbling buzz that lasts a while */
+  buzz(seconds = 6): void {
+    const ctx = this.ready();
+    if (!ctx) return;
+    const t = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(180, t);
+    const wobble = ctx.createOscillator();
+    wobble.type = 'sine';
+    wobble.frequency.value = 7;
+    const depth = ctx.createGain();
+    depth.gain.value = 25;
+    wobble.connect(depth).connect(osc.frequency);
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.value = 900;
+    filter.Q.value = 2;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.05, t + 0.3);
+    g.gain.setValueAtTime(0.05, t + seconds - 0.4);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + seconds);
+    osc.connect(filter).connect(g).connect(this.master!);
+    wobble.start(t);
+    osc.start(t);
+    osc.stop(t + seconds + 0.05);
+    wobble.stop(t + seconds + 0.05);
+  }
+
+  /** a slap: short and flat */
+  slap(): void {
+    const ctx = this.ready();
+    if (!ctx) return;
+    this.burst(ctx, 0.05, 900, 0.7, 0.6);
+  }
+
+  /** a thumb across the deck: a quick run of snaps */
+  riffle(): void {
+    const ctx = this.ready();
+    if (!ctx) return;
+    for (let i = 0; i < 9; i++) this.burst(ctx, 0.012, 2600 + Math.random() * 1200, 1.1, 0.16, i * 0.028);
+  }
+
   // --- internals -----------------------------------------------------------
 
   private context(): Ctx | null {

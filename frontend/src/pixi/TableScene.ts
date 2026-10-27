@@ -149,6 +149,14 @@ export class TableScene {
   private cone = new Sprite();
   private dip = new Graphics();
   private emberGlow = new Sprite();
+  /** the window: a soft slanted patch of shade that creeps across the table */
+  private windowShade = new Graphics();
+  /** the room warms up a touch with every "bito" and flares on a win; a cloud dims the lamp now and then */
+  private warmth = 0;
+  private warmFlash = 0;
+  private cloudAt = 60000 + Math.random() * 180000;
+  private prevResolving = false;
+  private prevFinished = false;
 
   // piles
   private deckPile = new Container();
@@ -262,7 +270,7 @@ export class TableScene {
       this.expirePending();
     });
 
-    this.metrics = computeMetrics(this.app.screen.width, this.app.screen.height, this.topInset);
+    this.metrics = this.measure();
     this.buildPiles();
     this.ready = true;
     this.lampColour();
@@ -272,11 +280,16 @@ export class TableScene {
   update(model: SceneModel): void {
     const first = this.model === null;
     this.model = model;
+    if (this.ready) this.metrics = this.measure(); // two rows of cards move the hand zone up
     if (model.skin !== this.skin) {
       this.skin = model.skin;
       if (this.ready) this.rebuildPiles(); // the backs of the piles wear the viewer's skin
     }
     if (model.resolving && model.resolveOutcome) this.lastOutcome = model.resolveOutcome;
+    if (model.resolving && !this.prevResolving && model.resolveOutcome === 'bito') this.warmth = Math.min(1, this.warmth + 0.1); // 2–3 % warmer each time
+    this.prevResolving = model.resolving;
+    if (model.finished && !this.prevFinished && !first) this.warmFlash = 1;
+    this.prevFinished = model.finished;
     if (!first && this.prevRevealed === false && model.trumpRevealed && model.trumpCard) {
       this.playTrumpReveal(model.trumpCard, model.hand.some((c) => c.id === model.trumpCard!.id));
     }
@@ -287,12 +300,17 @@ export class TableScene {
   }
 
 
+  /** the current metrics: the screen, the HTML panel above, the viewer's hand size */
+  private measure(): Metrics {
+    return computeMetrics(this.app.screen.width, this.app.screen.height, this.topInset, this.model?.hand.length ?? 0);
+  }
+
   /** The HTML panel at the top changed its height: keep the piles below it. */
   setTopInset(px: number): void {
     if (Math.abs(px - this.topInset) < 1) return;
     this.topInset = px;
     if (!this.ready) return;
-    this.metrics = computeMetrics(this.app.screen.width, this.app.screen.height, this.topInset);
+    this.metrics = this.measure();
     this.rebuildPiles();
     this.sync(true);
   }
@@ -353,7 +371,7 @@ export class TableScene {
   // --- layout & sync -------------------------------------------------------
 
   private onResize = (): void => {
-    this.metrics = computeMetrics(this.app.screen.width, this.app.screen.height, this.topInset);
+    this.metrics = this.measure();
     this.rebuildPiles();
     this.sync(true);
   };
@@ -866,7 +884,8 @@ export class TableScene {
     this.emberGlow.blendMode = 'add';
     this.emberGlow.eventMode = 'none';
     this.emberGlow.visible = false;
-    this.layers.light.addChild(this.cone, this.dip, this.emberGlow);
+    this.windowShade.eventMode = 'none';
+    this.layers.light.addChild(this.windowShade, this.cone, this.dip, this.emberGlow);
     this.layers.light.eventMode = 'none';
   }
 
@@ -881,8 +900,19 @@ export class TableScene {
     this.cone.width = side;
     this.cone.height = side;
     this.cone.position.set(l.x * m.width, l.y * m.height);
-    this.cone.tint = dark ? 0x000000 : 0x2a1c0c;
-    this.cone.alpha = (dark ? 0.62 : 0.3) * (0.7 + 0.3 * k);
+    // the colour of the dark: warmer as the evening goes on, a flare on a win
+    this.warmFlash = Math.max(0, this.warmFlash - SPOT_STEP_MS / 1800);
+    const warm = Math.min(1, this.warmth * 0.3 + this.warmFlash);
+    this.cone.tint = dark ? TableScene.mix(0x000000, 0x2a1400, warm * 0.6) : TableScene.mix(0x2a1c0c, 0x4a2a06, warm);
+    // a cloud over the window now and then: the lamp seems to matter a little more for ten seconds
+    let cloud = 0;
+    if (this.time >= this.cloudAt) {
+      const u = (this.time - this.cloudAt) / 10000;
+      if (u >= 1) this.cloudAt = this.time + 60000 + Math.random() * 180000;
+      else cloud = Math.sin(Math.PI * u);
+    }
+    this.cone.alpha = (dark ? 0.62 : 0.3) * (0.7 + 0.3 * k) * (1 + 0.08 * cloud);
+    this.windowFrame(m, dark, cloud);
     const dipAlpha = Math.max((1 - k) * (dark ? 0.75 : 0.45), this.blackout * (dark ? 0.92 : 0.82));
     this.dip.clear().rect(-m.width, -m.height, m.width * 3, m.height * 3).fill({ color: 0x000000, alpha: dipAlpha });
     const e = this.ember();
@@ -899,6 +929,31 @@ export class TableScene {
     const root = document.documentElement.style;
     root.setProperty('--lx', `${(l.x * 100).toFixed(1)}%`);
     root.setProperty('--ly', `${(l.y * 100).toFixed(1)}%`);
+  }
+
+  /** linear blend of two RGB colours */
+  private static mix(a: number, b: number, t: number): number {
+    const u = Math.max(0, Math.min(1, t));
+    const ch = (shift: number) => Math.round(((a >> shift) & 0xff) * (1 - u) + ((b >> shift) & 0xff) * u);
+    return (ch(16) << 16) | (ch(8) << 8) | ch(0);
+  }
+
+  /**
+   * The shade of the window frame: a slanted band that takes 2–3 minutes to
+   * cross the table (the sun moves, or a curtain does), fainter when a
+   * cloud takes the light away. Drawn under the lamp's cone.
+   */
+  private windowFrame(m: Metrics, dark: boolean, cloud: number): void {
+    const g = this.windowShade;
+    g.clear();
+    const u = 0.5 + 0.5 * Math.sin(this.time / 150000 * Math.PI * 2 + 1);
+    const x = m.width * (0.05 + 0.75 * u);
+    const w = m.width * 0.22;
+    const slant = m.height * 0.12;
+    const alpha = (dark ? 0.12 : 0.07) * (1 - 0.6 * cloud);
+    g.poly([x, -m.height, x + w, -m.height, x + w + slant, m.height * 2, x + slant, m.height * 2]).fill({ color: 0x000000, alpha });
+    // the bar of the frame: a thin darker line through the middle of the band
+    g.poly([x + w * 0.46, -m.height, x + w * 0.54, -m.height, x + w * 0.54 + slant, m.height * 2, x + w * 0.46 + slant, m.height * 2]).fill({ color: 0x000000, alpha: alpha * 0.8 });
   }
 
   /** the lamp's colour by the hour on the phone: the cone's tint warms up at night */
@@ -1038,6 +1093,10 @@ export class TableScene {
     this.stumpPile.on('pointertap', () => {
       if (this.model?.mustTakeStump) this.handlers.onTakeStump?.();
     });
+    // a fidget: a thumb across the deck makes it rustle and shiver
+    this.deckPile.eventMode = 'static';
+    this.deckPile.cursor = 'pointer';
+    this.deckPile.on('pointertap', () => this.riffle());
     this.layers.piles.addChild(this.deckPile, this.discardPile, this.trumpPlate, this.stumpPile, this.deckLabel, this.discardLabel, this.stumpLabel);
     this.rebuildPiles();
   }
@@ -1115,6 +1174,22 @@ export class TableScene {
     this.trumpPlate.position.set(slot.x + m.cardW * 0.12, slot.y + m.cardH * 0.04);
     this.trumpPlate.rotation = 0.08;
     this.trumpPlateSuit = '';
+  }
+
+  /** the deck shivers for a third of a second: every card of the pile jumps on its own beat */
+  private riffle(): void {
+    if (!this.deckPile.visible || this.lite) return;
+    sound.riffle();
+    const cards = this.deckPile.children.map((c) => ({ c, y: c.position.y }));
+    let t = 0;
+    this.effects.push((dt) => {
+      t += dt;
+      const u = t / 320;
+      cards.forEach(({ c, y }, i) => {
+        c.position.y = u >= 1 ? y : y - Math.abs(Math.sin(u * Math.PI * 3 + i)) * 4 * (1 - u);
+      });
+      return u < 1;
+    });
   }
 
   private updatePiles(): void {
