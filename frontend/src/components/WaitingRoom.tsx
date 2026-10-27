@@ -67,6 +67,7 @@ export function WaitingRoom({ state }: Props) {
       <section className="players">
         <h2 className="players__title">
           {t('waiting.players')} {state.players.length}/{state.max_players}
+          {state.no_timer ? <span className="chip chip--ghost chip--small">{t('waiting.noTimer')}</span> : null}
         </h2>
         <ul className="players__list">
           {state.players.map((p) => (

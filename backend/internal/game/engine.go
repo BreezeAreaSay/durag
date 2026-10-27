@@ -493,7 +493,10 @@ func (s *GameState) turnActors() []string {
 func (e *Engine) armTurn(s *GameState) {
 	actors := s.turnActors()
 	s.TurnTimeoutMs = e.TurnTimeout.Milliseconds()
-	if e.TurnTimeout <= 0 || len(actors) == 0 {
+	if s.NoTimer {
+		s.TurnTimeoutMs = 0
+	}
+	if e.TurnTimeout <= 0 || s.NoTimer || len(actors) == 0 {
 		s.TurnDeadline = 0
 		s.TurnActors = []string{}
 		return

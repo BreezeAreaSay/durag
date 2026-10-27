@@ -88,7 +88,7 @@ export interface GameContextValue {
   /** a quick phrase from the list (unlocked by wins) */
   say(text: string): void;
   catchFly(id: string): void;
-  join(roomId: string, create: boolean): void;
+  join(roomId: string, create: boolean, options?: { noTimer?: boolean }): void;
   leave(): void;
   addBot(level?: BotLevel): void;
   removeBot(playerId: string): void;
@@ -216,7 +216,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
   const reactionTimers = useRef(new Map<string, number>());
 
   const socketRef = useRef<WebSocket | null>(null);
-  const roomRef = useRef<{ roomId: string; create: boolean } | null>(roomId ? { roomId, create: false } : null);
+  const roomRef = useRef<{ roomId: string; create: boolean; noTimer?: boolean } | null>(roomId ? { roomId, create: false } : null);
   const attemptRef = useRef(0);
   const closedByUs = useRef(false);
   const nonceRef = useRef(0);
@@ -300,6 +300,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
         room_id: target.roomId,
         tg_init_data: id.initData,
         create: target.create,
+        no_timer: target.create && target.noTimer ? true : undefined,
         dev_user: id.kind === 'dev' ? { id: id.devId, name: id.name || `Guest ${id.devId.slice(0, 4)}` } : undefined,
       },
     });
@@ -413,10 +414,10 @@ export function GameProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const join = useCallback(
-    (id: string, create: boolean) => {
+    (id: string, create: boolean, options?: { noTimer?: boolean }) => {
       const normalized = id.trim().toUpperCase();
       if (!normalized) return;
-      roomRef.current = { roomId: normalized, create };
+      roomRef.current = { roomId: normalized, create, noTimer: options?.noTimer };
       setRoomId(normalized);
       sendJoin();
     },

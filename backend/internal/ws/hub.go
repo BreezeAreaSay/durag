@@ -233,6 +233,9 @@ func (h *Hub) join(c *Client, raw json.RawMessage) {
 		h.log.Warn("ws: profile lookup failed", "player", id.ID, "err", perr)
 	}
 	state, err := h.store.Update(h.ctx, roomID, p.Create, func(s *game.GameState) error {
+		if p.Create && len(s.Players) == 0 && s.Status == game.StatusWaiting {
+			s.NoTimer = p.NoTimer // the table's own setting, chosen by whoever opens it
+		}
 		if err := h.engine.Join(s, id.ID, id.Name, id.AvatarURL); err != nil {
 			return err
 		}

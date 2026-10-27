@@ -112,15 +112,16 @@ type GameState struct {
 	ViewerID       string     `json:"viewer_id,omitempty"` // filled by Sanitized(): who this view belongs to
 	TransferCount  int        `json:"transfer_count"`      // transfers in the current bout (informational)
 	BoutNumber     int        `json:"bout_number"`
-	MaxAttacks     int        `json:"max_attacks"`     // attack cards per bout, 0 = only the defender's hand limits
-	Phase          string     `json:"phase"`           // "" or PhaseResolving
-	ResolveAt      int64      `json:"resolve_at"`      // unix milliseconds; when the resolving phase ends
-	ResolveOutcome string     `json:"resolve_outcome"` // OutcomeBito / OutcomeTook while resolving
-	StumpPending   []string   `json:"stump_pending"`   // players who must take their stump before the next bout starts
-	StumpDeadline  int64      `json:"stump_deadline"`  // unix ms; pending stumps are taken automatically afterwards (0 = none)
-	TurnDeadline   int64      `json:"turn_deadline"`   // unix ms; the server acts for idle players afterwards (0 = no timer)
-	TurnTimeoutMs  int64      `json:"turn_timeout_ms"` // length of the turn timer, for the progress ring
-	TurnActors     []string   `json:"turn_actors"`     // who has to act before TurnDeadline
+	MaxAttacks     int        `json:"max_attacks"`        // attack cards per bout, 0 = only the defender's hand limits
+	Phase          string     `json:"phase"`              // "" or PhaseResolving
+	ResolveAt      int64      `json:"resolve_at"`         // unix milliseconds; when the resolving phase ends
+	ResolveOutcome string     `json:"resolve_outcome"`    // OutcomeBito / OutcomeTook while resolving
+	StumpPending   []string   `json:"stump_pending"`      // players who must take their stump before the next bout starts
+	StumpDeadline  int64      `json:"stump_deadline"`     // unix ms; pending stumps are taken automatically afterwards (0 = none)
+	TurnDeadline   int64      `json:"turn_deadline"`      // unix ms; the server acts for idle players afterwards (0 = no timer)
+	TurnTimeoutMs  int64      `json:"turn_timeout_ms"`    // length of the turn timer, for the progress ring
+	NoTimer        bool       `json:"no_timer,omitempty"` // the table was created without a turn timer
+	TurnActors     []string   `json:"turn_actors"`        // who has to act before TurnDeadline
 }
 
 // NewGameState creates an empty waiting room.

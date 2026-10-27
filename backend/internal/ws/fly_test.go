@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"testing"
 	"time"
+
+	"github.com/breezeareasay/durag/backend/internal/game"
 )
 
 func TestQuickPhrasesNeedTenWins(t *testing.T) {
@@ -155,4 +157,27 @@ type stateXP struct {
 		ID string `json:"id"`
 		XP int    `json:"xp"`
 	} `json:"players"`
+}
+
+func TestATableCanBeOpenedWithoutATurnTimer(t *testing.T) {
+	eng := game.NewEngine(game.NewRand(3, 4))
+	eng.TurnTimeout = 30 * time.Second
+	srv, _, _ := newTestServerWithEngine(t, true, eng)
+	a := dial(t, srv)
+	a.send(TypeJoinRoom, JoinPayload{RoomID: "QUIET", Create: true, NoTimer: true, DevUser: &DevUser{ID: "A", Name: "Alice"}})
+	if s := a.state(); !s.NoTimer {
+		t.Fatal("the table was opened with no_timer")
+	}
+	b := dial(t, srv)
+	b.send(TypeJoinRoom, JoinPayload{RoomID: "QUIET", Create: true, DevUser: &DevUser{ID: "B", Name: "Bob"}}) // a second "create" does not flip it
+	b.state()
+	a.state()
+	a.send(TypeReady, ReadyPayload{Ready: true})
+	a.state()
+	b.state()
+	b.send(TypeReady, ReadyPayload{Ready: true})
+	s := a.state()
+	if s.Status != game.StatusPlaying || !s.NoTimer || s.TurnDeadline != 0 || s.TurnTimeoutMs != 0 || len(s.TurnActors) != 0 {
+		t.Fatalf("no timer must be armed: status=%s no_timer=%v deadline=%d ms=%d actors=%v", s.Status, s.NoTimer, s.TurnDeadline, s.TurnTimeoutMs, s.TurnActors)
+	}
 }

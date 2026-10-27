@@ -75,6 +75,7 @@ export interface GameState {
   stump_deadline: number; // unix ms; the server takes pending stumps afterwards
   turn_deadline: number; // unix ms; 0 = no timer
   turn_timeout_ms: number;
+  no_timer?: boolean; // the table plays without a turn timer
   turn_actors: string[]; // who has to act before turn_deadline
 }
 
@@ -120,6 +121,7 @@ export interface JoinPayload {
   room_id: string;
   tg_init_data: string;
   create?: boolean;
+  no_timer?: boolean; // with create: no turn timer at this table
   dev_user?: DevUser;
 }
 

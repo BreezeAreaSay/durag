@@ -2003,3 +2003,30 @@ body.fx-shake--firecracker {
 .chip--off {
   opacity: 0.55;
 }
+
+/* the "no timer" option under the create button */
+.lobby__option {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 10px;
+  align-items: center;
+  margin-top: 8px;
+  font-family: var(--mono);
+  font-size: 13px;
+  cursor: pointer;
+}
+.lobby__option input {
+  width: 20px;
+  height: 20px;
+  accent-color: var(--acid);
+  grid-row: span 2;
+}
+.lobby__option small {
+  color: var(--grey);
+  font-size: 11px;
+}
+.chip--small {
+  margin-left: 8px;
+  font-size: 10px;
+  vertical-align: middle;
+}

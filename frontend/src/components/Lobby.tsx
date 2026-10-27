@@ -40,15 +40,30 @@ export function Lobby({ prefillCode }: Props) {
   const commitName = () => {
     if (identity.kind === 'dev' && name.trim() && name.trim() !== identity.name) setDevName(name);
   };
+  const [noTimer, setNoTimerState] = useState(() => {
+    try {
+      return localStorage.getItem('durag.noTimer') === '1';
+    } catch {
+      return false;
+    }
+  });
+  const setNoTimer = (v: boolean) => {
+    setNoTimerState(v);
+    try {
+      localStorage.setItem('durag.noTimer', v ? '1' : '0');
+    } catch {
+      /* private mode */
+    }
+  };
   const create = () => {
     commitName();
-    join(randomRoomCode(), true);
+    join(randomRoomCode(), true, { noTimer });
   };
   const joinByCode = (e: FormEvent) => {
     e.preventDefault();
     if (!code.trim()) return;
     commitName();
-    join(code, true);
+    join(code, true, { noTimer });
   };
   const disabled = connection !== 'open' || (needsName && !name.trim());
   const telegramOnly = identity.kind === 'dev' && config !== null && !config.dev_auth;
@@ -134,6 +149,11 @@ export function Lobby({ prefillCode }: Props) {
       <Button big onClick={create} disabled={disabled}>
         {t('lobby.create')}
       </Button>
+      <label className="lobby__option">
+        <input type="checkbox" checked={noTimer} onChange={(e) => setNoTimer(e.target.checked)} />
+        <span>{t('lobby.noTimer')}</span>
+        <small>{t('lobby.noTimerHint')}</small>
+      </label>
 
       <form className="lobby__join" onSubmit={joinByCode}>
         <label className="field">
