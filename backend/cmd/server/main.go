@@ -80,9 +80,15 @@ func main() {
 				logger.Warn("bots: LLM_FREE_ONLY=true drops paid models from LLM_MODEL", "dropped", dropped, "kept", llm.Models)
 			}
 		}
+		for _, m := range strings.Split(cfg.LLMPaidFallback, ",") {
+			if m = strings.TrimSpace(m); m != "" {
+				llm.Paid = append(llm.Paid, m)
+			}
+		}
+		llm.PaidDaily = cfg.LLMPaidDailyCalls
 		llm.Discover = cfg.LLMDiscover && cfg.LLMFreeOnly
 		bots.Brain = llm
-		logger.Info("bots: LLM brain", "models", llm.Models, "base_url", cfg.LLMBaseURL, "free_only", cfg.LLMFreeOnly, "discover", llm.Discover, "moves", cfg.LLMMoves, "role", map[bool]string{true: "moves and lines", false: "lines only, the rules move"}[cfg.LLMMoves])
+		logger.Info("bots: LLM brain", "models", llm.Models, "base_url", cfg.LLMBaseURL, "free_only", cfg.LLMFreeOnly, "discover", llm.Discover, "paid_fallback", llm.Paid, "paid_daily", llm.PaidDaily, "moves", cfg.LLMMoves, "role", map[bool]string{true: "moves and lines", false: "lines only, the rules move"}[cfg.LLMMoves])
 		go func() { // the catalog's free models, then one request so the logs show whether the key works
 			refresh := func() {
 				rctx, cancel := context.WithTimeout(ctx, 20*time.Second)

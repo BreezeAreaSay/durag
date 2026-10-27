@@ -42,7 +42,16 @@ type LLM struct {
 	// bots without a model.
 	Discover bool
 
+	// Paid lists the paid models to fall back on when every free model is
+	// rate-limited; PaidDaily caps how many paid calls a day may be spent
+	// (a few cents), 0 = no paid fallback.
+	Paid      []string
+	PaidDaily int
+
 	mu          sync.Mutex
+	paidDay     int
+	paidUsed    int
+	paidCalls   int
 	pausedUntil time.Time
 	pauseReason string
 	discovered  []string
@@ -72,6 +81,12 @@ type Status struct {
 	// Cooling lists models skipped for a while after an upstream rate limit,
 	// a 404/5xx or a timeout (the others are tried instead).
 	Cooling []string `json:"cooling,omitempty"`
+	// Paid is the fallback list, PaidToday how many paid calls went out today
+	// of PaidDaily, PaidCalls the lifetime count.
+	Paid      []string `json:"paid,omitempty"`
+	PaidToday int      `json:"paid_today"`
+	PaidDaily int      `json:"paid_daily"`
+	PaidCalls int      `json:"paid_calls"`
 }
 
 // Status implements monitoring.
@@ -92,7 +107,46 @@ func (l *LLM) Status() Status {
 		LastError:   l.lastError,
 		LastModel:   l.lastModel,
 		LastOK:      l.lastOK,
+		Paid:        append([]string{}, l.Paid...),
+		PaidToday:   l.paidTodayLocked(now),
+		PaidDaily:   l.PaidDaily,
+		PaidCalls:   l.paidCalls,
 	}
+}
+
+func dayKey(now time.Time) int { return now.UTC().Year()*400 + now.UTC().YearDay() }
+
+func (l *LLM) paidTodayLocked(now time.Time) int {
+	if l.paidDay != dayKey(now) {
+		return 0
+	}
+	return l.paidUsed
+}
+
+// paidReady lists the paid fallback models when the day's budget allows
+// one more call, and books that call.
+func (l *LLM) paidReady(now time.Time) []string {
+	if len(l.Paid) == 0 || l.PaidDaily <= 0 {
+		return nil
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.paidDay != dayKey(now) {
+		l.paidDay, l.paidUsed = dayKey(now), 0
+	}
+	if l.paidUsed >= l.PaidDaily {
+		return nil
+	}
+	l.paidUsed++
+	l.paidCalls++
+	return l.readyLocked(l.Paid, now)
+}
+
+// paidOff spends the rest of the day's paid budget: the balance is empty.
+func (l *LLM) paidOff(now time.Time) {
+	l.mu.Lock()
+	l.paidDay, l.paidUsed = dayKey(now), l.PaidDaily
+	l.mu.Unlock()
 }
 
 // candidates returns the models to try in order: the configured ones, then
@@ -239,6 +293,10 @@ func (l *LLM) coolingLocked(now time.Time) []string {
 func (l *LLM) ready(models []string, now time.Time) []string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	return l.readyLocked(models, now)
+}
+
+func (l *LLM) readyLocked(models []string, now time.Time) []string {
 	var out []string
 	for _, m := range models {
 		if until, ok := l.cooling[m]; !ok || !until.After(now) {
@@ -363,16 +421,24 @@ func (l *LLM) Talk(ctx context.Context, in Context, move game.Move) (Line, error
 }
 
 // query runs the model list for a move (talk == nil) or for a line about a
-// move already made (talk != nil).
+// move already made (talk != nil): the free models first and, when they are
+// all rate-limited (the brain is paused) or fail, the paid fallback within
+// its daily budget.
 func (l *LLM) query(ctx context.Context, in Context, talk *game.Move) (Decision, error) {
-	if paused, why := l.Paused(time.Now()); paused {
+	now := time.Now()
+	paused, why := l.Paused(now)
+	var models []string
+	if !paused {
+		models = l.candidates()
+		if len(models) == 0 {
+			models = []string{FreeRouter}
+		}
+		models = l.ready(models, now)
+	}
+	paid := l.paidReady(now)
+	if paused && len(paid) == 0 {
 		return Decision{}, fmt.Errorf("%w: %s", ErrPaused, why)
 	}
-	models := l.candidates()
-	if len(models) == 0 {
-		models = []string{FreeRouter}
-	}
-	models = l.ready(models, time.Now())
 	l.mu.Lock()
 	l.calls++
 	l.mu.Unlock()
@@ -382,6 +448,28 @@ func (l *LLM) query(ctx context.Context, in Context, talk *game.Move) (Decision,
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	var lastErr error
+	if len(models) > 0 {
+		d, err := l.run(ctx, models, in, talk, false)
+		if err == nil {
+			return d, nil
+		}
+		lastErr = err
+	}
+	if len(paid) > 0 && ctx.Err() == nil {
+		d, err := l.run(ctx, paid, in, talk, true)
+		if err == nil {
+			return d, nil
+		}
+		lastErr = err
+	}
+	return Decision{}, l.noteFailure(lastErr)
+}
+
+// run tries the models in order. On the free list an account-wide 429
+// pauses the brain and stops the run (the paid fallback may follow); on the
+// paid list a 402 closes the day's paid budget instead.
+func (l *LLM) run(ctx context.Context, models []string, in Context, talk *game.Move, paid bool) (Decision, error) {
 	var lastErr error
 	for _, model := range models {
 		opts := askOptions{jsonMode: true, noThink: true, talk: talk}
@@ -403,15 +491,18 @@ func (l *LLM) query(ctx context.Context, in Context, talk *game.Move) (Decision,
 				opts.noThink = false
 				d, err = l.ask(ctx, model, in, opts)
 				continue
+			case he.status == http.StatusPaymentRequired && paid:
+				l.paidOff(time.Now()) // the balance is empty: no more paid calls today
+				return Decision{}, err
 			case he.status == http.StatusPaymentRequired:
 				l.pause(pauseAfterNoCredits, "no credits (HTTP 402)")
-				return Decision{}, l.noteFailure(err)
-			case he.status == http.StatusTooManyRequests && isUpstreamLimit(he.body):
+				return Decision{}, err
+			case he.status == http.StatusTooManyRequests && (paid || isUpstreamLimit(he.body)):
 				// one model's provider is saturated: rest it, the next model may answer
 				l.coolDown(model, modelCooldown)
 			case he.status == http.StatusTooManyRequests:
 				l.pause(pauseForRateLimit(he.body, time.Now()), "rate limited (HTTP 429)")
-				return Decision{}, l.noteFailure(err)
+				return Decision{}, err
 			case he.status == http.StatusNotFound || he.status == http.StatusBadRequest:
 				l.coolDown(model, modelCooldownLong) // the id is gone or this model rejects our request
 			case he.status >= 500:
@@ -429,11 +520,11 @@ func (l *LLM) query(ctx context.Context, in Context, talk *game.Move) (Decision,
 		}
 		lastErr = err
 		if ctx.Err() != nil {
-			l.coolDown(model, modelCooldown)      // too slow for a move: let the others go first next time
-			return Decision{}, l.noteFailure(err) // out of time: the rules take over
+			l.coolDown(model, modelCooldown) // too slow for a move: let the others go first next time
+			return Decision{}, err           // out of time: the rules take over
 		}
 	}
-	return Decision{}, l.noteFailure(lastErr)
+	return Decision{}, lastErr
 }
 
 func (l *LLM) noteFailure(err error) error {

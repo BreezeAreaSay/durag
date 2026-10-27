@@ -724,3 +724,43 @@ func TestTrimSayCutsAtASentenceNeverInAWord(t *testing.T) {
 		t.Fatalf("no sentence end: cut at a space: %q", got)
 	}
 }
+
+func TestPaidFallbackAnswersWhenTheFreeModelsAreLimited(t *testing.T) {
+	in := sampleContext(t)
+	var served []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req chatRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		served = append(served, req.Model)
+		if strings.HasSuffix(req.Model, ":free") {
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"error":{"message":"Rate limit exceeded: free-models-per-day"}}`))
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"model":   req.Model,
+			"choices": []map[string]any{{"message": map[string]any{"role": "assistant", "content": `{"say": "Платно, но сказал"}`}}},
+		})
+	}))
+	defer srv.Close()
+	l := NewLLM(srv.URL, "k", "qwen/qwen3:free", 2*time.Second)
+	l.Paid = []string{"deepseek/deepseek-chat"}
+	l.PaidDaily = 2
+	line, err := l.Talk(context.Background(), in, in.Moves[0])
+	if err != nil || line.Say != "Платно, но сказал" || line.Model != "deepseek/deepseek-chat" {
+		t.Fatalf("paid fallback: %+v %v", line, err)
+	}
+	if paused, _ := l.Paused(time.Now()); !paused {
+		t.Fatal("the free side is paused after the daily limit")
+	}
+	// the brain is paused: the second call goes straight to the paid model, the third hits the daily cap
+	if _, err := l.Talk(context.Background(), in, in.Moves[0]); err != nil {
+		t.Fatalf("second paid call: %v", err)
+	}
+	if _, err := l.Talk(context.Background(), in, in.Moves[0]); !errors.Is(err, ErrPaused) {
+		t.Fatalf("over the paid budget the brain rests: %v", err)
+	}
+	if st := l.Status(); st.PaidToday != 2 || st.PaidCalls != 2 || len(served) != 3 || served[0] != "qwen/qwen3:free" || served[1] != "deepseek/deepseek-chat" || served[2] != "deepseek/deepseek-chat" {
+		t.Fatalf("status %+v served %v", st, served)
+	}
+}

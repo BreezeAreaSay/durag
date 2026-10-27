@@ -51,6 +51,10 @@ type Config struct {
 	// LLMDailyCalls the cap on model calls per day: a free quota lasts longer.
 	LLMTalkShare  float64
 	LLMDailyCalls int
+	// LLMPaidFallback lists paid models to use when the free ones are
+	// rate-limited; LLMPaidDailyCalls caps the paid calls per day.
+	LLMPaidFallback   string
+	LLMPaidDailyCalls int
 }
 
 // LoadDotEnv loads KEY=VALUE pairs from path into the process environment
@@ -145,11 +149,15 @@ func FromEnv() (Config, error) {
 	if c.BotDelayMax, err = time.ParseDuration(getenv("BOT_DELAY_MAX", "2200ms")); err != nil {
 		return c, fmt.Errorf("config: BOT_DELAY_MAX: %w", err)
 	}
-	if c.LLMTalkShare, err = strconv.ParseFloat(getenv("LLM_TALK_SHARE", "0.4"), 64); err != nil || c.LLMTalkShare < 0 || c.LLMTalkShare > 1 {
+	if c.LLMTalkShare, err = strconv.ParseFloat(getenv("LLM_TALK_SHARE", "1"), 64); err != nil || c.LLMTalkShare < 0 || c.LLMTalkShare > 1 {
 		return c, fmt.Errorf("config: LLM_TALK_SHARE must be a number in 0..1")
 	}
-	if c.LLMDailyCalls, err = strconv.Atoi(getenv("LLM_DAILY_CALLS", "300")); err != nil || c.LLMDailyCalls < 0 {
+	if c.LLMDailyCalls, err = strconv.Atoi(getenv("LLM_DAILY_CALLS", "0")); err != nil || c.LLMDailyCalls < 0 {
 		return c, fmt.Errorf("config: LLM_DAILY_CALLS must be a whole number")
+	}
+	c.LLMPaidFallback = getenv("LLM_PAID_FALLBACK", "deepseek/deepseek-chat")
+	if c.LLMPaidDailyCalls, err = strconv.Atoi(getenv("LLM_PAID_DAILY_CALLS", "400")); err != nil || c.LLMPaidDailyCalls < 0 {
+		return c, fmt.Errorf("config: LLM_PAID_DAILY_CALLS must be a whole number")
 	}
 	if c.FlyChance, err = strconv.ParseFloat(getenv("FLY_CHANCE", "0.35"), 64); err != nil || c.FlyChance < 0 || c.FlyChance > 1 {
 		return c, fmt.Errorf("config: FLY_CHANCE must be a number in 0..1")
