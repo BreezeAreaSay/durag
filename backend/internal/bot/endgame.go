@@ -51,7 +51,11 @@ func (h *Heuristic) endgame(in Context) (game.Move, bool) {
 	active := len(s.ActivePlayers())
 	totals := make([]float64, len(in.Moves))
 	counted := 0
-	for sample := 0; sample < EndgameSamples; sample++ {
+	samples := EndgameSamples
+	if in.level() != LevelHard && samples > 2 {
+		samples = (samples + 1) / 2 // the normal level looks at fewer deals
+	}
+	for sample := 0; sample < samples; sample++ {
 		full := h.deal(in, pool)
 		if full == nil {
 			break

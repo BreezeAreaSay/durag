@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Button } from './Button';
 import { Sticker } from './Sticker';
+import { TalkFeed } from './TalkFeed';
 import { useGame } from '../state/GameContext';
 import { useBackButton } from '../telegram/useTelegram';
 import { frameWins } from '../util/progress';
@@ -71,11 +72,6 @@ export function WaitingRoom({ state }: Props) {
           {state.players.map((p) => (
             <li key={p.id} className={`players__item ${p.is_ready ? 'players__item--ready' : ''}`}>
               <Sticker name={p.name} avatarUrl={p.avatar_url} avatar={p.avatar} seed={p.id} wins={frameWins(p)} playerId={p.id} scar={p.scar} />
-              {reactions[p.id]?.text ? (
-                <span className="reaction reaction--text reaction--lobby" key={reactions[p.id]!.nonce}>
-                  <span className="reaction__text">{reactions[p.id]!.text}</span>
-                </span>
-              ) : null}
               <span className="players__name">
                 {p.name}
                 {p.is_bot ? <span className="players__bot">{t('waiting.bot')}</span> : null}
@@ -92,6 +88,7 @@ export function WaitingRoom({ state }: Props) {
             </li>
           ))}
         </ul>
+        <TalkFeed reactions={reactions} players={state.players} />
         {config?.bots !== false && state.players.length < state.max_players ? (
           <div className="players__add">
             <Button variant="paper" onClick={() => addBot(level)}>

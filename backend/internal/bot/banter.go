@@ -21,7 +21,7 @@ import (
 // SpeakEvery is the mean number of a bot's own moves between two lines.
 // Six: a line now and then, not a commentary track; the room cooldown in
 // the hub keeps two bots from talking over each other.
-const SpeakEvery = 6
+const SpeakEvery = 3
 
 const phi = 1.618033988749895
 
@@ -51,7 +51,7 @@ type Event struct {
 func (e Event) Notable() bool {
 	switch e.Kind {
 	case "took":
-		return e.Count >= 3
+		return e.Count >= 2
 	case "transfer", "lonely":
 		return true
 	}

@@ -5,8 +5,8 @@ import type { Player } from '../types/protocol';
 interface Props {
   reactions: Record<string, Reaction>;
   players: Player[];
-  /** y (CSS px) where the feed starts: under the opponents */
-  top: number;
+  /** y (CSS px) where the feed starts: under the opponents; without it the feed sits in the flow */
+  top?: number;
 }
 
 interface Line {
@@ -55,7 +55,7 @@ export function TalkFeed({ reactions, players, top }: Props) {
 
   if (lines.length === 0) return null;
   return (
-    <ol className="talk" aria-live="polite" style={{ top }}>
+    <ol className={`talk ${top === undefined ? 'talk--static' : ''}`} aria-live="polite" style={top === undefined ? undefined : { top }}>
       {lines.map((l) => {
         const p = players.find((x) => x.id === l.playerId);
         return (

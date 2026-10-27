@@ -43,7 +43,7 @@ func (l Level) Blunder() float64 {
 	case LevelHard:
 		return 0
 	}
-	return 0.06
+	return 0.03
 }
 
 // Slip is the chance of any random legal move (a needless take, a pass with

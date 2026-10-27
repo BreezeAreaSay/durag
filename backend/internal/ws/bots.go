@@ -60,7 +60,7 @@ type botRoom struct {
 
 // lineCooldown is the least time between two bot lines in one room, so the
 // people at the table can read one before the next appears.
-const lineCooldown = 9 * time.Second
+const lineCooldown = 4 * time.Second
 
 // mayTalk reserves the floor for a line now, or says no while the last line
 // is still fresh.
@@ -310,7 +310,7 @@ func (h *Hub) botAct(roomID, botID string, version int64) {
 	// With a model at the table it does the talking: on the occasions the
 	// rules would have used a stock line, and on the cadence. Without one
 	// the character's own lines go. The emoji is the rules' either way.
-	if _, talker := h.bots.Brain.(bot.Talker); talker && !h.bots.LLMMoves && (d.Say != "" || in.SpeakDue()) {
+	if _, talker := h.bots.Brain.(bot.Talker); talker && !h.bots.LLMMoves && (d.Say != "" || in.SpeakDue() || in.Event.Notable() || d.Move.Type == game.MoveTake) {
 		if d.Emoji != "" {
 			h.botSayRaw(roomID, botID, "", d.Emoji)
 		}
@@ -529,7 +529,7 @@ func (h *Hub) botSay(roomID, botID, text, emoji string) {
 		replierName = p.Name
 	}
 	line := bot.RetortAs(bot.CharacterOf(replierName), rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64())), speaker.Name, len(speaker.Hand))
-	time.AfterFunc(lineCooldown+time.Duration(rand.Int64N(int64(3*time.Second))), func() {
+	time.AfterFunc(lineCooldown+time.Duration(rand.Int64N(int64(2*time.Second))), func() {
 		select {
 		case <-h.ctx.Done():
 			return
@@ -543,7 +543,7 @@ func (h *Hub) botSay(roomID, botID, text, emoji string) {
 }
 
 // retortChance is how often a bot's line gets an answer from another bot.
-const retortChance = 0.2
+const retortChance = 0.45
 
 func (h *Hub) botSayRaw(roomID, botID, text, emoji string) {
 	raw, err := json.Marshal(pubMessage{Kind: "reaction", Reaction: &ReactionPayload{PlayerID: botID, Emoji: emoji, Text: text, TS: time.Now().UnixMilli()}})

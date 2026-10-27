@@ -230,9 +230,9 @@ func (h *Heuristic) Decide(_ context.Context, in Context) (Decision, error) {
 		in.Plan = ChoosePlan(in.State, in.BotID)
 	}
 	d := Decision{Move: h.pick(in), Plan: in.Plan}
-	// a hard bot searches the endgame: the deck is gone and the memory can
-	// place almost every card
-	if in.level() == LevelHard {
+	// a counting bot searches the endgame: the deck is gone and the memory
+	// can place almost every card (the hard level looks at more deals)
+	if in.level().Counts() {
 		if m, ok := h.endgame(in); ok {
 			d.Move = m
 		}

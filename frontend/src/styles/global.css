@@ -748,10 +748,7 @@ body::after {
   line-height: 1.2;
   color: var(--ink);
   white-space: normal;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+  overflow-wrap: anywhere;
 }
 .players__remove {
   font-family: var(--display);
@@ -1675,6 +1672,12 @@ body.fx-shake--laugh {
 }
 .reaction--lobby .reaction__text {
   font-size: 12px;
+}
+
+/* the same feed in the lobby: in the flow under the list, no overlaps, nothing cut */
+.talk--static {
+  position: static;
+  margin: 8px 0 0;
 }
 
 /* ---- the talk feed: what is said at the table, one line under another ---- */
