@@ -45,8 +45,12 @@ export interface Identity {
   kind: 'telegram' | 'dev';
   initData: string;
   devId: string;
+  /** the id the server knows us by (dev:<id> or the Telegram user id): picks the food avatar */
+  userId: string;
+  /** the nickname for the table, chosen by the person; "" until they pick one */
   name: string;
-  avatarUrl?: string;
+  /** what Telegram calls them: only a suggestion for the name field, never shown at the table */
+  suggested?: string;
 }
 
 export interface GameContextValue {
@@ -105,6 +109,15 @@ export interface GameContextValue {
 const GameContext = createContext<GameContextValue | null>(null);
 
 const DEV_KEY = 'durag.dev';
+const NICK_KEY = 'durag.nick';
+
+function loadNick(): string {
+  try {
+    return localStorage.getItem(NICK_KEY) ?? '';
+  } catch {
+    return '';
+  }
+}
 const ROOM_KEY = 'durag.room';
 
 function wsUrl(): string {
@@ -160,6 +173,7 @@ function loadDev(): { id: string; name: string } {
 export function GameProvider({ children }: { children: ReactNode }) {
   const tg = useTelegram();
   const [devUser, setDevUser] = useState(loadDev);
+  const [nick, setNick] = useState(loadNick);
   const [connection, setConnection] = useState<Connection>('connecting');
   const [config, setConfig] = useState<ClientConfig | null>(null);
   const [state, setState] = useState<GameState | null>(null);
@@ -255,9 +269,9 @@ export function GameProvider({ children }: { children: ReactNode }) {
   const identity = useMemo<Identity>(
     () =>
       tg.isTelegram
-        ? { kind: 'telegram', initData: tg.initData, devId: '', name: tg.user?.first_name ?? '', avatarUrl: tg.user?.photo_url }
-        : { kind: 'dev', initData: '', devId: devUser.id, name: devUser.name },
-    [tg, devUser],
+        ? { kind: 'telegram', initData: tg.initData, devId: '', userId: tg.user ? String(tg.user.id) : '', name: nick, suggested: tg.user?.first_name ?? '' }
+        : { kind: 'dev', initData: '', devId: devUser.id, userId: `dev:${devUser.id}`, name: nick || devUser.name },
+    [tg, devUser, nick],
   );
   const identityRef = useRef(identity);
   identityRef.current = identity;
@@ -301,6 +315,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
         tg_init_data: id.initData,
         create: target.create,
         no_timer: target.create && target.noTimer ? true : undefined,
+        nickname: id.name || undefined,
         dev_user: id.kind === 'dev' ? { id: id.devId, name: id.name || `Guest ${id.devId.slice(0, 4)}` } : undefined,
       },
     });
@@ -433,8 +448,15 @@ export function GameProvider({ children }: { children: ReactNode }) {
   }, [send]);
 
   const setDevName = useCallback((name: string) => {
+    const clean = name.trim().slice(0, 20);
+    setNick(clean);
+    try {
+      localStorage.setItem(NICK_KEY, clean);
+    } catch {
+      // ignore
+    }
     setDevUser((prev) => {
-      const next = { ...prev, name: name.trim().slice(0, 32) };
+      const next = { ...prev, name: clean };
       try {
         localStorage.setItem(DEV_KEY, JSON.stringify(next));
       } catch {

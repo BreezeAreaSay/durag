@@ -181,3 +181,27 @@ func TestATableCanBeOpenedWithoutATurnTimer(t *testing.T) {
 		t.Fatalf("no timer must be armed: status=%s no_timer=%v deadline=%d ms=%d actors=%v", s.Status, s.NoTimer, s.TurnDeadline, s.TurnTimeoutMs, s.TurnActors)
 	}
 }
+
+func TestEverybodyPicksANicknameAndGetsADish(t *testing.T) {
+	srv, _ := newTestServer(t, true)
+	a := dial(t, srv)
+	a.send(TypeJoinRoom, JoinPayload{RoomID: "NICK", Create: true, Nickname: "  Жора_из 5-й ", DevUser: &DevUser{ID: "A", Name: "Alice", AvatarURL: "https://t.me/i/userpic/x.jpg"}})
+	s := a.state()
+	me := s.Player("dev:A")
+	if me.Name != "Жора_из 5-й" || me.AvatarURL != "" || me.Avatar == "" || me.Avatar != foodAvatar("dev:A") {
+		t.Fatalf("name %q avatar_url %q avatar %q", me.Name, me.AvatarURL, me.Avatar)
+	}
+	// a dev identity without a usable nickname falls back on its own name (scripts, tests)
+	b := dial(t, srv)
+	b.send(TypeJoinRoom, JoinPayload{RoomID: "NICK", Nickname: "x", DevUser: &DevUser{ID: "B", Name: "Bob"}})
+	if s := b.state(); s.Player("dev:B").Name != "Bob" {
+		t.Fatalf("fallback name %q", s.Player("dev:B").Name)
+	}
+	if nickname("<script>alert(1)</script>") != "scriptalert1script" || nickname("a") != "" || len([]rune(nickname("очень длинное имя которое не влезает никуда"))) != 20 {
+		t.Fatal("nickname cleaning")
+	}
+	// the dish is stable for an id and spread over ids
+	if foodAvatar("dev:A") != foodAvatar("dev:A") || foodAvatar("1") == foodAvatar("2") && foodAvatar("2") == foodAvatar("3") {
+		t.Fatal("food avatar")
+	}
+}

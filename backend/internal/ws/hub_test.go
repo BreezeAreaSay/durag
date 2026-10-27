@@ -267,9 +267,14 @@ func telegramInitData(t *testing.T, userID int64, firstName string, token string
 func TestTelegramLogin(t *testing.T) {
 	srv, _ := newTestServer(t, false)
 	c := dial(t, srv)
+	// a Telegram login without a nickname is refused: the Telegram name never reaches the table
 	c.send(TypeJoinRoom, JoinPayload{RoomID: "TG", Create: true, TgInitData: telegramInitData(t, 279058397, "Влад", testToken)})
+	if e := c.errorPayload(); e.Code != "NICKNAME_REQUIRED" {
+		t.Fatalf("got %+v", e)
+	}
+	c.send(TypeJoinRoom, JoinPayload{RoomID: "TG", Create: true, Nickname: "Владос", TgInitData: telegramInitData(t, 279058397, "Влад", testToken)})
 	s := c.state()
-	if len(s.Players) != 1 || s.Players[0].ID != "279058397" || s.Players[0].Name != "Влад" || s.ViewerID != "279058397" {
+	if len(s.Players) != 1 || s.Players[0].ID != "279058397" || s.Players[0].Name != "Владос" || s.Players[0].Avatar == "" || s.ViewerID != "279058397" {
 		t.Fatalf("telegram identity: %+v", s.Players)
 	}
 	bad := dial(t, srv)

@@ -49,6 +49,7 @@ type JoinPayload struct {
 	TgInitData string   `json:"tg_init_data"`
 	Create     bool     `json:"create,omitempty"`   // create the room if it does not exist
 	NoTimer    bool     `json:"no_timer,omitempty"` // with Create: the new table plays without a turn timer
+	Nickname   string   `json:"nickname,omitempty"` // the name at the table: everybody picks one, Telegram names are never shown
 	DevUser    *DevUser `json:"dev_user,omitempty"` // only honoured when ALLOW_DEV_AUTH=true
 }
 

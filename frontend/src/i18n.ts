@@ -4,6 +4,10 @@ const dict = {
   ru: {
     tagline: 'Дурак без лимита. Скрытый козырь. Джокеры.',
     'lobby.yourName': 'Твоё имя',
+    'lobby.nickname': 'Ник за столом',
+    'lobby.nicknameHint': 'От 2 до 20 знаков. Имя и фото из Telegram за стол не идут: вместо них еда',
+    'lobby.nicknameOk': 'Так тебя и будут звать за столом. Аватарка — еда, Telegram не показываем',
+    'err.NICKNAME_REQUIRED': 'Сначала придумай ник: от 2 до 20 букв или цифр',
     'lobby.namePlaceholder': 'Как тебя звать?',
     'lobby.create': 'Создать стол',
     'lobby.join': 'Войти',
@@ -224,6 +228,10 @@ const dict = {
   en: {
     tagline: 'Unlimited Durak. Hidden trump. Jokers.',
     'lobby.yourName': 'Your name',
+    'lobby.nickname': 'Nickname at the table',
+    'lobby.nicknameHint': '2 to 20 characters. Your Telegram name and photo stay out: a dish stands in',
+    'lobby.nicknameOk': 'That is your name at the table. The avatar is a dish, Telegram stays hidden',
+    'err.NICKNAME_REQUIRED': 'Pick a nickname first: 2 to 20 letters or digits',
     'lobby.namePlaceholder': 'What do they call you?',
     'lobby.create': 'Create table',
     'lobby.join': 'Join',

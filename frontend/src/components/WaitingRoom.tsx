@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Button } from './Button';
 import { Sticker } from './Sticker';
 import { TalkFeed } from './TalkFeed';
+import { LobbyDeck } from './LobbyDeck';
 import { useGame } from '../state/GameContext';
 import { useBackButton } from '../telegram/useTelegram';
 import { frameWins } from '../util/progress';
@@ -90,6 +91,7 @@ export function WaitingRoom({ state }: Props) {
           ))}
         </ul>
         <TalkFeed reactions={reactions} players={state.players} />
+        <LobbyDeck />
         {config?.bots !== false && state.players.length < state.max_players ? (
           <div className="players__add">
             <Button variant="paper" onClick={() => addBot(level)}>

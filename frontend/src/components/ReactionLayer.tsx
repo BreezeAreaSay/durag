@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type Dispatch, type RefObject, type SetStateAction } from 'react';
 import type { Reaction } from '../state/GameContext';
 import { SMOKE_EMOJI } from '../util/emoji';
+import { sound } from '../util/audio';
+import { haptic } from '../telegram/useTelegram';
 
 /** An emoji that starts from a screen point inside the host (a card's gag). */
 export interface Flight {
@@ -31,6 +33,14 @@ interface Smoke {
   y: number;
 }
 
+interface Ash {
+  key: string;
+  x: number;
+  y: number;
+}
+
+const ASH_MS = 25000;
+
 const FLIGHT_MS = 1100;
 const SMOKE_MS = 6000;
 
@@ -44,6 +54,7 @@ const SMOKE_MS = 6000;
 export function ReactionLayer({ reactions, extra = [], host, target }: Props) {
   const [flights, setFlights] = useState<Fly[]>([]);
   const [smokes, setSmokes] = useState<Smoke[]>([]);
+  const [ashes, setAshes] = useState<Ash[]>([]);
   const seen = useRef(new Map<string, number>());
   const targetRef = useRef(target);
   targetRef.current = target;
@@ -111,7 +122,16 @@ export function ReactionLayer({ reactions, extra = [], host, target }: Props) {
     later(fresh.map((f) => f.key), FLIGHT_MS + 100, setFlights);
   }, [extra, later]);
 
-  if (flights.length === 0 && smokes.length === 0) return null;
+  // a tap on the cigarette flicks the ash: a small grey heap stays on the table for a while
+  const flick = (s: Smoke) => {
+    const key = `${s.key}:${Date.now()}`;
+    setAshes((prev) => [...prev.slice(-5), { key, x: s.x + 14 + (Math.random() - 0.5) * 20, y: s.y + 26 + Math.random() * 12 }]);
+    later([key], ASH_MS, setAshes);
+    sound.snap();
+    haptic('light');
+  };
+
+  if (flights.length === 0 && smokes.length === 0 && ashes.length === 0) return null;
   return (
     <div className="fx-layer" aria-hidden="true">
       {flights.map((f) => (
@@ -119,9 +139,12 @@ export function ReactionLayer({ reactions, extra = [], host, target }: Props) {
           <span className="fly__y">{f.emoji}</span>
         </span>
       ))}
+      {ashes.map((a) => (
+        <i key={a.key} className="ash" style={{ left: a.x, top: a.y }} />
+      ))}
       {smokes.map((s) => (
         <span key={s.key} className="smoke" style={{ left: s.x, top: s.y }}>
-          <i className="smoke__cig" />
+          <i className="smoke__cig" onPointerDown={() => flick(s)} />
           <i className="smoke__puff" />
           <i className="smoke__puff" />
           <i className="smoke__puff" />

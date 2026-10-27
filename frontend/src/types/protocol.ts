@@ -122,6 +122,7 @@ export interface JoinPayload {
   tg_init_data: string;
   create?: boolean;
   no_timer?: boolean; // with create: no turn timer at this table
+  nickname?: string; // the name for the table: everybody picks one
   dev_user?: DevUser;
 }
 

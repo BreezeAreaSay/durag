@@ -232,14 +232,29 @@ func (h *Hub) join(c *Client, raw json.RawMessage) {
 	if perr != nil {
 		h.log.Warn("ws: profile lookup failed", "player", id.ID, "err", perr)
 	}
+	// the name at the table is the one typed in the lobby; a dev identity
+	// may fall back on its own name (tests, scripts), a Telegram one never
+	// shows its Telegram name or photo
+	name := nickname(p.Nickname)
+	if name == "" && strings.HasPrefix(id.ID, "dev:") {
+		name = nickname(id.Name)
+	}
+	if name == "" {
+		c.sendError("NICKNAME_REQUIRED", "pick a name for the table: 2 to 20 letters or digits", "")
+		h.removeFromRoom(c)
+		c.setRoom("", "")
+		return
+	}
 	state, err := h.store.Update(h.ctx, roomID, p.Create, func(s *game.GameState) error {
 		if p.Create && len(s.Players) == 0 && s.Status == game.StatusWaiting {
 			s.NoTimer = p.NoTimer // the table's own setting, chosen by whoever opens it
 		}
-		if err := h.engine.Join(s, id.ID, id.Name, id.AvatarURL); err != nil {
+		if err := h.engine.Join(s, id.ID, name, ""); err != nil {
 			return err
 		}
 		if pl := s.Player(id.ID); pl != nil {
+			pl.AvatarURL = ""
+			pl.Avatar = foodAvatar(id.ID)
 			pl.XP = stats.XP
 			pl.Admin = h.isAdmin(id.ID)
 			pl.Wins = wins

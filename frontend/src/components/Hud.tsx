@@ -208,7 +208,7 @@ export function Hud({ state, handTop, reactions, onAvatarClick, onTopHeight, han
       {me ? (
         <div className="me me__avatar" style={{ top: handMiddle - 20 }}>
           <button type="button" className="avatar-btn" onClick={() => onAvatarClick(me.id)} aria-label={me.name}>
-            <Sticker name={me.name} avatarUrl={me.avatar_url} seed={me.id} size={34} wins={frameWins(me)} playerId={me.id} scar={me.scar} />
+            <Sticker name={me.name} avatarUrl={me.avatar_url} avatar={me.avatar} seed={me.id} size={34} wins={frameWins(me)} playerId={me.id} scar={me.scar} />
             {timerFor(me.id) ? <TimerRing deadline={timerFor(me.id)} timeoutMs={state.turn_timeout_ms} size={58} /> : null}
           </button>
         </div>

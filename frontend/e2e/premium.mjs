@@ -181,7 +181,9 @@ try {
   const winsButtons = await p.locator('.emoji-panel__row--wins .emoji-panel__btn--fx').count();
   const winsLocked = await p.locator('.emoji-panel__row--wins .emoji-panel__btn--locked').count();
   log(`page 2: wins buttons=${winsButtons} locked=${winsLocked} hint="${await p.locator('.emoji-panel__hint').textContent()}"`);
-  if (winsButtons !== 5 || winsLocked !== 5) problems.push(`page 2 must show five locked wins reactions, got ${winsButtons}/${winsLocked}`);
+  const myWins = Number((((await p.locator('.emoji-panel__hint').textContent()) ?? '').match(/Побед (\d+)/) ?? [])[1] ?? 0);
+  const expectWinsLocked = [5, 10, 15, 20, 30].filter((n) => n > myWins).length;
+  if (winsButtons !== 5 || winsLocked !== expectWinsLocked) problems.push(`page 2 must show ${expectWinsLocked} locked wins reactions at ${myWins} wins, got ${winsButtons}/${winsLocked}`);
   await p.screenshot({ path: join(here, 'shot-premium-page2.png') });
   await p.click('.emoji-panel__dot >> nth=0');
   await p.click('.emoji-panel__btn--fx:has-text("🏆")');

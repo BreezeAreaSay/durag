@@ -1,5 +1,6 @@
 import { Button } from './Button';
 import { Sticker } from './Sticker';
+import { foodAvatar } from '../util/avatar';
 import { useGame } from '../state/GameContext';
 import { t, type Key } from '../i18n';
 import { SKINS, TIER_MAX, frameWins, isUnlocked, skinProgress, tierOf, toNextTier, type SkinId } from '../util/progress';
@@ -54,7 +55,7 @@ export function SkinsScreen({ onClose }: Props) {
 
         <h2 className="skins__h">{t('skins.frames')}</h2>
         <div className="frames">
-          <Sticker name={identity.name || '?'} avatarUrl={identity.avatarUrl} size={56} wins={wins} />
+          <Sticker name={identity.name || '?'} avatar={foodAvatar(identity.userId)} size={56} wins={wins} />
           <div className="skin__info">
             <small className="muted">{t('skins.frameHint')}</small>
             <b>{tierOf(wins) >= TIER_MAX ? t('skins.maxFrame') : t('skins.nextFrame', { n: next })}</b>

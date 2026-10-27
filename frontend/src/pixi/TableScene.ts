@@ -129,6 +129,11 @@ export class TableScene {
   /** where each card was last placed: table arrivals trigger the gags */
   private kinds = new Map<string, Placement['kind']>();
   private lastTap = 0;
+  /** fidgets: a thumb rubbing the trump plate, a swipe that blows on the lamp */
+  private rub: { x: number; dist: number; turns: number; dir: number } | null = null;
+  private rubbedAt = -Infinity;
+  private blow: { x: number; y: number; at: number } | null = null;
+  private tremble = 0;
   /** the lamp over the table: shadows, the light spot, the swing after a fist */
   private lamp = new Lamp();
   private shadowAcc = 0;
@@ -231,6 +236,7 @@ export class TableScene {
     // iOS / Telegram cancel a touch when a system gesture takes over: never leave a card stuck in the air
     stage.on('pointercancel', this.onPointerCancel);
     stage.on('pointertap', this.onStageTap);
+    stage.on('pointerdown', this.onStageDown);
     document.addEventListener('visibilitychange', this.onVisibility);
     window.addEventListener(FX_EVENT, this.onFx);
     this.layers.light.visible = !this.lite;
@@ -266,6 +272,7 @@ export class TableScene {
       if (this.glowAcc >= GLOW_STEP_MS) {
         this.glowAcc = 0;
         for (const view of this.views.values()) view.setGlowPhase(this.time / 1000);
+        this.trembleLastCard();
       }
       this.expirePending();
     });
@@ -902,7 +909,9 @@ export class TableScene {
     this.cone.position.set(l.x * m.width, l.y * m.height);
     // the colour of the dark: warmer as the evening goes on, a flare on a win
     this.warmFlash = Math.max(0, this.warmFlash - SPOT_STEP_MS / 1800);
-    const warm = Math.min(1, this.warmth * 0.3 + this.warmFlash);
+    const hour = new Date().getHours();
+    const late = hour >= 23 || hour < 6 ? 0.35 : 0; // late evening: the lamp is yellower, the room cosier
+    const warm = Math.min(1, late + this.warmth * 0.3 + this.warmFlash);
     this.cone.tint = dark ? TableScene.mix(0x000000, 0x2a1400, warm * 0.6) : TableScene.mix(0x2a1c0c, 0x4a2a06, warm);
     // a cloud over the window now and then: the lamp seems to matter a little more for ten seconds
     let cloud = 0;
@@ -987,6 +996,88 @@ export class TableScene {
     if (e.global.y < m.tableTop || e.global.y > m.handTop) return;
     this.handlers.onSlam?.();
   };
+
+  /** a finger lands on the bare table: maybe the start of a blow on the lamp */
+  private onStageDown = (e: FederatedPointerEvent): void => {
+    if (e.target !== this.app.stage) return;
+    const m = this.metrics;
+    if (e.global.y < m.tableTop || e.global.y > m.handTop) return;
+    this.blow = { x: e.global.x, y: e.global.y, at: performance.now() };
+  };
+
+  /** a quick swipe up across the table: the lamp swings and gutters, as if somebody blew on it */
+  private endBlow(e: FederatedPointerEvent): void {
+    const b = this.blow;
+    this.blow = null;
+    if (!b || this.lite) return;
+    const dt = performance.now() - b.at;
+    const dy = e.global.y - b.y;
+    if (dt > 450 || dy > -70 || Math.abs(e.global.x - b.x) > Math.abs(dy)) return;
+    this.lamp.kick(Math.min(2.2, 1 + -dy / 160));
+    this.lamp.flicker();
+    sound.whoosh();
+  }
+
+  /** the thumb goes back and forth over the trump plate: after a few passes it gleams for luck */
+  private rubMove(x: number): void {
+    const r = this.rub;
+    if (!r) return;
+    const dx = x - r.x;
+    if (Math.abs(dx) < 3) return;
+    const dir = Math.sign(dx);
+    if (r.dir !== 0 && dir !== r.dir) r.turns++;
+    r.dir = dir;
+    r.dist += Math.abs(dx);
+    r.x = x;
+    if (r.turns >= 4 && r.dist > 90 && this.time - this.rubbedAt > 2500) {
+      this.rubbedAt = this.time;
+      r.turns = 0;
+      r.dist = 0;
+      this.gleam();
+    }
+  }
+
+  /** a band of light sweeps across the trump plate, with a squeak */
+  private gleam(): void {
+    const plate = this.trumpPlate;
+    if (!plate.visible) return;
+    sound.squeak();
+    const w = this.metrics.cardW * 0.82;
+    const h = this.metrics.cardH * 0.82;
+    const band = new Graphics().poly([-w * 0.12, -h / 2, w * 0.12, -h / 2, -w * 0.02, h / 2, -w * 0.26, h / 2]).fill({ color: 0xffffff, alpha: 0.8 });
+    const mask = new Graphics().rect(-w / 2, -h / 2, w, h).fill({ color: 0xffffff });
+    band.mask = mask;
+    plate.addChild(mask, band);
+    let t = 0;
+    this.effects.push((dt) => {
+      if (band.destroyed) return false; // the plate was rebuilt under the gleam
+      t += dt;
+      const u = t / 520;
+      band.position.x = -w * 0.7 + u * w * 1.5;
+      band.alpha = Math.sin(Math.min(1, u) * Math.PI);
+      if (u >= 1) {
+        plate.removeChild(mask, band);
+        mask.destroy();
+        band.destroy();
+        return false;
+      }
+      return true;
+    });
+  }
+
+  /** the last card in the hand shakes a little: nerves */
+  private trembleLastCard(): void {
+    const m = this.model;
+    if (!m || this.lite || this.drag || m.hand.length !== 1 || !m.interactive) return;
+    const card = m.hand[0]!;
+    const view = this.views.get(card.id);
+    if (!view || view.root.destroyed || this.tweener.has(view.root) || view.root.parent !== this.layers.hand) return;
+    const home = jitterSlot(handSlots(1, this.metrics)[0]!, card.id, 0.3);
+    this.tremble += 1;
+    const k = this.tremble;
+    view.root.position.set(home.x + Math.sin(k * 1.7) * 0.9, home.y + Math.cos(k * 2.3) * 0.6);
+    view.root.rotation = home.rotation + Math.sin(k * 1.1) * 0.012;
+  }
 
   private reparent(view: CardView, layer: Container): void {
     // All layers share the world transform, so coordinates carry over 1:1.
@@ -1171,6 +1262,12 @@ export class TableScene {
     glyph.label = 'glyph';
     glyph.position.set(0, h * 0.1);
     this.trumpPlate.addChild(shadow, plate, label, glyph);
+    this.trumpPlate.eventMode = 'static';
+    this.trumpPlate.cursor = 'pointer';
+    this.trumpPlate.removeAllListeners('pointerdown');
+    this.trumpPlate.on('pointerdown', (e: FederatedPointerEvent) => {
+      this.rub = { x: e.global.x, dist: 0, turns: 0, dir: 0 };
+    });
     this.trumpPlate.position.set(slot.x + m.cardW * 0.12, slot.y + m.cardH * 0.04);
     this.trumpPlate.rotation = 0.08;
     this.trumpPlateSuit = '';
@@ -1186,6 +1283,7 @@ export class TableScene {
       t += dt;
       const u = t / 320;
       cards.forEach(({ c, y }, i) => {
+        if (c.destroyed) return;
         c.position.y = u >= 1 ? y : y - Math.abs(Math.sin(u * Math.PI * 3 + i)) * 4 * (1 - u);
       });
       return u < 1;
@@ -1281,6 +1379,7 @@ export class TableScene {
 
   private onPointerMove = (e: FederatedPointerEvent): void => {
     const g = this.world.toLocal(e.global); // the head moves: pointer in world space
+    if (this.rub) this.rubMove(e.global.x);
     const d = this.drag;
     if (!d) return;
     if (!d.moved && Math.hypot(g.x - d.startX, g.y - d.startY) > 7) d.moved = true;
@@ -1289,6 +1388,8 @@ export class TableScene {
   };
 
   private onPointerUp = (e: FederatedPointerEvent): void => {
+    this.rub = null;
+    this.endBlow(e);
     const d = this.drag;
     if (!d) return;
     this.drag = null;

@@ -2030,3 +2030,59 @@ body.fx-shake--firecracker {
   font-size: 10px;
   vertical-align: middle;
 }
+
+/* a heap of ash flicked off a cigarette */
+.ash {
+  position: absolute;
+  width: 14px;
+  height: 6px;
+  border-radius: 50% 50% 40% 40%;
+  background: radial-gradient(ellipse at 50% 30%, #9a9a94, #5e5e58 70%, transparent 72%);
+  opacity: 0.85;
+  pointer-events: none;
+  animation: ash-settle 300ms steps(3) both, reaction-fade 1500ms 23500ms both;
+}
+@keyframes ash-settle {
+  from {
+    transform: translateY(-14px) scale(0.6);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 0.85;
+  }
+}
+.smoke__cig {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+/* the deck to fiddle with in the waiting room */
+.lobby-deck {
+  position: relative;
+  height: 110px;
+  margin: 18px 0 6px;
+  touch-action: none;
+  cursor: grab;
+  user-select: none;
+}
+.lobby-deck--held {
+  cursor: grabbing;
+}
+.lobby-deck__card {
+  position: absolute;
+  left: calc(50% - 29px);
+  top: 10px;
+  transition: transform 420ms cubic-bezier(0.2, 1.4, 0.3, 1);
+}
+.lobby-deck--held .lobby-deck__card {
+  transition: transform 60ms linear;
+}
+
+/* the nickname field with the dish next to it */
+.lobby__name-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 12px;
+  align-items: center;
+}

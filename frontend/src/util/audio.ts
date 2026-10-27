@@ -23,6 +23,7 @@ class Sound {
   private ctx: Ctx | null = null;
   private master: GainNode | null = null;
   private room: { src: AudioBufferSourceNode; lfo: OscillatorNode } | null = null;
+  private tv: { src: AudioBufferSourceNode; lfo: OscillatorNode; slow: OscillatorNode } | null = null;
   private noise: AudioBuffer | null = null;
   private on = false;
 
@@ -146,6 +147,32 @@ class Sound {
     this.burst(ctx, 0.05, 900, 0.7, 0.6);
   }
 
+  /** a breath across the table */
+  whoosh(): void {
+    const ctx = this.ready();
+    if (!ctx) return;
+    this.burst(ctx, 0.12, 700, 0.5, 0.35);
+  }
+
+  /** a thumb rubbing a card: a short squeak */
+  squeak(): void {
+    const ctx = this.ready();
+    if (!ctx) return;
+    const t = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(1400, t);
+    osc.frequency.exponentialRampToValueAtTime(2600, t + 0.08);
+    osc.frequency.exponentialRampToValueAtTime(1500, t + 0.18);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.08, t + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.2);
+    osc.connect(g).connect(this.master!);
+    osc.start(t);
+    osc.stop(t + 0.22);
+  }
+
   /** a thumb across the deck: a quick run of snaps */
   riffle(): void {
     const ctx = this.ready();
@@ -235,9 +262,58 @@ class Sound {
     src.start();
     lfo.start();
     this.room = { src, lfo };
+    const hour = new Date().getHours();
+    if (hour >= 23 || hour < 6) this.startTV(ctx);
+  }
+
+  /**
+   * Late at night a television mumbles behind the wall: band-passed noise
+   * in the voice range, chopped by a fast tremolo (syllables) under a slow
+   * one (sentences), too quiet to make out a word.
+   */
+  private startTV(ctx: Ctx): void {
+    if (this.tv) return;
+    const src = ctx.createBufferSource();
+    src.buffer = this.noiseBuffer(ctx);
+    src.loop = true;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 520;
+    bp.Q.value = 2.5;
+    const syll = ctx.createGain();
+    syll.gain.value = 0.5;
+    const lfo = ctx.createOscillator();
+    lfo.frequency.value = 4.3;
+    const lfoDepth = ctx.createGain();
+    lfoDepth.gain.value = 0.5;
+    lfo.connect(lfoDepth).connect(syll.gain);
+    const phrase = ctx.createGain();
+    phrase.gain.value = 0.5;
+    const slow = ctx.createOscillator();
+    slow.frequency.value = 0.23;
+    const slowDepth = ctx.createGain();
+    slowDepth.gain.value = 0.5;
+    slow.connect(slowDepth).connect(phrase.gain);
+    const g = ctx.createGain();
+    g.gain.value = 0.035;
+    src.connect(bp).connect(syll).connect(phrase).connect(g).connect(this.master!);
+    src.start();
+    lfo.start();
+    slow.start();
+    this.tv = { src, lfo, slow };
   }
 
   private stopRoom(): void {
+    if (this.tv) {
+      try {
+        this.tv.src.stop();
+        this.tv.lfo.stop();
+        this.tv.slow.stop();
+      } catch {
+        // already stopped
+      }
+      this.tv = null;
+    }
     if (!this.room) return;
     try {
       this.room.src.stop();

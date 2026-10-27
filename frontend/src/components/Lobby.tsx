@@ -4,6 +4,8 @@ import { useGame } from '../state/GameContext';
 import { t } from '../i18n';
 import { SkinsScreen } from './SkinsScreen';
 import { RulesScreen } from './RulesScreen';
+import { Sticker } from './Sticker';
+import { cleanNickname, foodAvatar } from '../util/avatar';
 
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 
@@ -29,16 +31,17 @@ function botLink(): string | null {
 
 export function Lobby({ prefillCode }: Props) {
   const { identity, setDevName, join, connection, config, isAdmin, setAdminOpen, theme, setTheme, fx, setFx } = useGame();
-  const [name, setName] = useState(identity.name);
+  const [name, setName] = useState(identity.name || identity.suggested || '');
   const [code, setCode] = useState(prefillCode ?? '');
   const [panel, setPanel] = useState<'' | 'skins' | 'rules'>('');
   useEffect(() => {
     if (prefillCode) setCode(prefillCode);
   }, [prefillCode]);
 
-  const needsName = identity.kind === 'dev' && !identity.name;
+  const nick = cleanNickname(name);
+  const needsName = !nick;
   const commitName = () => {
-    if (identity.kind === 'dev' && name.trim() && name.trim() !== identity.name) setDevName(name);
+    if (nick && nick !== identity.name) setDevName(nick);
   };
   const [noTimer, setNoTimerState] = useState(() => {
     try {
@@ -65,7 +68,7 @@ export function Lobby({ prefillCode }: Props) {
     commitName();
     join(code, true, { noTimer });
   };
-  const disabled = connection !== 'open' || (needsName && !name.trim());
+  const disabled = connection !== 'open' || needsName;
   const telegramOnly = identity.kind === 'dev' && config !== null && !config.dev_auth;
   const link = botLink();
 
@@ -127,24 +130,21 @@ export function Lobby({ prefillCode }: Props) {
         </Button>
       </div>
 
-      {identity.kind === 'dev' ? (
-        <label className="field">
-          <span className="field__label">{t('lobby.yourName')}</span>
+      <label className="field lobby__name">
+        <span className="field__label">{t('lobby.nickname')}</span>
+        <span className="lobby__name-row">
+          <Sticker name={nick || '?'} avatar={foodAvatar(identity.userId)} size={44} seed={identity.userId} />
           <input
             className="input"
             value={name}
-            maxLength={32}
+            maxLength={20}
             placeholder={t('lobby.namePlaceholder')}
             onChange={(e) => setName(e.target.value)}
             onBlur={commitName}
           />
-          <span className="field__hint">{t('lobby.devMode')}</span>
-        </label>
-      ) : (
-        <p className="lobby__hello">
-          <span className="sticker-text">{identity.name}</span>
-        </p>
-      )}
+        </span>
+        <span className="field__hint">{identity.kind === 'dev' ? t('lobby.devMode') : needsName ? t('lobby.nicknameHint') : t('lobby.nicknameOk')}</span>
+      </label>
 
       <Button big onClick={create} disabled={disabled}>
         {t('lobby.create')}

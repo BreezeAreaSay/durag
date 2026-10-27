@@ -25,7 +25,7 @@ try {
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, locale: 'ru-RU' });
   const p = await ctx.newPage();
   p.on('console', (m) => { if (m.type() === 'error' && !m.location()?.url?.includes('telegram.org')) problems.push(m.text()); });
-  p.on('pageerror', (e) => problems.push(e.message));
+  p.on('pageerror', (e) => problems.push(e.stack ?? e.message));
   p.on('websocket', (ws) => ws.on('framereceived', (f) => {
     try {
       const m = JSON.parse(String(f.payload));
