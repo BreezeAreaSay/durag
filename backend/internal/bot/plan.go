@@ -68,6 +68,8 @@ const (
 	PlanDump  Plan = "dump"  // my hand is bloated: shed anything that goes
 	PlanCount Plan = "count" // the deck is empty: play the odds of every card
 	PlanHunt  Plan = "hunt"  // somebody is about to go out: feed them what they cannot beat
+	PlanHoard Plan = "hoard" // the trump is still hidden: every suit's top cards may turn out trumps, keep them
+	PlanStump Plan = "stump" // a card or two in hand and the stump waiting: beat the bout, take the lead, pick it up
 )
 
 // ChoosePlan reads the situation. Hunting and counting need an empty deck
@@ -77,6 +79,9 @@ func ChoosePlan(s *game.GameState, botID string) Plan {
 	me := s.Player(botID)
 	if me == nil {
 		return PlanSave
+	}
+	if len(me.Hand) <= 2 && me.StumpCount > 0 && s.Status == game.StatusPlaying {
+		return PlanStump
 	}
 	if s.DeckCount == 0 {
 		for _, p := range s.Players {
@@ -92,6 +97,9 @@ func ChoosePlan(s *game.GameState, botID string) Plan {
 	if len(me.Hand) >= 9 {
 		return PlanDump
 	}
+	if !s.TrumpRevealed {
+		return PlanHoard
+	}
 	return PlanSave
 }
 
@@ -102,6 +110,7 @@ var PlanLines = map[Plan][]string{
 	PlanDump:  {"Сбрасываю балласт", "Многовато у меня. Раздаю", "Разгружаюсь, не обессудьте"},
 	PlanCount: {"Колода пуста. Считаю", "Теперь я всё помню", "Пошла математика"},
 	PlanHunt:  {"{n}, не уйдёшь", "Охота открыта, {n}", "{n}, ещё не вечер"},
+	PlanStump: {"Так. Пенёк мой, сейчас заберу", "Отобьюсь и за пеньком", "Минутку, у меня там пенёк лежит"},
 }
 
 // PlanLine picks a line for a plan change, or "" when the plan is quiet.
@@ -128,6 +137,10 @@ func PlanText(p Plan) string {
 		return "СЧЁТ: колода пуста, ты помнишь вышедшие карты — заходи тем, что соперник вряд ли побьёт, береги сильные карты до конца"
 	case PlanHunt:
 		return "ОХОТА: кто-то почти вышел — не дай ему отбиться, заходи тем, что он точно не побьёт, и не подкидывай то, что он может побить"
+	case PlanHoard:
+		return "НАКОПЛЕНИЕ: козырь ещё не вскрыт — тузы и короли любой масти могут оказаться козырями, не отдавай их и не трать на мелочь, заходи и подкидывай только мелочью"
+	case PlanStump:
+		return "ПЕНЁК: у тебя одна-две карты, а пенёк ещё лежит — отбейся любой ценой, чтобы получить ход и поднять пенёк; не бери, если можешь покрыть"
 	}
 	return "ЭКОНОМИЯ: колода жива — заходи мелочью, козыри и спецкарты береги на защиту"
 }

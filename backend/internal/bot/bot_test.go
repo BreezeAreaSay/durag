@@ -809,3 +809,109 @@ func TestNoJacksAndKingsLedOverSmallCards(t *testing.T) {
 		}
 	}
 }
+
+func TestTheStumpPlanBeatsRatherThanTakes(t *testing.T) {
+	// two cards in hand, a stump waiting, the cover costs a big trump: the stump plan still covers
+	s := game.NewGameState("STUMP")
+	s.Status = game.StatusPlaying
+	s.MaxPlayers = 4
+	s.Players = []game.Player{{ID: "b", Name: "Крест", IsBot: true, Connected: true}, {ID: "h", Name: "Вася", Connected: true}}
+	for _, id := range []string{"S_13", "H_7"} {
+		c, _ := game.CardByID(id)
+		s.Players[0].Hand = append(s.Players[0].Hand, c)
+	}
+	s.Players[0].Stump = []game.Card{game.NewCard(game.SuitClubs, 9), game.NewCard(game.SuitClubs, 10)}
+	for _, id := range []string{"D_6", "D_8", "C_6", "H_9", "H_10", "D_12"} {
+		c, _ := game.CardByID(id)
+		s.Players[1].Hand = append(s.Players[1].Hand, c)
+	}
+	s.CurrentTurn, s.DefenderID = "h", "b"
+	a, _ := game.CardByID("D_6")
+	s.TableOrder = []string{a.ID}
+	s.TableCards = map[string][]game.Card{a.ID: {}}
+	s.Deck = game.NewDeck()[:10]
+	s.DeckCount = 10
+	s.TrumpSuit = game.SuitSpades
+	s.TrumpRevealed = true
+	view := s.Sanitized("b")
+	if p := ChoosePlan(view, "b"); p != PlanStump {
+		t.Fatalf("plan %s, want stump", p)
+	}
+	in := Context{State: view, BotID: "b", Moves: s.LegalMoves("b"), Level: LevelHard, Plan: PlanStump, Memory: NewMemory()}
+	h := NewHeuristic(rand.New(rand.NewPCG(4, 4)))
+	d, _ := h.Decide(context.Background(), in)
+	if d.Move.Type != game.MoveDefend {
+		t.Fatalf("with the stump waiting the bot covers, got %s", d.Move)
+	}
+}
+
+func TestHoardingKeepsTheTopsWhileTheTrumpIsHidden(t *testing.T) {
+	in := leadTest(t, []string{"C_14", "D_13", "H_7", "S_9", "C_10", "D_8"}, 30)
+	in.Level, in.Plan = LevelHard, PlanHoard
+	in.Memory = NewMemory()
+	h := NewHeuristic(rand.New(rand.NewPCG(2, 2)))
+	for i := 0; i < 10; i++ {
+		d, _ := h.Decide(context.Background(), in)
+		c, _ := game.CardByID(d.Move.CardID)
+		if c.Rank >= 13 {
+			t.Fatalf("hoarding led %s", d.Move.CardID)
+		}
+	}
+}
+
+func TestTheChronicleTellsTheStoryAndCallsBack(t *testing.T) {
+	e, s := twoSeats(t)
+	c := NewChronicle()
+	c.Observe(s)
+	if c.Topic == "" {
+		t.Fatal("no topic of the evening")
+	}
+	takes := 0
+	for steps := 0; s.Status == game.StatusPlaying && takes < 3 && steps < 400; steps++ {
+		e.ResolveIfDue(s, time.Now().Add(time.Hour))
+		e.StumpsIfDue(s, time.Now().Add(time.Hour))
+		c.Observe(s)
+		actors := append([]string{}, s.Actors()...)
+		actors = append(actors, s.StumpPending...)
+		if len(actors) == 0 {
+			continue
+		}
+		id := actors[0]
+		moves := s.LegalMoves(id)
+		var pick game.Move
+		for _, m := range moves {
+			if m.Type == game.MoveTake && id == "H" {
+				pick = m
+				break
+			}
+			pick = moves[0]
+		}
+		_ = e.ApplyMove(s, id, pick)
+		takes = c.Takes["H"]
+	}
+	c.Observe(s)
+	if c.Takes["H"] < 3 {
+		t.Fatalf("the human took %d times", c.Takes["H"])
+	}
+	found := false
+	for _, n := range c.Notes {
+		found = found || strings.Contains(n, "третий раз")
+	}
+	if !found {
+		t.Fatalf("no note about the third take: %v", c.Notes)
+	}
+	line := Callback(rand.New(rand.NewPCG(1, 1)), c.Snapshot(), "H", "Вася")
+	if !strings.Contains(line, "Вася") {
+		t.Fatalf("callback %q", line)
+	}
+	c.Said("Крест", "Тихо")
+	if len(c.Lines) != 1 || c.Lines[0] != "Крест: Тихо" {
+		t.Fatalf("lines %v", c.Lines)
+	}
+	if st := PickStoryline(rand.New(rand.NewPCG(1, 1)), []string{"Вася", "Петрович"}); st == nil || st.Steps[0].Who != "Вася" {
+		t.Fatalf("storyline %+v", st)
+	}
+	if PickStoryline(rand.New(rand.NewPCG(1, 1)), []string{"Вася"}) != nil {
+		t.Fatal("a storyline needs both characters")
+	}
+}

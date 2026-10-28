@@ -990,6 +990,15 @@ func Prompt(in Context) string {
 			}
 		}
 	}
+	if in.Story.Topic != "" {
+		fmt.Fprintf(&b, "\nТема вечера в квартире: %s. Возвращайся к ней, когда к слову.", in.Story.Topic)
+	}
+	if len(in.Story.Notes) > 0 {
+		b.WriteString("\nЧто уже было в этой партии: " + strings.Join(in.Story.Notes, "; ") + ". Ссылайся на это, подкалывай за старое.")
+	}
+	if len(in.Story.Lines) > 0 {
+		b.WriteString("\nПоследние реплики за столом: " + strings.Join(in.Story.Lines, " | ") + ". Не повторяй их, можешь ответить.")
+	}
 	if in.Overheard.Text != "" && in.Overheard.BotID != in.BotID {
 		fmt.Fprintf(&b, "\nДругой бот, %s, только что сказал: «%s». Можешь ответить ему в say, если есть что.", in.Overheard.Name, in.Overheard.Text)
 	}

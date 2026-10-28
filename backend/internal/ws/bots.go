@@ -93,6 +93,10 @@ type botRoom struct {
 	promoted   map[string]bot.Level   // bots that lost here and came back stronger, until they say so
 	talking    map[string]bool        // bots with a model request for a line in flight
 	lastLineAt time.Time              // when any bot last said a line: the room talks one at a time
+	story      *bot.Chronicle         // what happened this game, in words
+	plot       *bot.Storyline         // the exchange between two characters that unfolds over the game
+	plotStep   int
+	plotBout   int // the bout the last step was said on
 }
 
 // lineCooldown is the least time between two bot lines in one room, so the
@@ -120,7 +124,7 @@ func (br *botRoom) freshGame() {
 }
 
 func newBotRoom() *botRoom {
-	return &botRoom{moods: map[string]bot.Mood{}, moodUntil: map[string]time.Time{}, jokeSaid: map[string]bool{}, scheduled: map[string]int64{}, turns: map[string]int{}, memory: bot.NewMemory(), dossiers: map[string]bot.Dossier{}, promoted: map[string]bot.Level{}, talking: map[string]bool{}}
+	return &botRoom{moods: map[string]bot.Mood{}, moodUntil: map[string]time.Time{}, jokeSaid: map[string]bool{}, scheduled: map[string]int64{}, turns: map[string]int{}, memory: bot.NewMemory(), story: bot.NewChronicle(), dossiers: map[string]bot.Dossier{}, promoted: map[string]bot.Level{}, talking: map[string]bool{}}
 }
 
 func (h *Hub) botRoomFor(roomID string) *botRoom {
@@ -247,11 +251,42 @@ func (h *Hub) scheduleBots(roomID string, state *game.GameState) {
 		br.jokeSaid = map[string]bool{} // a new game: the fourth wall is whole again
 		br.turns = map[string]int{}
 		br.memory.Reset()
+		br.story.Reset(nil)
+		var names []string
+		for _, p := range state.Players {
+			if p.IsBot {
+				names = append(names, p.Name)
+			}
+		}
+		br.plot = bot.PickStoryline(rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64())), names)
+		br.plotStep, br.plotBout = 0, state.BoutNumber
 	}
 	br.lastStatus = state.Status
 	br.memory.Observe(state)
+	br.story.Observe(state)
 	if state.Status != game.StatusPlaying {
 		return
+	}
+	// the storyline: one line every three bouts, by the character whose turn it is to speak
+	if br.plot != nil && br.plotStep < len(br.plot.Steps) && state.BoutNumber-br.plotBout >= 3 {
+		step := br.plot.Steps[br.plotStep]
+		for _, p := range state.Players {
+			if p.IsBot && !p.Out && p.Name == step.Who {
+				br.plotStep++
+				br.plotBout = state.BoutNumber
+				botID := p.ID
+				line := step.Line
+				time.AfterFunc(700*time.Millisecond+time.Duration(rand.Int64N(int64(900*time.Millisecond))), func() {
+					select {
+					case <-h.ctx.Done():
+						return
+					default:
+					}
+					h.botSay(roomID, botID, line, "")
+				})
+				break
+			}
+		}
 	}
 	due := append([]string{}, state.Actors()...)
 	due = append(due, state.StumpPending...)
@@ -299,6 +334,7 @@ func (h *Hub) botAct(roomID, botID string, version int64) {
 		dossiers[k] = v
 	}
 	overheard := br.overheard
+	story := br.story.Snapshot()
 	promoted := br.promoted[botID]
 	delete(br.promoted, botID)
 	br.mu.Unlock()
@@ -321,6 +357,7 @@ func (h *Hub) botAct(roomID, botID string, version int64) {
 		Plan:         bot.ChoosePlan(view, botID),
 		Dossiers:     dossiers,
 		Overheard:    overheard,
+		Story:        story,
 		Promoted:     promoted,
 	}
 	d, ok := h.decide(in)
@@ -555,6 +592,7 @@ func (h *Hub) botSay(roomID, botID, text, emoji string) {
 	br := h.botRoomFor(roomID)
 	br.mu.Lock()
 	br.overheard = bot.Overheard{BotID: botID, Name: speaker.Name, Text: text}
+	br.story.Said(speaker.Name, text)
 	br.mu.Unlock()
 	var others []string
 	for _, p := range state.Players {
@@ -685,6 +723,7 @@ func (h *Hub) botHearText(roomID, from, text string) {
 	}
 	br := h.botRoomFor(roomID)
 	br.mu.Lock()
+	br.story.Said(name, text)
 	br.recent = append(br.recent, bot.EmojiEvent{From: from, FromName: name, Emoji: "«" + text + "»", At: time.Now()})
 	if len(br.recent) > recentEmojiMax {
 		br.recent = br.recent[len(br.recent)-recentEmojiMax:]

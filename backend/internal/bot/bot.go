@@ -62,6 +62,8 @@ type Context struct {
 	Dossiers map[string]Dossier
 	// Overheard is the last line another bot said (and who), for a retort.
 	Overheard Overheard
+	// Story is what happened at the table this game (counts, notes, last lines, the evening's topic).
+	Story Chronicle
 	// Promoted is set on the first move after the bot came back a level stronger.
 	Promoted Level
 }
@@ -274,6 +276,8 @@ func (h *Heuristic) Decide(_ context.Context, in Context) (Decision, error) {
 		d.Say = ch.Say(h.rng, "press", defender, 0)
 	case planChanged && in.Plan == PlanHunt && h.rng.Float64() < 0.4:
 		d.Say = ch.Say(h.rng, "hunt", defender, 0)
+	case in.Event.Kind == "took" && in.Event.PlayerID != "" && Callback(h.rng, in.Story, in.Event.PlayerID, in.Event.Name) != "" && h.rng.Float64() < 0.7:
+		d.Say = Callback(h.rng, in.Story, in.Event.PlayerID, in.Event.Name) // the story so far: "that is your third take"
 	case in.SpeakDue() && in.Event.Notable():
 		d.Say = ch.Say(h.rng, in.Event.Kind, in.Event.Name, in.Event.Count)
 		if d.Say == "" {
@@ -477,8 +481,10 @@ func (h *Heuristic) defend(in Context, byType map[game.MoveType][]scored, hand m
 	// worth more than a small pile of cards: take instead. With the deck
 	// gone every card in hand is a liability, so cover whenever possible,
 	// keeping the Super card for the finishing attack when the pile is small.
-	if canTake && in.Plan != PlanDump {
+	if canTake && in.Plan != PlanDump && in.Plan != PlanStump {
 		switch {
+		case in.Plan == PlanHoard && dearest.Rank >= 13 && !dearest.IsSpecial() && pile <= 1 && handN <= 6 && s.DeckCount >= 6:
+			return take // an ace or a king may be the trump once it shows: not for a single low card
 		case !deckLeft:
 			if dearest.IsSuper() && pile <= 1 && handN >= 3 {
 				return take
@@ -561,9 +567,14 @@ func (h *Heuristic) attack(in Context, attacks []scored, hand map[string]game.Ca
 				score -= 1
 			}
 		}
+		if in.Plan == PlanHoard && c.Rank >= 13 && lowest < 13 {
+			continue // keep the tops while the trump is unknown
+		}
 		if counting && d != nil {
 			if knownCover(in.Memory, s, d.ID, c, trump) {
 				score += 20 // they hold the cover: this card is a gift
+			} else if in.Plan == PlanStump {
+				score += 16 * in.Memory.BeatProb(s, d.ID, c) // shed: what they cannot beat first
 			} else if deckLeft {
 				score += 4 * in.Memory.BeatProb(s, d.ID, c) // with cards still to draw, cheap beats unlikely-to-be-covered
 			} else {
@@ -610,6 +621,9 @@ func (h *Heuristic) throwOrPass(in Context, byType map[game.MoveType][]scored, h
 	if bloated {
 		limit = 11
 	}
+	if in.Plan == PlanStump {
+		limit = 14 // get the hand down to the stump: anything plain goes
+	}
 	if !deckLeft {
 		limit = 11 // the endgame: every card out of the hand counts, the odds decide the rest
 	}
@@ -628,6 +642,9 @@ func (h *Heuristic) throwOrPass(in Context, byType map[game.MoveType][]scored, h
 			}
 			if !tr && deckLeft && c.Rank > 11 && !(bloated && c.Rank <= 13) {
 				continue
+			}
+			if in.Plan == PlanHoard && c.Rank >= 13 && !bloated {
+				continue // a king of an unknown suit is half a trump: not a gift for a taker
 			}
 			return t.move
 		}

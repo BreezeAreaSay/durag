@@ -117,8 +117,12 @@ func TestBeatProbIsOneForAKnownCoverAndFallsWithRank(t *testing.T) {
 func TestChoosePlanReadsTheTable(t *testing.T) {
 	_, s := twoSeats(t)
 	view := s.Sanitized("B")
+	if p := ChoosePlan(view, "B"); p != PlanHoard {
+		t.Fatalf("fresh deal, trump hidden: %s, want hoard", p)
+	}
+	view.TrumpRevealed = true
 	if p := ChoosePlan(view, "B"); p != PlanSave {
-		t.Fatalf("fresh deal: %s, want save", p)
+		t.Fatalf("trump known: %s, want save", p)
 	}
 	view.DefenderTaking = true
 	view.DefenderID = "H"
