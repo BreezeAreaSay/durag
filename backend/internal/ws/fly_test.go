@@ -293,3 +293,47 @@ func TestAWipedStainIsSharedAndCountedOnce(t *testing.T) {
 	a.send(TypePing, nil)
 	a.expect(TypePong)
 }
+
+func TestAWipeDuringABotsThinkingDoesNotStallIt(t *testing.T) {
+	srv, _, _ := newBotServer(t, BotOptions{MinDelay: 150 * time.Millisecond, MaxDelay: 150 * time.Millisecond})
+	a := dial(t, srv)
+	a.send(TypeJoinRoom, devJoin("STALL", true, "A", "Alice"))
+	a.state()
+	a.send(TypeAddBot, nil)
+	s := a.state()
+	botID := s.Players[1].ID
+	a.send(TypeReady, ReadyPayload{Ready: true})
+	// the bot's first move is armed for the start version; a wipe bumps the version before it fires
+	deadline := time.Now().Add(6 * time.Second)
+	wiped := false
+	for time.Now().Before(deadline) {
+		env := a.next()
+		if env.Type != TypeStateUpdate {
+			continue
+		}
+		var st game.GameState
+		_ = json.Unmarshal(env.Payload, &st)
+		if st.Status != game.StatusPlaying {
+			continue
+		}
+		if !wiped {
+			wiped = true
+			a.send(TypeWipe, WipePayload{Index: 1})
+			continue
+		}
+		for _, e := range st.Log {
+			if e.PlayerID == botID && (e.Type == "attack" || e.Type == "defend" || e.Type == "take" || e.Type == "throw_in" || e.Type == "transfer") {
+				return // the bot moved after the wipe
+			}
+		}
+		if st.CurrentTurn == "dev:A" && st.DefenderID != botID && len(st.TableOrder) == 0 {
+			// Alice must open: do it, the bot answers
+			moves := st.LegalMoves("dev:A")
+			if len(moves) > 0 {
+				msgType, payload := intentFor(moves[0])
+				a.send(msgType, payload)
+			}
+		}
+	}
+	t.Fatal("the bot never moved after a wipe bumped the version")
+}

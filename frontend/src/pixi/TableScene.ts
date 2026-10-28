@@ -1049,10 +1049,16 @@ export class TableScene {
     if (e.global.y < m.tableTop || e.global.y > m.handTop) return;
     this.blow = { x: e.global.x, y: e.global.y, at: performance.now() };
     const g = this.world.toLocal(e.global);
-    // the nearest piece of dirt under the finger (the small ones first: a speck under a stain is still a speck)
+    // the piece of dirt the finger is most squarely on: distance against size, so a
+    // stain under the finger beats a speck at the finger's edge
     let stain: (typeof this.stains)[number] | undefined;
+    let best = Infinity;
     for (const st of this.stains) {
-      if (Math.hypot(g.x - st.x, g.y - st.y) < st.r && (!stain || st.r < stain.r)) stain = st;
+      const d = Math.hypot(g.x - st.x, g.y - st.y);
+      if (d < st.r && d / st.r < best) {
+        best = d / st.r;
+        stain = st;
+      }
     }
     this.scrub = stain ? { i: stain.i, x: g.x, y: g.y, dir: 0, turns: 0, dist: 0 } : null;
   };
@@ -1062,7 +1068,7 @@ export class TableScene {
     const sc = this.scrub;
     if (!sc) return;
     const stain = this.stains.find((st) => st.i === sc.i);
-    if (!stain || Math.hypot(x - stain.x, y - stain.y) > stain.r * 2.5) {
+    if (!stain || Math.hypot(x - stain.x, y - stain.y) > stain.r * 3) {
       this.scrub = null;
       return;
     }
@@ -1373,7 +1379,7 @@ export class TableScene {
       const alpha = 0.35 + rnd() * 0.3;
       const idx = 1000 + i;
       if (wiped.has(idx)) continue;
-      this.stains.push({ i: idx, x, y, r: 22, effort: 40 });
+      this.stains.push({ i: idx, x, y, r: 16, effort: 40 });
       g.circle(x, y, r).fill({ color: dark ? 0xaaa59a : 0x55524b, alpha: alpha * left(idx) });
     }
     // cigarette burns from the third game, scratches from the second: both take real scrubbing

@@ -463,7 +463,8 @@ func (h *Hub) wipe(c *Client, raw json.RawMessage) {
 	if err != nil {
 		return
 	}
-	h.publish(roomID, state)
+	// the version moved: a bot timer armed for the old one would find its move stale, so re-arm
+	h.afterUpdate(roomID, state)
 }
 
 // kick removes a player from the lobby: the host's and the admins' right.

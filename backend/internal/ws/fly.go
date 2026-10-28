@@ -110,7 +110,7 @@ func (h *Hub) catchFly(c *Client, raw json.RawMessage) {
 		return nil
 	})
 	if err == nil {
-		h.publish(roomID, state)
+		h.afterUpdate(roomID, state) // a new version: the bots' timers are re-armed for it
 	}
 	payload := FlyPayload{ID: p.ID, TS: time.Now().UnixMilli(), CaughtBy: playerID, XP: xp}
 	if raw, err := json.Marshal(pubMessage{Kind: "fly", Fly: &payload}); err == nil {
