@@ -2090,142 +2090,13 @@ body.fx-shake--firecracker {
 /* ---- the winner's bottle ---- */
 .vodka {
   position: relative;
-  height: 190px;
   margin: 6px auto 10px;
   max-width: 300px;
   touch-action: none;
   user-select: none;
 }
-.vodka__table {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 26px;
-  height: 3px;
-  background: var(--ink);
-}
-.vodka__glass {
-  position: absolute;
-  left: 34px;
-  bottom: 29px;
-  width: 54px;
-  height: 64px;
-  padding: 0;
-  margin: 0;
-  background: rgba(255, 255, 255, 0.35);
-  border: 3px solid var(--ink);
-  border-top-width: 2px;
-  border-radius: 0 0 8px 8px;
-  overflow: hidden;
-  cursor: pointer;
-}
-.vodka__glass--full {
-  box-shadow: 0 0 0 3px rgba(230, 255, 0, 0.6);
-}
-.vodka__level {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: linear-gradient(180deg, rgba(190, 225, 255, 0.95), rgba(140, 190, 240, 0.95));
-  border-top: 2px solid rgba(255, 255, 255, 0.9);
-  transition: height 80ms linear;
-}
-.vodka__drop {
-  position: absolute;
-  right: -6px;
-  top: 10px;
-  width: 6px;
-  height: 10px;
-  border-radius: 50%;
-  background: #9cc8f0;
-  animation: fx-fall 700ms ease-in both;
-}
-.vodka__bottle {
-  position: absolute;
-  right: 50px;
-  bottom: 29px;
-  width: 44px;
-  height: 140px;
-  transform-origin: 50% 90%;
-  cursor: grab;
-  transition: transform 120ms linear;
-}
-.vodka__neck {
-  display: block;
-  width: 16px;
-  height: 34px;
-  margin: 0 auto;
-  background: #2b4a2e;
-  border: 3px solid var(--ink);
-  border-bottom: 0;
-  border-radius: 4px 4px 0 0;
-}
-.vodka__body {
-  position: relative;
-  display: block;
-  width: 44px;
-  height: 106px;
-  background: #3f6b43;
-  border: 3px solid var(--ink);
-  border-radius: 10px 10px 6px 6px;
-  overflow: hidden;
-}
-.vodka__fill {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(220, 240, 255, 0.35);
-  transition: height 80ms linear;
-}
-.vodka__label {
-  position: absolute;
-  left: 3px;
-  right: 3px;
-  top: 30px;
-  padding: 3px 0;
-  background: var(--paper);
-  border: 2px solid var(--ink);
-  font-family: var(--display);
-  font-size: 8px;
-  line-height: 1.1;
-  color: var(--ink);
-  text-align: center;
-}
-.vodka__label small {
-  display: block;
-  font-family: var(--mono);
-  font-size: 7px;
-}
-.vodka__bottle--empty .vodka__body {
-  background: #6b8f6e;
-}
-.vodka__stream {
-  position: absolute;
-  left: 2px;
-  top: -4px;
-  width: 4px;
-  height: 90px;
-  background: linear-gradient(180deg, rgba(200, 230, 255, 0.9), rgba(200, 230, 255, 0.4));
-  transform-origin: top center;
-  transform: rotate(-90deg);
-  animation: vodka-stream 300ms linear infinite;
-}
-@keyframes vodka-stream {
-  from {
-    opacity: 0.7;
-  }
-  to {
-    opacity: 1;
-  }
-}
 .vodka__hint {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  margin: 0;
+  margin: 4px 0 0;
   font-family: var(--mono);
   font-size: 11px;
   color: var(--grey);
@@ -2243,13 +2114,13 @@ body.fx-shake--firecracker {
 }
 .vodka-seat .vodka {
   pointer-events: auto;
-  width: 260px;
-  height: 170px;
+  width: 300px;
   margin: 0;
 }
-.vodka--table .vodka__table {
-  background: rgba(13, 13, 13, 0.35);
-}
-.vodka__bottle {
-  transition: transform 160ms ease-out;
+.vodka__canvas {
+  display: block;
+  margin: 0 auto;
+  touch-action: none;
+  max-width: 100%;
+  cursor: grab;
 }

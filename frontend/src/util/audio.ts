@@ -215,6 +215,14 @@ class Sound {
     this.burst(ctx, 0.25, 500, 0.4, 0.12, 0.5);
   }
 
+  /** glass on the floor */
+  crash(): void {
+    const ctx = this.ready();
+    if (!ctx) return;
+    this.burst(ctx, 0.05, 3200, 0.8, 0.5);
+    for (let i = 0; i < 7; i++) this.burst(ctx, 0.03, 2000 + Math.random() * 3000, 2, 0.25, 0.04 + Math.random() * 0.35);
+  }
+
   /** a thumb across the deck: a quick run of snaps */
   riffle(): void {
     const ctx = this.ready();

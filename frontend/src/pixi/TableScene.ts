@@ -361,7 +361,8 @@ export class TableScene {
     return {
       hand: (m?.hand ?? []).map((c) => {
         const v = this.views.get(c.id);
-        return v ? { id: c.id, x: Math.round(v.root.x), y: Math.round(v.root.y), visible: v.root.visible, renderable: v.root.renderable, alpha: v.root.alpha, layer: layerName(v.root.parent) } : { id: c.id, missing: true };
+        const playable = m?.playable.has(c.id) ?? false;
+        return v ? { id: c.id, x: Math.round(v.root.x), y: Math.round(v.root.y), visible: v.root.visible, renderable: v.root.renderable, alpha: v.root.alpha, layer: layerName(v.root.parent), playable } : { id: c.id, missing: true, playable };
       }),
       table: m?.table.length ?? 0,
       pending: [...this.pending.keys()],
@@ -619,6 +620,7 @@ export class TableScene {
     let t = 0;
     let flipped = false;
     this.effects.push((dt) => {
+      if (view.root.destroyed) return false; // the card left the table mid-wink
       t += dt;
       const k = Math.min(1, t / total);
       view.root.scale.x = s * Math.max(0.04, Math.abs(Math.cos(Math.PI * k)));
@@ -818,6 +820,7 @@ export class TableScene {
     let t = 0;
     let shown = false;
     this.effects.push((dt) => {
+      if (view.root.destroyed) return false; // the card is gone mid-turn
       t += dt;
       const k = Math.min(1, t / total);
       view.root.scale.x = s * Math.max(0.04, Math.abs(Math.cos(Math.PI * k)));
