@@ -32,6 +32,8 @@ const (
 	TypeRemoveBot    = "REMOVE_BOT"   // v10 §2: free a bot's seat (lobby only)
 	TypeSay          = "SAY"          // a quick phrase from the list (unlocked by wins)
 	TypeCatchFly     = "CATCH_FLY"    // the player slapped the fly
+	TypeKick         = "KICK"         // the host or an admin removes a player from the lobby
+	TypeSwapBot      = "SWAP_BOT"     // a tap on a bot's face in the lobby: the next free character takes the seat
 )
 
 // Server -> client messages.
@@ -83,6 +85,11 @@ type AddBotPayload struct {
 
 // RemoveBotPayload is the payload of REMOVE_BOT.
 type RemoveBotPayload struct {
+	PlayerID string `json:"player_id"`
+}
+
+// KickPayload is the payload of KICK and SWAP_BOT.
+type KickPayload struct {
 	PlayerID string `json:"player_id"`
 }
 

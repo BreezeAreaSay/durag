@@ -292,6 +292,7 @@ func (e *Engine) Start(s *GameState) error {
 	s.DiscardCount = 0
 	s.FinishedOrder = []string{}
 	s.WinAwarded = false
+	s.GamesPlayed++
 	for i := range s.Players {
 		s.Players[i].Stats = Stats{Leads: map[string]int{}}
 	}

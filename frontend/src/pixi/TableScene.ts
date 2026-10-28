@@ -156,6 +156,9 @@ export class TableScene {
   private emberGlow = new Sprite();
   /** the window: a soft slanted patch of shade that creeps across the table */
   private windowShade = new Graphics();
+  /** the cloth's wear: stains, ash, scratches, a dead fly; redrawn when the games count changes */
+  private wear = new Graphics();
+  private wearKey = '';
   /** the room warms up a touch with every "bito" and flares on a win; a cloud dims the lamp now and then */
   private warmth = 0;
   private warmFlash = 0;
@@ -402,6 +405,14 @@ export class TableScene {
       }
     });
 
+    // a bout of ten cards and more that was beaten goes up in flames
+    if ((m.lastOutcome || this.lastOutcome) === 'bito' && !immediate) {
+      const leaving: CardView[] = [];
+      for (const [id, view] of this.views) {
+        if (!wanted.has(id) && view.root.parent === this.layers.table && !view.isDissolved) leaving.push(view);
+      }
+      if (leaving.length >= 10) this.burn(leaving);
+    }
     // Cards that left the visible state fly away and are removed.
     for (const [id, view] of this.views) {
       if (wanted.has(id) || this.drag?.id === id) continue;
@@ -509,6 +520,7 @@ export class TableScene {
 
     if (m.table.length === 0 && !m.resolving) this.lastOutcome = '';
     this.updatePiles();
+    this.drawWear();
   }
 
   /** Blows a card apart into coarse squares and crosses (stop-motion). */
@@ -1191,8 +1203,119 @@ export class TableScene {
     this.deckPile.eventMode = 'static';
     this.deckPile.cursor = 'pointer';
     this.deckPile.on('pointertap', () => this.riffle());
+    this.wear.eventMode = 'none';
+    this.layers.piles.addChildAt(this.wear, 0);
     this.layers.piles.addChild(this.deckPile, this.discardPile, this.trumpPlate, this.stumpPile, this.deckLabel, this.discardLabel, this.stumpLabel);
     this.rebuildPiles();
+  }
+
+  /**
+   * The cloth of a table that has seen games: a stain or two by the edges
+   * after the first, more and nearer the middle with every game, ash dots,
+   * cigarette burns, scratches, and from the fifth game (or a slapped fly)
+   * a dead fly. Drawn from the room id and the count, so everybody at the
+   * table and every reload sees the same dirt.
+   */
+  private drawWear(): void {
+    const m = this.model;
+    if (!m) return;
+    const key = `${m.roomId}:${m.gamesPlayed}:${m.fliesDead}:${this.metrics.width}x${this.metrics.height}:${isDark()}`;
+    if (key === this.wearKey) return;
+    this.wearKey = key;
+    const g = this.wear;
+    g.clear();
+    const games = Math.min(12, m.gamesPlayed);
+    if (games === 0 && m.fliesDead === 0) return;
+    let seed = 2166136261;
+    for (const ch of m.roomId) seed = Math.imul(seed ^ ch.charCodeAt(0), 16777619) >>> 0;
+    const rnd = () => {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      return seed / 4294967296;
+    };
+    const { width: W, tableTop, tableBottom } = this.metrics;
+    const cx = W / 2;
+    const cy = (tableTop + tableBottom) / 2;
+    const dark = isDark();
+    const stainColor = dark ? 0x6b5a3a : 0x8a6a3c;
+    // stains: each game adds three; early ones keep to the edges, later ones wander to the middle
+    const stains = games * 3;
+    for (let i = 0; i < stains; i++) {
+      const game = Math.floor(i / 3);
+      const edge = Math.max(0.15, 1 - game / 7); // how far from the centre, 1 = the very edge
+      const a = rnd() * Math.PI * 2;
+      const r = edge * (0.55 + rnd() * 0.45);
+      const x = cx + Math.cos(a) * r * (W / 2 - 20);
+      const y = cy + Math.sin(a) * r * ((tableBottom - tableTop) / 2 + 40);
+      const size = 6 + rnd() * 16;
+      g.ellipse(x, y, size, size * (0.5 + rnd() * 0.6)).fill({ color: stainColor, alpha: 0.08 + rnd() * 0.1 });
+      if (rnd() < 0.35) g.circle(x + size * 0.6, y - size * 0.3, size * 0.45).fill({ color: stainColor, alpha: 0.08 });
+    }
+    // ash: a scatter of grey specks that grows with the games
+    for (let i = 0; i < games * 8; i++) {
+      const x = 16 + rnd() * (W - 32);
+      const y = tableTop + rnd() * (tableBottom - tableTop + 60);
+      g.circle(x, y, 0.8 + rnd() * 1.4).fill({ color: dark ? 0xaaa59a : 0x55524b, alpha: 0.35 + rnd() * 0.3 });
+    }
+    // cigarette burns from the third game, scratches from the second
+    for (let i = 0; i < Math.max(0, games - 2); i++) {
+      const x = 24 + rnd() * (W - 48);
+      const y = tableTop + rnd() * (tableBottom - tableTop);
+      g.circle(x, y, 3.5).fill({ color: 0x2b2118, alpha: 0.75 });
+      g.circle(x, y, 2).fill({ color: 0x0d0d0d, alpha: 0.9 });
+    }
+    for (let i = 0; i < Math.max(0, games - 1) * 2; i++) {
+      const x = 20 + rnd() * (W - 40);
+      const y = tableTop + rnd() * (tableBottom - tableTop);
+      const len = 14 + rnd() * 40;
+      const a = rnd() * Math.PI;
+      g.moveTo(x, y).lineTo(x + Math.cos(a) * len, y + Math.sin(a) * len).stroke({ width: 1, color: dark ? 0xffffff : 0x000000, alpha: 0.12 });
+    }
+    // the fly: slapped here, or just a casualty of the fifth game
+    const flies = m.fliesDead + (games >= 5 ? 1 : 0);
+    for (let i = 0; i < Math.min(3, flies); i++) {
+      const x = 30 + rnd() * (W - 60);
+      const y = tableTop + 20 + rnd() * (tableBottom - tableTop - 40);
+      g.ellipse(x, y, 3.2, 2).fill({ color: 0x1a1a1a, alpha: 0.9 });
+      g.circle(x + 3, y - 0.5, 1.4).fill({ color: 0x1a1a1a, alpha: 0.9 });
+      g.ellipse(x - 1, y - 2.5, 2.6, 1.2).fill({ color: 0xffffff, alpha: 0.35 });
+      g.ellipse(x - 1, y + 2.5, 2.6, 1.2).fill({ color: 0xffffff, alpha: 0.35 });
+      for (let k = 0; k < 3; k++) g.moveTo(x - 2 + k * 2, y + 1).lineTo(x - 3 + k * 2.5, y + 4).stroke({ width: 0.6, color: 0x1a1a1a, alpha: 0.9 });
+    }
+  }
+
+  /** a big bito goes up in flames: embers rise from every card before the pile flies off */
+  private burn(views: CardView[]): void {
+    if (this.lite || views.length === 0) return;
+    sound.fire();
+    const flames: { g: Graphics; x: number; y: number; vx: number; vy: number; life: number; size: number }[] = [];
+    for (const v of views) {
+      for (let i = 0; i < 6; i++) {
+        const g = new Graphics();
+        this.layers.drag.addChild(g);
+        flames.push({ g, x: v.root.x + (Math.random() - 0.5) * this.metrics.cardW * 0.8, y: v.root.y + (Math.random() - 0.3) * this.metrics.cardH * 0.6, vx: (Math.random() - 0.5) * 40, vy: -60 - Math.random() * 90, life: 0.6 + Math.random() * 0.5, size: 4 + Math.random() * 8 });
+      }
+    }
+    let t = 0;
+    this.effects.push((dt) => {
+      t += dt;
+      const s = dt / 1000;
+      let alive = false;
+      for (const f of flames) {
+        if (f.g.destroyed) continue;
+        f.life -= s;
+        if (f.life <= 0) {
+          f.g.destroy();
+          continue;
+        }
+        alive = true;
+        f.x += f.vx * s + Math.sin(t / 60 + f.size) * 0.8;
+        f.y += f.vy * s;
+        const k = Math.max(0, f.life);
+        const w = f.size * (0.4 + k);
+        f.g.clear().poly([f.x - w / 2, f.y + w / 2, f.x + w / 2, f.y + w / 2, f.x, f.y - w]).fill({ color: k > 0.5 ? 0xffd166 : 0xff5a1f, alpha: Math.min(1, k * 1.5) });
+      }
+      return alive;
+    });
   }
 
   private rebuildPiles(): void {
@@ -1377,7 +1500,14 @@ export class TableScene {
   };
 
   private onVisibility = (): void => {
-    if (document.visibilityState === 'hidden') this.cancelDrag();
+    if (document.visibilityState === 'hidden') {
+      this.cancelDrag();
+      return;
+    }
+    // back from the background: tweens and effects that waited are stale, every card snaps to its slot
+    for (const view of this.views.values()) this.tweener.cancel(view.root);
+    this.effects = [];
+    if (this.ready) this.sync(true);
   };
 
   private onPointerMove = (e: FederatedPointerEvent): void => {

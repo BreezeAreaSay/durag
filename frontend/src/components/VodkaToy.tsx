@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { sound } from '../util/audio';
 import { haptic } from '../telegram/useTelegram';
 import { t } from '../i18n';
+import { LobbyDeck } from './LobbyDeck';
 
 const W = 300;
 const H = 190;
@@ -70,6 +71,7 @@ export function VodkaToy({ compact = false }: { compact?: boolean }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const [drinks, setDrinks] = useState(0);
   const [note, setNote] = useState<'' | 'broken'>('');
+  const [wreck, setWreck] = useState(false); // both in pieces: the deck comes out instead
   const world = useRef({
     bottle: { x: 215, y: FLOOR, vx: 0, vy: 0, angle: 0, va: 0, broken: false } as Body,
     glass: { x: 75, y: FLOOR, vx: 0, vy: 0, angle: 0, va: 0, broken: false } as Body,
@@ -108,6 +110,7 @@ export function VodkaToy({ compact = false }: { compact?: boolean }) {
       sound.crash();
       haptic('heavy');
       setNote('broken');
+      if (w.bottle.broken && w.glass.broken) setWreck(true);
     };
 
     const settle = (b: Body, dt: number) => {
@@ -333,6 +336,7 @@ export function VodkaToy({ compact = false }: { compact?: boolean }) {
       w.level = 0;
       w.shards = [];
       setNote('');
+      setWreck(false);
       sound.snap();
       haptic('medium');
     }
@@ -346,7 +350,7 @@ export function VodkaToy({ compact = false }: { compact?: boolean }) {
     const now = performance.now();
     const dt = Math.max(1, now - g.lastT) / 1000;
     const nx = Math.max(20, Math.min(W - 20, p.x + g.dx));
-    const ny = Math.min(FLOOR, p.y + g.dy);
+    const ny = Math.max(g.body === w.bottle ? BOTTLE_H + 4 : GLASS_H + 4, Math.min(FLOOR, p.y + g.dy));
     g.body.vx = (nx - g.body.x) / dt;
     g.body.vy = (ny - g.body.y) / dt;
     g.body.x = nx;
@@ -378,6 +382,7 @@ export function VodkaToy({ compact = false }: { compact?: boolean }) {
   return (
     <div className={`vodka ${compact ? 'vodka--table' : ''}`} aria-label="vodka">
       <canvas ref={canvas} className="vodka__canvas" style={{ width: W, height: H }} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} />
+      {wreck ? <LobbyDeck /> : null}
       {compact ? null : <p className="vodka__hint">{note === 'broken' ? t('vodka.broken') : drinks > 0 ? t('vodka.drinks', { n: drinks }) : t('vodka.hint')}</p>}
     </div>
   );

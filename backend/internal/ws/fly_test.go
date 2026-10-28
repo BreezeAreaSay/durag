@@ -233,3 +233,43 @@ func TestTheTalkBudgetMetersTheModel(t *testing.T) {
 		t.Fatalf("a half share let %d of 400 through", hits)
 	}
 }
+
+func TestTheHostKicksAndSwapsBots(t *testing.T) {
+	srv, _, _ := newAdminServer(t)
+	wsURL := "ws" + srv.URL[len("http"):] + "/ws"
+	host := dialURL(t, wsURL)
+	host.send(TypeJoinRoom, devJoin("KICK", true, "H", "Host"))
+	host.state()
+	guest := dialURL(t, wsURL)
+	guest.send(TypeJoinRoom, devJoin("KICK", false, "G", "Guest"))
+	guest.state()
+	host.state()
+	host.send(TypeAddBot, nil)
+	s := host.state()
+	guest.state()
+	botID, botName := s.Players[2].ID, s.Players[2].Name
+	// a tap on the bot's face: another character takes the seat
+	guest.send(TypeSwapBot, KickPayload{PlayerID: botID})
+	s = guest.state()
+	host.state()
+	if s.Players[2].ID != botID || s.Players[2].Name == botName || s.Players[2].Avatar == "" {
+		t.Fatalf("swap: %+v", s.Players[2])
+	}
+	// a guest cannot kick, the host can: the guest is shown the door
+	guest.send(TypeKick, KickPayload{PlayerID: botID})
+	if e := guest.errorPayload(); e.Code != "NOT_HOST" {
+		t.Fatalf("got %+v", e)
+	}
+	host.send(TypeKick, KickPayload{PlayerID: "dev:G"})
+	if e := guest.errorPayload(); e.Code != "KICKED" {
+		t.Fatalf("got %+v", e)
+	}
+	s = host.state()
+	if len(s.Players) != 2 || s.Player("dev:G") != nil {
+		t.Fatalf("after the kick: %d players", len(s.Players))
+	}
+	host.send(TypeKick, KickPayload{PlayerID: botID})
+	if s = host.state(); len(s.Players) != 1 {
+		t.Fatalf("the bot was not kicked: %d players", len(s.Players))
+	}
+}

@@ -54,7 +54,7 @@ func TestBotPlaysAgainstAHuman(t *testing.T) {
 	a.state()
 	a.send(TypeAddBot, nil)
 	s := a.state()
-	if len(s.Players) != 2 || !s.Players[1].IsBot || !s.Players[1].IsReady || !s.Players[1].Connected || s.Players[1].Name != bot.Names[0] {
+	if len(s.Players) != 2 || !s.Players[1].IsBot || !s.Players[1].IsReady || !s.Players[1].Connected || bot.CharacterOf(s.Players[1].Name).Name != s.Players[1].Name {
 		t.Fatalf("bot seat: %+v", s.Players)
 	}
 	botID := s.Players[1].ID
@@ -211,6 +211,10 @@ func TestModelTalksAfterTheRulesMove(t *testing.T) {
 	a.send(TypeAddBot, nil)
 	s := a.state()
 	botID := s.Players[1].ID
+	for bot.CharacterOf(s.Players[1].Name).Barks { // the dog would bark the model's line away
+		a.send(TypeSwapBot, KickPayload{PlayerID: botID})
+		s = a.state()
+	}
 	a.send(TypeReady, ReadyPayload{Ready: true})
 	deadline := time.Now().Add(10 * time.Second)
 	heard := ""

@@ -215,6 +215,49 @@ class Sound {
     this.burst(ctx, 0.25, 500, 0.4, 0.12, 0.5);
   }
 
+  /** a pile going up: crackle and a whoosh */
+  fire(): void {
+    const ctx = this.ready();
+    if (!ctx) return;
+    this.burst(ctx, 0.5, 400, 0.4, 0.25);
+    for (let i = 0; i < 14; i++) this.burst(ctx, 0.015, 1500 + Math.random() * 3500, 3, 0.18, Math.random() * 1.1);
+  }
+
+  /** the toilet: a rush of water going down, then the cistern */
+  flush(): void {
+    const ctx = this.ready();
+    if (!ctx) return;
+    const t = ctx.currentTime;
+    const src = ctx.createBufferSource();
+    src.buffer = this.noiseBuffer(ctx);
+    src.loop = true;
+    const f = ctx.createBiquadFilter();
+    f.type = 'bandpass';
+    f.Q.value = 0.8;
+    f.frequency.setValueAtTime(1800, t);
+    f.frequency.exponentialRampToValueAtTime(250, t + 1.4);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.5, t + 0.15);
+    g.gain.setValueAtTime(0.5, t + 0.9);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 1.6);
+    src.connect(f).connect(g).connect(this.master!);
+    src.start(t);
+    src.stop(t + 1.7);
+    // the gurgle at the end
+    const osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(140, t + 1.1);
+    osc.frequency.exponentialRampToValueAtTime(60, t + 1.6);
+    const og = ctx.createGain();
+    og.gain.setValueAtTime(0.0001, t + 1.1);
+    og.gain.exponentialRampToValueAtTime(0.2, t + 1.2);
+    og.gain.exponentialRampToValueAtTime(0.0001, t + 1.65);
+    osc.connect(og).connect(this.master!);
+    osc.start(t + 1.1);
+    osc.stop(t + 1.7);
+  }
+
   /** glass on the floor */
   crash(): void {
     const ctx = this.ready();

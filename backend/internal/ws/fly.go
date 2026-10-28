@@ -106,6 +106,7 @@ func (h *Hub) catchFly(c *Client, raw json.RawMessage) {
 		if pl := s.Player(playerID); pl != nil {
 			pl.XP = xp
 		}
+		s.FliesDead++ // it stays on the cloth
 		return nil
 	})
 	if err == nil {

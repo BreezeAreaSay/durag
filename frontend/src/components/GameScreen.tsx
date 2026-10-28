@@ -102,7 +102,7 @@ export function GameScreen({ state }: Props) {
     if (!last) return;
     if (last.type === 'bout_end' || last.type === 'took' || last.type === 'bito') haptic('medium');
     else if (last.type === 'finish') haptic('success');
-    if (last.type === 'took') sound.took();
+    if (last.type === 'took') sound.flush(); // taking the table: the toilet
     else if (last.type === 'bito') sound.bito();
   }, [state.log]);
 

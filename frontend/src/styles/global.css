@@ -2124,3 +2124,20 @@ body.fx-shake--firecracker {
   max-width: 100%;
   cursor: grab;
 }
+
+/* the lobby: a tap on a bot's face changes the character, the host's ✕ next to a person */
+.players__swap {
+  line-height: 0;
+}
+.players__swap:active .sticker {
+  transform: rotate(var(--tilt, 0deg)) scale(0.92);
+}
+.players__state {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.players__kick {
+  padding: 2px 7px;
+  font-size: 11px;
+}

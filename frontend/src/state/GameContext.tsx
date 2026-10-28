@@ -96,6 +96,10 @@ export interface GameContextValue {
   leave(): void;
   addBot(level?: BotLevel): void;
   removeBot(playerId: string): void;
+  /** the host or an admin shows a player the door (lobby only) */
+  kick(playerId: string): void;
+  /** a tap on a bot's face: another character takes the seat */
+  swapBot(playerId: string): void;
   setReady(ready: boolean): void;
   playCard(cardId: string, targetCardId?: string): void;
   transfer(cardId: string): void;
@@ -389,7 +393,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
             closedByUs.current = true;
             setReplaced(true);
           }
-          if (err.code === 'ROOM_NOT_FOUND' || err.code === 'UNAUTHORIZED' || err.code === 'ROOM_FULL' || err.code === 'GAME_IN_PROGRESS') {
+          if (err.code === 'ROOM_NOT_FOUND' || err.code === 'UNAUTHORIZED' || err.code === 'ROOM_FULL' || err.code === 'GAME_IN_PROGRESS' || err.code === 'KICKED') {
             // Joining failed: forget the room so the lobby shows again.
             roomRef.current = null;
             sessionStorage.removeItem(ROOM_KEY);
@@ -504,6 +508,8 @@ export function GameProvider({ children }: { children: ReactNode }) {
       setReady: (ready) => send({ type: 'READY', payload: { ready } }),
       addBot: (level = 'normal') => send({ type: 'ADD_BOT', payload: { level } }),
       removeBot: (playerId) => send({ type: 'REMOVE_BOT', payload: { player_id: playerId } }),
+      kick: (playerId) => send({ type: 'KICK', payload: { player_id: playerId } }),
+      swapBot: (playerId) => send({ type: 'SWAP_BOT', payload: { player_id: playerId } }),
       playCard: (cardId, targetCardId) => send({ type: 'PLAY_CARD', payload: { card_id: cardId, target_card_id: targetCardId } }),
       transfer: (cardId) => send({ type: 'TRANSFER_TURN', payload: { card_id: cardId } }),
       take: () => send({ type: 'TAKE_CARDS' }),

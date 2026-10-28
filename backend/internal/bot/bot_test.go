@@ -793,3 +793,19 @@ func TestTheDogOnlyBarksAndTheCastIsFull(t *testing.T) {
 		t.Fatal("people keep their words")
 	}
 }
+
+func TestNoJacksAndKingsLedOverSmallCards(t *testing.T) {
+	for _, lvl := range []Level{LevelNormal, LevelHard} {
+		for seed := uint64(1); seed <= 20; seed++ {
+			in := leadTest(t, []string{"H_7", "C_9", "S_11", "D_11", "C_13", "H_12"}, 30)
+			in.Level = lvl
+			in.Memory = NewMemory()
+			h := NewHeuristic(rand.New(rand.NewPCG(seed, 3)))
+			d, _ := h.Decide(context.Background(), in)
+			c, _ := game.CardByID(d.Move.CardID)
+			if c.Rank > 10 {
+				t.Fatalf("%s led %s over a seven and a nine", lvl, d.Move.CardID)
+			}
+		}
+	}
+}

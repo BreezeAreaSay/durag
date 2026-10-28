@@ -548,11 +548,13 @@ func (h *Heuristic) attack(in Context, attacks []scored, hand map[string]game.Ca
 		if deckLeft && c.Rank >= 13 && lowest <= 10 {
 			continue
 		}
-		score := float64(a.weight) // cheap first
-		pairCap := 10
-		if in.Mood == MoodAggressive || in.Plan == PlanPress {
-			pairCap = 11
+		// while the deck lasts a lead stays near the cheapest card: no jacks
+		// and queens over sevens, a pair of them aside
+		if deckLeft && c.Rank > lowest+3 && (counts[c.Rank] < 2 || c.Rank > 10) {
+			continue
 		}
+		score := float64(a.weight) // cheap first
+		pairCap := 10              // a pair of jacks is still two jacks: no pair bonus above a ten while the deck lasts
 		if counts[c.Rank] >= 2 && (!deckLeft || c.Rank <= pairCap) {
 			score -= 4 // a pair: two cards for the price of one bout, but no high pair over a low single
 			if counts[c.Rank] >= 3 {
@@ -562,6 +564,8 @@ func (h *Heuristic) attack(in Context, attacks []scored, hand map[string]game.Ca
 		if counting && d != nil {
 			if knownCover(in.Memory, s, d.ID, c, trump) {
 				score += 20 // they hold the cover: this card is a gift
+			} else if deckLeft {
+				score += 4 * in.Memory.BeatProb(s, d.ID, c) // with cards still to draw, cheap beats unlikely-to-be-covered
 			} else {
 				score += 12 * in.Memory.BeatProb(s, d.ID, c) // what they cannot beat goes first
 			}

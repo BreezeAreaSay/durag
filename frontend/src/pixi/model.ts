@@ -34,6 +34,10 @@ export interface SceneModel {
   version: number;
   /** the viewer's chosen card back (piles, stump, hidden trump) */
   skin: SkinId;
+  /** the table's wear: games started here and flies slapped here (the cloth gets dirty) */
+  roomId: string;
+  gamesPlayed: number;
+  fliesDead: number;
   /**
    * Ids of hand cards the viewer could play right now by the client mirror
    * of the rules: throw-ins of a rank on the table, defences that beat an
@@ -96,6 +100,9 @@ export function toSceneModel(state: GameState, selfId: string, skin: SkinId = 'c
     trumpRevealed: state.trump_revealed,
     trumpDrawnBy: state.trump_drawn_by,
     trumpSuit: state.trump_suit,
+    roomId: state.room_id,
+    gamesPlayed: state.games_played ?? 0,
+    fliesDead: state.flies_dead ?? 0,
     discardCount: state.discard_count,
     role,
     defenderTaking: state.defender_taking,

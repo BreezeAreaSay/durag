@@ -190,8 +190,10 @@ func (h *Hub) handle(c *Client, env Envelope) {
 		h.say(c, env.Payload)
 	case TypeCatchFly:
 		h.catchFly(c, env.Payload)
-	case TypePlayCard, TypeTransferTurn, TypeTakeCards, TypePass, TypeResolveBout, TypeTakeStump, TypeReady, TypeLeaveRoom, TypeAddBot, TypeRemoveBot:
+	case TypePlayCard, TypeTransferTurn, TypeTakeCards, TypePass, TypeResolveBout, TypeTakeStump, TypeReady, TypeLeaveRoom, TypeAddBot, TypeRemoveBot, TypeSwapBot:
 		h.intent(c, env)
+	case TypeKick:
+		h.kick(c, env.Payload)
 	default:
 		c.sendError("UNKNOWN_TYPE", "unknown message type: "+env.Type, "")
 	}
@@ -350,6 +352,12 @@ func (h *Hub) intent(c *Client, env Envelope) {
 				return errBadPayload
 			}
 			return h.engine.RemoveBot(s, p.PlayerID)
+		case TypeSwapBot:
+			var p KickPayload
+			if err := json.Unmarshal(env.Payload, &p); err != nil {
+				return errBadPayload
+			}
+			return swapBot(s, p.PlayerID)
 		}
 		return errBadPayload
 	}
@@ -423,6 +431,96 @@ func (h *Hub) react(c *Client, raw json.RawMessage) {
 		h.log.Error("ws: publish reaction", "err", err)
 	}
 	h.botHearEmoji(roomID, playerID, p.Emoji)
+}
+
+// kick removes a player from the lobby: the host's and the admins' right.
+// A bot's seat is freed; a person is shown the door (KICKED) and their
+// connection leaves the room.
+func (h *Hub) kick(c *Client, raw json.RawMessage) {
+	roomID, playerID := c.room()
+	if roomID == "" {
+		c.sendError("NOT_IN_ROOM", "join a room first", "")
+		return
+	}
+	var p KickPayload
+	if err := json.Unmarshal(raw, &p); err != nil || p.PlayerID == "" || p.PlayerID == playerID {
+		c.sendError("BAD_PAYLOAD", "malformed KICK payload", "")
+		return
+	}
+	var victim *game.Player
+	state, err := h.store.Update(h.ctx, roomID, false, func(s *game.GameState) error {
+		if s.Status != game.StatusWaiting {
+			return game.ErrNotWaiting
+		}
+		if s.HostID != playerID && !h.isAdmin(playerID) {
+			return &game.RuleError{Code: "NOT_HOST", Message: "only the host or an admin can remove players"}
+		}
+		pl := s.Player(p.PlayerID)
+		if pl == nil {
+			return game.ErrUnknownPlayer
+		}
+		cp := *pl
+		victim = &cp
+		if pl.IsBot {
+			return h.engine.RemoveBot(s, p.PlayerID)
+		}
+		return h.engine.Leave(s, p.PlayerID)
+	})
+	if err != nil {
+		h.sendFailure(c, err, "")
+		return
+	}
+	if victim != nil && !victim.IsBot {
+		h.mu.Lock()
+		var doors []*Client
+		if sub, ok := h.rooms[roomID]; ok {
+			for other := range sub.clients {
+				if _, pid := other.room(); pid == p.PlayerID {
+					doors = append(doors, other)
+				}
+			}
+		}
+		h.mu.Unlock()
+		for _, other := range doors {
+			other.sendError("KICKED", "the host showed you the door", "")
+			h.removeFromRoom(other)
+			other.setRoom("", "")
+		}
+	}
+	h.afterUpdate(roomID, state)
+}
+
+// swapBot gives a bot seat the next free character (a tap on its face).
+func swapBot(s *game.GameState, id string) error {
+	if s.Status != game.StatusWaiting {
+		return game.ErrNotWaiting
+	}
+	pl := s.Player(id)
+	if pl == nil {
+		return game.ErrUnknownPlayer
+	}
+	if !pl.IsBot {
+		return game.ErrNotABot
+	}
+	used := map[string]bool{}
+	for _, q := range s.Players {
+		used[q.Name] = true
+	}
+	cur := -1
+	for i, ch := range bot.Characters {
+		if ch.Name == pl.Name {
+			cur = i
+		}
+	}
+	for step := 1; step <= len(bot.Characters); step++ {
+		ch := bot.Characters[(cur+step)%len(bot.Characters)]
+		if !used[ch.Name] {
+			pl.Name, pl.Avatar = ch.Name, ch.Avatar
+			s.Touch()
+			return nil
+		}
+	}
+	return &game.RuleError{Code: "NO_FREE_CHARACTER", Message: "every character is already at the table"}
 }
 
 // standing reads a player's XP and wins off the room state.

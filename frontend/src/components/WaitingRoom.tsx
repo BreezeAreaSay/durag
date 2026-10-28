@@ -24,7 +24,7 @@ function shareLink(room: string): string | null {
 }
 
 export function WaitingRoom({ state }: Props) {
-  const { selfId, setReady, leave, addBot, removeBot, config, reactions } = useGame();
+  const { selfId, setReady, leave, addBot, removeBot, kick, swapBot, config, reactions, isAdmin } = useGame();
   const [copied, setCopied] = useState(false);
   const [level, setLevel] = useState<BotLevel>('normal');
   const me = state.players.find((p) => p.id === selfId);
@@ -73,7 +73,13 @@ export function WaitingRoom({ state }: Props) {
         <ul className="players__list">
           {state.players.map((p) => (
             <li key={p.id} className={`players__item ${p.is_ready ? 'players__item--ready' : ''}`}>
-              <Sticker name={p.name} avatarUrl={p.avatar_url} avatar={p.avatar} seed={p.id} wins={frameWins(p)} playerId={p.id} scar={p.scar} />
+              {p.is_bot ? (
+                <button type="button" className="avatar-btn players__swap" onClick={() => swapBot(p.id)} aria-label={t('waiting.swapBot')} title={t('waiting.swapBot')}>
+                  <Sticker name={p.name} avatar={p.avatar} seed={p.id} wins={frameWins(p)} playerId={p.id} />
+                </button>
+              ) : (
+                <Sticker name={p.name} avatarUrl={p.avatar_url} avatar={p.avatar} seed={p.id} wins={frameWins(p)} playerId={p.id} scar={p.scar} />
+              )}
               <span className="players__name">
                 {p.name}
                 {p.is_bot ? <span className="players__bot">{t('waiting.bot')}</span> : null}
@@ -85,7 +91,14 @@ export function WaitingRoom({ state }: Props) {
                   ✕
                 </button>
               ) : (
-                <span className="players__state">{p.is_ready ? t('waiting.ready') : t('waiting.notReady')}</span>
+                <span className="players__state">
+                  {p.is_ready ? t('waiting.ready') : t('waiting.notReady')}
+                  {p.id !== selfId && (isAdmin || state.host_id === selfId) ? (
+                    <button type="button" className="players__remove players__kick" onClick={() => kick(p.id)} aria-label={t('waiting.kick')} title={t('waiting.kick')}>
+                      ✕
+                    </button>
+                  ) : null}
+                </span>
               )}
             </li>
           ))}
