@@ -617,6 +617,33 @@ func (h *Hub) afterUpdate(roomID string, state *game.GameState) {
 		h.mon.Event("game.start", roomID, "players", len(state.Players), "humans", state.HumanCount())
 	} else if last == "finish" && state.Status == game.StatusFinished {
 		go h.recordFinish(roomID, state)
+	} else if last == "bito" && state.Status == game.StatusPlaying {
+		var n int
+		fmt.Sscan(state.Log[len(state.Log)-1].Text, &n)
+		if n >= 5 {
+			h.botCheer(roomID, state, "🔥") // a bout that burns: the bots throw fire
+		}
+	}
+}
+
+// botCheer has some of the bots at the table throw an emoji after a moment.
+func (h *Hub) botCheer(roomID string, state *game.GameState, emoji string) {
+	if h.bots.Disabled {
+		return
+	}
+	for _, p := range state.Players {
+		if !p.IsBot || p.Out || rand.Float64() > 0.7 {
+			continue
+		}
+		botID := p.ID
+		time.AfterFunc(400*time.Millisecond+time.Duration(rand.Int64N(int64(1400*time.Millisecond))), func() {
+			select {
+			case <-h.ctx.Done():
+				return
+			default:
+			}
+			h.botSayRaw(roomID, botID, "", emoji)
+		})
 	}
 }
 

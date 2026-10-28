@@ -169,6 +169,8 @@ export class TableScene {
   private wearKey = '';
   /** how many bouts went up in flames (diagnostics) */
   private burns = 0;
+  /** cards that burn away instead of flying to the discard */
+  private burning = new Set<string>();
   /** the room warms up a touch with every "bito" and flares on a win; a cloud dims the lamp now and then */
   private warmth = 0;
   private warmFlash = 0;
@@ -431,7 +433,10 @@ export class TableScene {
       for (const [id, view] of this.views) {
         if (!wanted.has(id) && view.root.parent === this.layers.table && !view.isDissolved) leaving.push(view);
       }
-      if (leaving.length >= 5) this.burn(leaving);
+      if (leaving.length >= 5) {
+        this.burn(leaving);
+        for (const v of leaving) this.burning.add(v.card.id);
+      }
     }
     // Cards that left the visible state fly away and are removed.
     for (const [id, view] of this.views) {
@@ -449,6 +454,11 @@ export class TableScene {
       view.root.visible = true;
       view.setGlow(false);
       this.reparent(view, this.layers.table);
+      if (this.burning.delete(id)) {
+        // it burns where it lies: chars, curls up and crumbles to nothing
+        void this.tweener.to(view.root, { x: view.root.x + (Math.random() - 0.5) * 10, y: view.root.y - 6, rotation: view.root.rotation + (Math.random() - 0.5) * 0.6, scale: 0.05, alpha: 0 }, { duration: 900, ease: easings.outQuad }).then(() => view.destroy());
+        continue;
+      }
       void this.tweener.to(view.root, { x: exit.x, y: exit.y, rotation: exit.rotation, scale: exit.scale, alpha: 0.9 }, { duration: 360, ease: easings.outQuad }).then(() => view.destroy());
     }
     if (m.table.length === 0) this.dissolved.clear();
@@ -1304,12 +1314,22 @@ export class TableScene {
     if (!m) return;
     const wiped = new Set([...m.wiped, ...this.wipedLocal]);
     const progress = [...this.scrubbed].map(([i, p]) => `${i}=${p.toFixed(2)}`).join(',');
-    const key = `${m.roomId}:${m.gamesPlayed}:${m.fliesDead}:${[...wiped].sort((a, b) => a - b).join(',')}:${progress}:${this.metrics.width}x${this.metrics.height}:${isDark()}`;
+    const key = `${m.roomId}:${m.gamesPlayed}:${m.fliesDead}:${[...wiped].sort((a, b) => a - b).join(',')}:${progress}:${this.metrics.width}x${this.metrics.height}:${isDark()}:${this.lite}`;
     if (key === this.wearKey) return;
     this.wearKey = key;
     const g = this.wear;
     g.clear();
     this.stains = [];
+    if (this.lite) {
+      // no lamp in lite effects: a still shade of the window frame gives the cloth some depth anyway
+      const { width: w, height: h } = this.metrics;
+      const x0 = w * 0.55;
+      const bw = w * 0.22;
+      const slant = h * 0.12;
+      const a = isDark() ? 0.1 : 0.06;
+      g.poly([x0, 0, x0 + bw, 0, x0 + bw + slant, h, x0 + slant, h]).fill({ color: 0x000000, alpha: a });
+      g.poly([x0 + bw * 0.46, 0, x0 + bw * 0.54, 0, x0 + bw * 0.54 + slant, h, x0 + bw * 0.46 + slant, h]).fill({ color: 0x000000, alpha: a * 0.8 });
+    }
     const games = Math.min(12, m.gamesPlayed);
     if (games === 0 && m.fliesDead === 0) return;
     let seed = 2166136261;
@@ -1353,7 +1373,7 @@ export class TableScene {
       const alpha = 0.35 + rnd() * 0.3;
       const idx = 1000 + i;
       if (wiped.has(idx)) continue;
-      this.stains.push({ i: idx, x, y, r: 12, effort: 40 });
+      this.stains.push({ i: idx, x, y, r: 22, effort: 40 });
       g.circle(x, y, r).fill({ color: dark ? 0xaaa59a : 0x55524b, alpha: alpha * left(idx) });
     }
     // cigarette burns from the third game, scratches from the second: both take real scrubbing
@@ -1362,7 +1382,7 @@ export class TableScene {
       const y = tableTop + rnd() * (tableBottom - tableTop);
       const idx = 2000 + i;
       if (wiped.has(idx)) continue;
-      this.stains.push({ i: idx, x, y, r: 14, effort: 320 });
+      this.stains.push({ i: idx, x, y, r: 24, effort: 320 });
       g.circle(x, y, 3.5).fill({ color: 0x2b2118, alpha: 0.75 * left(idx) });
       g.circle(x, y, 2).fill({ color: 0x0d0d0d, alpha: 0.9 * left(idx) });
     }
@@ -1373,7 +1393,7 @@ export class TableScene {
       const a = rnd() * Math.PI;
       const idx = 3000 + i;
       if (wiped.has(idx)) continue;
-      this.stains.push({ i: idx, x: x + (Math.cos(a) * len) / 2, y: y + (Math.sin(a) * len) / 2, r: len / 2 + 10, effort: 280 });
+      this.stains.push({ i: idx, x: x + (Math.cos(a) * len) / 2, y: y + (Math.sin(a) * len) / 2, r: len / 2 + 18, effort: 280 });
       g.moveTo(x, y).lineTo(x + Math.cos(a) * len, y + Math.sin(a) * len).stroke({ width: 1, color: dark ? 0xffffff : 0x000000, alpha: 0.12 * left(idx) });
     }
     // the fly: slapped here, or just a casualty of the fifth game; a couple of passes brush it off
@@ -1383,7 +1403,7 @@ export class TableScene {
       const y = tableTop + 20 + rnd() * (tableBottom - tableTop - 40);
       const idx = 4000 + i;
       if (wiped.has(idx)) continue;
-      this.stains.push({ i: idx, x, y, r: 16, effort: 120 });
+      this.stains.push({ i: idx, x, y, r: 26, effort: 120 });
       const k = left(idx);
       g.ellipse(x, y, 3.2, 2).fill({ color: 0x1a1a1a, alpha: 0.9 * k });
       g.circle(x + 3, y - 0.5, 1.4).fill({ color: 0x1a1a1a, alpha: 0.9 * k });
@@ -1398,13 +1418,13 @@ export class TableScene {
     if (views.length === 0) return;
     this.burns++;
     sound.fire();
-    const perCard = this.lite ? 2 : 6;
+    const perCard = this.lite ? 4 : 14;
     const flames: { g: Graphics; x: number; y: number; vx: number; vy: number; life: number; size: number }[] = [];
     for (const v of views) {
       for (let i = 0; i < perCard; i++) {
         const g = new Graphics();
         this.layers.drag.addChild(g);
-        flames.push({ g, x: v.root.x + (Math.random() - 0.5) * this.metrics.cardW * 0.8, y: v.root.y + (Math.random() - 0.3) * this.metrics.cardH * 0.6, vx: (Math.random() - 0.5) * 40, vy: -60 - Math.random() * 90, life: 0.6 + Math.random() * 0.5, size: 4 + Math.random() * 8 });
+        flames.push({ g, x: v.root.x + (Math.random() - 0.5) * this.metrics.cardW * 0.9, y: v.root.y + (Math.random() - 0.2) * this.metrics.cardH * 0.8, vx: (Math.random() - 0.5) * 50, vy: -80 - Math.random() * 140, life: 0.7 + Math.random() * 0.9, size: 8 + Math.random() * 18 });
       }
     }
     let t = 0;
@@ -1424,7 +1444,8 @@ export class TableScene {
         f.y += f.vy * s;
         const k = Math.max(0, f.life);
         const w = f.size * (0.4 + k);
-        f.g.clear().poly([f.x - w / 2, f.y + w / 2, f.x + w / 2, f.y + w / 2, f.x, f.y - w]).fill({ color: k > 0.5 ? 0xffd166 : 0xff5a1f, alpha: Math.min(1, k * 1.5) });
+        const color = k > 0.8 ? 0xfff2a8 : k > 0.45 ? 0xffb020 : k > 0.2 ? 0xff4d12 : 0x3a2a24; // white-hot, yellow, red, smoke
+        f.g.clear().poly([f.x - w / 2, f.y + w / 2, f.x + w / 2, f.y + w / 2, f.x, f.y - w * 1.4]).fill({ color, alpha: Math.min(1, k * 1.6) });
       }
       return alive;
     });

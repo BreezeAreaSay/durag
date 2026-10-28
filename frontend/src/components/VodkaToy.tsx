@@ -4,9 +4,9 @@ import { haptic } from '../telegram/useTelegram';
 import { t } from '../i18n';
 import { LobbyDeck } from './LobbyDeck';
 
-const W = 300;
-const H = 190;
-const FLOOR = 160;
+const DEF_W = 300;
+const DEF_H = 190;
+const DEF_FLOOR = 160;
 const GRAVITY = 1700; // px/s²
 const BREAK_SPEED = 820; // px/s on impact
 const BOTTLE_W = 34;
@@ -67,14 +67,25 @@ interface Grab {
  * puddle. Tap the glass to drink it. A double tap on the bare table
  * brings a fresh bottle and glass. Everything stays on this phone.
  */
-export function VodkaToy({ compact = false }: { compact?: boolean }) {
+interface Props {
+  compact?: boolean;
+  /** the canvas, in CSS px: the whole table when the player is out, a card on the result screen */
+  width?: number;
+  height?: number;
+  /** y of the table line the things stand on */
+  floor?: number;
+}
+
+export function VodkaToy({ compact = false, width = DEF_W, height = DEF_H, floor = DEF_FLOOR }: Props) {
   const canvas = useRef<HTMLCanvasElement>(null);
+  const dims = useRef({ W: width, H: height, FLOOR: floor });
+  dims.current = { W: width, H: height, FLOOR: floor };
   const [drinks, setDrinks] = useState(0);
   const [note, setNote] = useState<'' | 'broken'>('');
   const [wreck, setWreck] = useState(false); // both in pieces: the deck comes out instead
   const world = useRef({
-    bottle: { x: 215, y: FLOOR, vx: 0, vy: 0, angle: 0, va: 0, broken: false } as Body,
-    glass: { x: 75, y: FLOOR, vx: 0, vy: 0, angle: 0, va: 0, broken: false } as Body,
+    bottle: { x: width * 0.72, y: floor, vx: 0, vy: 0, angle: 0, va: 0, broken: false } as Body,
+    glass: { x: width * 0.25, y: floor, vx: 0, vy: 0, angle: 0, va: 0, broken: false } as Body,
     fill: 100,
     level: 0,
     drops: [] as Drop[],
@@ -91,8 +102,8 @@ export function VodkaToy({ compact = false }: { compact?: boolean }) {
     const ctx = el.getContext('2d');
     if (!ctx) return;
     const dpr = Math.min(2, window.devicePixelRatio || 1);
-    el.width = W * dpr;
-    el.height = H * dpr;
+    el.width = dims.current.W * dpr;
+    el.height = dims.current.H * dpr;
     ctx.scale(dpr, dpr);
     let raf = 0;
     let last = performance.now();
@@ -114,6 +125,7 @@ export function VodkaToy({ compact = false }: { compact?: boolean }) {
     };
 
     const settle = (b: Body, dt: number) => {
+      const { W, FLOOR } = dims.current;
       if (w.grab?.body === b) return;
       b.vy += GRAVITY * dt;
       b.x += b.vx * dt;
@@ -145,6 +157,7 @@ export function VodkaToy({ compact = false }: { compact?: boolean }) {
     };
 
     const step = (now: number) => {
+      const { W, FLOOR } = dims.current;
       const dt = Math.min(0.033, (now - last) / 1000);
       last = now;
       const { bottle, glass } = w;
@@ -219,6 +232,7 @@ export function VodkaToy({ compact = false }: { compact?: boolean }) {
     };
 
     const draw = (c: CanvasRenderingContext2D) => {
+      const { W, H, FLOOR } = dims.current;
       const { bottle, glass } = w;
       c.clearRect(0, 0, W, H);
       const ink = getComputedStyle(el).getPropertyValue('--ink').trim() || '#0d0d0d';
@@ -311,6 +325,7 @@ export function VodkaToy({ compact = false }: { compact?: boolean }) {
   }, []);
 
   const point = (e: React.PointerEvent) => {
+    const { W, H } = dims.current;
     const r = canvas.current!.getBoundingClientRect();
     return { x: ((e.clientX - r.left) / r.width) * W, y: ((e.clientY - r.top) / r.height) * H };
   };
@@ -330,8 +345,9 @@ export function VodkaToy({ compact = false }: { compact?: boolean }) {
     const now = performance.now();
     if (now - w.lastTap < 400) {
       // a fresh bottle and glass from under the table
-      w.bottle = { x: 215, y: FLOOR, vx: 0, vy: 0, angle: 0, va: 0, broken: false };
-      w.glass = { x: 75, y: FLOOR, vx: 0, vy: 0, angle: 0, va: 0, broken: false };
+      const { W, FLOOR } = dims.current;
+      w.bottle = { x: W * 0.72, y: FLOOR, vx: 0, vy: 0, angle: 0, va: 0, broken: false };
+      w.glass = { x: W * 0.25, y: FLOOR, vx: 0, vy: 0, angle: 0, va: 0, broken: false };
       w.fill = 100;
       w.level = 0;
       w.shards = [];
@@ -343,6 +359,7 @@ export function VodkaToy({ compact = false }: { compact?: boolean }) {
     w.lastTap = now;
   };
   const onMove = (e: React.PointerEvent) => {
+    const { W, FLOOR } = dims.current;
     const w = world.current;
     const g = w.grab;
     if (!g) return;
@@ -383,7 +400,7 @@ export function VodkaToy({ compact = false }: { compact?: boolean }) {
 
   return (
     <div className={`vodka ${compact ? 'vodka--table' : ''}`} aria-label="vodka">
-      <canvas ref={canvas} className="vodka__canvas" style={{ width: W, height: H }} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} />
+      <canvas ref={canvas} className="vodka__canvas" style={{ width, height }} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} />
       {wreck ? <LobbyDeck /> : null}
       {compact ? null : <p className="vodka__hint">{note === 'broken' ? t('vodka.broken') : drinks > 0 ? t('vodka.drinks', { n: drinks }) : t('vodka.hint')}</p>}
     </div>

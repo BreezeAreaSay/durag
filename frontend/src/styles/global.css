@@ -1507,7 +1507,7 @@ body.fx-shake--laugh {
   top: -2px;
   width: 18px;
   height: 4px;
-  background: linear-gradient(90deg, #d84a2a 0 3px, var(--paper) 3px 12px, #c9a36a 12px);
+  background: linear-gradient(90deg, #c9a36a 0 6px, var(--paper) 6px 15px, #d84a2a 15px);
   border: 1px solid var(--ink);
   transform: rotate(-28deg);
   transform-origin: left center;
@@ -1516,8 +1516,8 @@ body.fx-shake--laugh {
 /* four puffs, phase-shifted: each rises 70px along a sine wobble, grows and dissolves */
 .smoke__puff {
   position: absolute;
-  left: 8px;
-  top: -14px;
+  left: 12px;
+  top: -22px;
   width: 14px;
   height: 14px;
   border-radius: 50%;
@@ -2103,18 +2103,19 @@ body.fx-shake--firecracker {
 }
 
 /* the bottle at the table for a player who is already out */
+/* the player is out: the whole table is theirs to pour and smash on; the HUD stays on top */
 .vodka-seat {
   position: absolute;
   left: 0;
+  top: 0;
   right: 0;
-  z-index: 5;
-  display: flex;
-  justify-content: center;
+  z-index: 2;
   pointer-events: none;
 }
 .vodka-seat .vodka {
   pointer-events: auto;
-  width: 300px;
+  width: 100%;
+  max-width: none;
   margin: 0;
 }
 .vodka__canvas {

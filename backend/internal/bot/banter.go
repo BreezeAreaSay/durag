@@ -37,7 +37,7 @@ func Due(turn, every int) bool {
 // Event is the last thing that happened on the table, seen from the bot:
 // what to tease somebody about.
 type Event struct {
-	Kind     string // took, bito, transfer, lonely, attack, defend, pass, ""
+	Kind     string // took, bito, transfer, lonely, attack, defend, overkill, trump, deck_out, pass, ""
 	Name     string // the player it concerns (never the bot itself)
 	PlayerID string
 	Count    int    // cards: taken, left in hand...
@@ -52,7 +52,7 @@ func (e Event) Notable() bool {
 	switch e.Kind {
 	case "took":
 		return e.Count >= 2
-	case "transfer", "lonely":
+	case "transfer", "lonely", "overkill", "trump", "deck_out":
 		return true
 	}
 	return false
@@ -87,6 +87,17 @@ func LastEvent(s *game.GameState, botID string) Event {
 			return Event{Kind: "lonely", Name: p.Name}
 		}
 	}
+	// the deck ran dry just now: everybody's event, the table changes gear
+	if s.DeckCount == 0 && len(s.Log) > 0 {
+		for i := len(s.Log) - 1; i >= 0 && i >= len(s.Log)-3; i-- {
+			if s.Log[i].Type == "took" || s.Log[i].Type == "bito" {
+				if s.DiscardCount > 0 && deckJustEmptied(s) {
+					return Event{Kind: "deck_out"}
+				}
+				break
+			}
+		}
+	}
 	// people first; another bot's doing only when no person did anything notable lately
 	for _, botsToo := range []bool{false, true} {
 		for i := len(s.Log) - 1; i >= 0 && i >= len(s.Log)-6; i-- {
@@ -110,7 +121,19 @@ func LastEvent(s *game.GameState, botID string) Event {
 				if c, ok := game.CardByID(e.CardID); ok && !c.IsSpecial() {
 					ev.Suit = c.Suit
 				}
-			case "transfer", "pass", "defend":
+			case "defend":
+				ev.Kind = "defend"
+				// a trump on a six: a cover that cost far more than the card it answered
+				if c, ok := game.CardByID(e.CardID); ok && !c.IsSpecial() && c.Suit == s.ActiveTrump() && s.ActiveTrump() != "" {
+					if a, ok := game.CardByID(e.TargetID); ok && !a.IsSpecial() && a.Suit != c.Suit && a.Rank <= 8 {
+						ev.Kind = "overkill"
+						ev.Suit = c.Suit
+					}
+				}
+			case "trump_revealed":
+				ev.Kind = "trump"
+				ev.Suit = s.TrumpSuit
+			case "transfer", "pass":
 				ev.Kind = e.Type
 			default:
 				continue
@@ -158,6 +181,22 @@ var Jabs = map[string][]string{
 		"Неплохо, {n}. Для новичка",
 		"Отбил. Случайно, {n}?",
 	},
+	"overkill": {
+		"Козырем по шестёрке, {n}? Щедро",
+		"{n}, ты козырь на мелочь потратил. Я запомнил",
+		"Богато живёшь, {n}. Козырями отбиваться от мусора",
+		"{n}, козырь ушёл. На что ты его потратил, напомни?",
+	},
+	"trump": {
+		"Козырь {s}. Теперь понятно, кто тут при деньгах",
+		"{s} козырь. У кого на руках, тот и молчит",
+		"Открыли {s}. Я свои теперь берегу, а вы как хотите",
+	},
+	"deck_out": {
+		"Колода кончилась. Теперь считаем, кто что держит",
+		"Всё, колода пустая. Дальше по-честному: кто что набрал",
+		"Колоды нет. Самое интересное начинается",
+	},
 	"": {
 		"Козырь у меня. Наверное",
 		"Кто-то тут нервничает",
@@ -174,5 +213,24 @@ func Jab(rng *rand.Rand, ev Event) string {
 	}
 	line := pool[rng.IntN(len(pool))]
 	line = strings.ReplaceAll(line, "{n}", ev.Name)
+	line = strings.ReplaceAll(line, "{s}", suitGenitive(ev.Suit))
 	return strings.ReplaceAll(line, "{c}", fmt.Sprint(ev.Count))
+}
+
+// deckJustEmptied: the last refill drained the deck (no "took"/"bito" entry
+// before this one happened with the deck already empty).
+func deckJustEmptied(s *game.GameState) bool {
+	seen := 0
+	for i := len(s.Log) - 1; i >= 0; i-- {
+		switch s.Log[i].Type {
+		case "took", "bito":
+			seen++
+			if seen == 2 {
+				return false
+			}
+		case "trump_revealed":
+			return true // the last card out of the deck is the trump: that was this refill
+		}
+	}
+	return false
 }

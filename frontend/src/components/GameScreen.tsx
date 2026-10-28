@@ -171,8 +171,8 @@ export function GameScreen({ state }: Props) {
         />
       ) : null}
       {state.status === 'playing' && state.players.find((p) => p.id === selfId)?.out ? (
-        <div className="vodka-seat" style={{ top: metrics.handTop - 30 }}>
-          <VodkaToy compact />
+        <div className="vodka-seat">
+          <VodkaToy compact width={size.w} height={metrics.handTop + 40} floor={metrics.handTop + 16} />
         </div>
       ) : null}
       {state.status === 'finished' ? <ResultOverlay state={state} /> : null}
