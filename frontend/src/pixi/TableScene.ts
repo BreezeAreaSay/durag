@@ -137,8 +137,10 @@ export class TableScene {
   private blow: { x: number; y: number; at: number } | null = null;
   /** the stains on the cloth, to rub at: index, centre, radius */
   private stains: { i: number; x: number; y: number; r: number }[] = [];
-  private scrub: { i: number; x: number; dir: number; turns: number } | null = null;
+  private scrub: { i: number; x: number; y: number; dir: number; turns: number; dist: number } | null = null;
   private wipedLocal = new Set<number>();
+  /** how far each stain has been rubbed (0..1): it fades as the finger works */
+  private scrubbed = new Map<number, number>();
   private tremble = 0;
   /** the lamp over the table: shadows, the light spot, the swing after a fist */
   private lamp = new Lamp();
@@ -165,6 +167,8 @@ export class TableScene {
   /** the cloth's wear: stains, ash, scratches, a dead fly; redrawn when the games count changes */
   private wear = new Graphics();
   private wearKey = '';
+  /** how many bouts went up in flames (diagnostics) */
+  private burns = 0;
   /** the room warms up a touch with every "bito" and flares on a win; a cloud dims the lamp now and then */
   private warmth = 0;
   private warmFlash = 0;
@@ -363,6 +367,13 @@ export class TableScene {
     this.views.clear();
   }
 
+  /** Diagnostics (`?debug=1`): set fire to whatever lies on the table right now. */
+  debugBurn(): number {
+    const views = [...this.views.values()].filter((v) => v.root.parent === this.layers.table);
+    this.burn(views);
+    return views.length;
+  }
+
   /** Read-only snapshot for diagnostics and end-to-end tests (`?debug=1` exposes it as window.__durag). */
   debugSnapshot(): Record<string, unknown> {
     const layerName = (c: Container | null) => (c === this.layers.hand ? 'hand' : c === this.layers.table ? 'table' : c === this.layers.drag ? 'drag' : c === this.layers.piles ? 'piles' : 'none');
@@ -374,6 +385,9 @@ export class TableScene {
         return v ? { id: c.id, x: Math.round(v.root.x), y: Math.round(v.root.y), visible: v.root.visible, renderable: v.root.renderable, alpha: v.root.alpha, layer: layerName(v.root.parent), playable } : { id: c.id, missing: true, playable };
       }),
       table: m?.table.length ?? 0,
+      burns: this.burns,
+      stains: this.stains.map((st) => ({ i: st.i, x: Math.round(st.x), y: Math.round(st.y), r: Math.round(st.r) })),
+      wiped: [...(m?.wiped ?? []), ...this.wipedLocal],
       pending: [...this.pending.keys()],
       drag: this.drag?.id ?? null,
       revealHidden: this.revealHidden,
@@ -1026,7 +1040,7 @@ export class TableScene {
     this.blow = { x: e.global.x, y: e.global.y, at: performance.now() };
     const g = this.world.toLocal(e.global);
     const stain = this.stains.find((st) => Math.hypot(g.x - st.x, g.y - st.y) < st.r);
-    this.scrub = stain ? { i: stain.i, x: g.x, dir: 0, turns: 0 } : null;
+    this.scrub = stain ? { i: stain.i, x: g.x, y: g.y, dir: 0, turns: 0, dist: 0 } : null;
   };
 
   /** the finger goes back and forth over a stain: a few passes and it comes off, with a squeak */
@@ -1034,12 +1048,14 @@ export class TableScene {
     const sc = this.scrub;
     if (!sc) return;
     const stain = this.stains.find((st) => st.i === sc.i);
-    if (!stain || Math.hypot(x - stain.x, y - stain.y) > stain.r * 1.8) {
+    if (!stain || Math.hypot(x - stain.x, y - stain.y) > stain.r * 2.5) {
       this.scrub = null;
       return;
     }
     const dx = x - sc.x;
-    if (Math.abs(dx) < 3) return;
+    sc.dist += Math.hypot(dx, y - sc.y);
+    sc.y = y;
+    if (Math.abs(dx) < 2) return;
     const dir = Math.sign(dx);
     if (sc.dir !== 0 && dir !== sc.dir) {
       sc.turns++;
@@ -1047,10 +1063,18 @@ export class TableScene {
     }
     sc.dir = dir;
     sc.x = x;
-    if (sc.turns >= 5) {
+    // the stain fades as the finger works: turns or plain distance, whichever comes first
+    const progress = Math.min(1, Math.max(sc.turns / 4, sc.dist / 220));
+    if (progress > (this.scrubbed.get(stain.i) ?? 0) + 0.08) {
+      this.scrubbed.set(stain.i, progress);
+      this.wearKey = '';
+      this.drawWear();
+    }
+    if (progress >= 1) {
       this.scrub = null;
       this.blow = null;
       this.wipedLocal.add(stain.i);
+      this.scrubbed.delete(stain.i);
       this.wearKey = '';
       this.drawWear();
       this.shine(stain.x, stain.y, stain.r);
@@ -1275,7 +1299,8 @@ export class TableScene {
     const m = this.model;
     if (!m) return;
     const wiped = new Set([...m.wiped, ...this.wipedLocal]);
-    const key = `${m.roomId}:${m.gamesPlayed}:${m.fliesDead}:${[...wiped].sort((a, b) => a - b).join(',')}:${this.metrics.width}x${this.metrics.height}:${isDark()}`;
+    const progress = [...this.scrubbed].map(([i, p]) => `${i}=${p.toFixed(2)}`).join(',');
+    const key = `${m.roomId}:${m.gamesPlayed}:${m.fliesDead}:${[...wiped].sort((a, b) => a - b).join(',')}:${progress}:${this.metrics.width}x${this.metrics.height}:${isDark()}`;
     if (key === this.wearKey) return;
     this.wearKey = key;
     const g = this.wear;
@@ -1308,9 +1333,10 @@ export class TableScene {
       const alpha = 0.08 + rnd() * 0.1;
       const blot = rnd() < 0.35;
       if (wiped.has(i)) continue; // rubbed off: the random numbers were still drawn, so the rest stays put
-      this.stains.push({ i, x, y, r: size + 6 });
-      g.ellipse(x, y, size, size * squash).fill({ color: stainColor, alpha });
-      if (blot) g.circle(x + size * 0.6, y - size * 0.3, size * 0.45).fill({ color: stainColor, alpha: 0.08 });
+      this.stains.push({ i, x, y, r: size + 10 });
+      const left = 1 - (this.scrubbed.get(i) ?? 0); // the finger has taken some of it off already
+      g.ellipse(x, y, size, size * squash).fill({ color: stainColor, alpha: alpha * left });
+      if (blot) g.circle(x + size * 0.6, y - size * 0.3, size * 0.45).fill({ color: stainColor, alpha: 0.08 * left });
     }
     // ash: a scatter of grey specks that grows with the games
     for (let i = 0; i < games * 8; i++) {
@@ -1347,11 +1373,13 @@ export class TableScene {
 
   /** a big bito goes up in flames: embers rise from every card before the pile flies off */
   private burn(views: CardView[]): void {
-    if (this.lite || views.length === 0) return;
+    if (views.length === 0) return;
+    this.burns++;
     sound.fire();
+    const perCard = this.lite ? 2 : 6;
     const flames: { g: Graphics; x: number; y: number; vx: number; vy: number; life: number; size: number }[] = [];
     for (const v of views) {
-      for (let i = 0; i < 6; i++) {
+      for (let i = 0; i < perCard; i++) {
         const g = new Graphics();
         this.layers.drag.addChild(g);
         flames.push({ g, x: v.root.x + (Math.random() - 0.5) * this.metrics.cardW * 0.8, y: v.root.y + (Math.random() - 0.3) * this.metrics.cardH * 0.6, vx: (Math.random() - 0.5) * 40, vy: -60 - Math.random() * 90, life: 0.6 + Math.random() * 0.5, size: 4 + Math.random() * 8 });

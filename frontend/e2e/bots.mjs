@@ -83,7 +83,11 @@ try {
   const deadline = Date.now() + 60000;
   let botMoves = 0;
   let feedSeen = false;
+  let biggestBito = 0;
   while (Date.now() < deadline) {
+    const bitoText = (await p.locator('.lastmove').textContent().catch(() => '')) ?? '';
+    const mm = bitoText.match(/Бито: (\d+)/);
+    if (mm) biggestBito = Math.max(biggestBito, Number(mm[1]));
     const st = (await status()) ?? '';
     const text = (await p.locator('.lastmove').textContent().catch(() => '')) ?? '';
     const boutText = (await p.locator('.chip', { hasText: 'ЗАХОД' }).textContent().catch(() => '')) ?? '';
@@ -91,7 +95,7 @@ try {
     if (bout !== lastBout) { lastBout = bout; bouts = bout; log(`bout ${bout}: ${st} | ${text}`); }
     if (/Вася|Бабуля|Крест|Гоша|Вика|Бутово|Шарик|Петрович/.test(text)) botMoves++;
     if (!feedSeen && (await p.locator('.talk__line').count())) { feedSeen = true; log('talk feed:', await p.locator('.talk__line').first().textContent()); await p.screenshot({ path: join(here, 'shot-bot-talk.png') }); }
-    if (bout >= 4) break;
+    if (bout >= 8) break;
     if (await p.locator('button:has-text("ВЗЯТЬ ПЕНЁК")').count()) { await p.click('button:has-text("ВЗЯТЬ ПЕНЁК")'); continue; }
     if (st.includes('АТАКУЙ')) {
       await p.waitForTimeout(400);
@@ -111,6 +115,8 @@ try {
   if (botMoves === 0) problems.push('no bot move was ever shown in the last-move line');
   if (await p.locator('.reaction--text').count()) problems.push('an in-row bubble is still rendered at the table');
   log('talk feed seen:', feedSeen, '(bots talk rarely: not required)');
+  const finalSnap = await snap();
+  log('bouts burned (five cards and more beaten):', finalSnap?.burns ?? 0, '· biggest bito seen:', biggestBito);
 } catch (err) {
   problems.push(String(err?.stack ?? err));
 } finally {
