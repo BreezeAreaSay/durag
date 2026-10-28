@@ -92,6 +92,8 @@ export interface GameContextValue {
   /** a quick phrase from the list (unlocked by wins) */
   say(text: string): void;
   catchFly(id: string): void;
+  /** a stain rubbed off the cloth */
+  wipe(index: number): void;
   join(roomId: string, create: boolean, options?: { noTimer?: boolean }): void;
   leave(): void;
   addBot(level?: BotLevel): void;
@@ -503,6 +505,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
       react: (emoji) => send({ type: 'SEND_EMOJI', payload: { emoji } }),
       say: (text) => send({ type: 'SAY', payload: { text } }),
       catchFly: (id) => send({ type: 'CATCH_FLY', payload: { id } }),
+      wipe: (index) => send({ type: 'WIPE', payload: { index } }),
       join,
       leave,
       setReady: (ready) => send({ type: 'READY', payload: { ready } }),

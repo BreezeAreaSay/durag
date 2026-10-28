@@ -21,7 +21,7 @@ interface Props {
 }
 
 export function GameScreen({ state }: Props) {
-  const { selfId, playCard, transfer, takeStump, lastError, reactions, react, say, connection, isAdmin, skin, theme } = useGame();
+  const { selfId, playCard, transfer, takeStump, lastError, reactions, react, say, wipe, connection, isAdmin, skin, theme } = useGame();
   const [panelOpen, setPanelOpen] = useState(false);
   const [hudTop, setHudTop] = useState(150);
   const [size, setSize] = useState({ w: window.innerWidth, h: window.innerHeight });
@@ -102,7 +102,10 @@ export function GameScreen({ state }: Props) {
     if (!last) return;
     if (last.type === 'bout_end' || last.type === 'took' || last.type === 'bito') haptic('medium');
     else if (last.type === 'finish') haptic('success');
-    if (last.type === 'took') sound.flush(); // taking the table: the toilet
+    if (last.type === 'took') {
+      if (Number(last.text) >= 5) sound.flush(); // a big take: the toilet
+      else sound.took();
+    }
     else if (last.type === 'bito') sound.bito();
   }, [state.log]);
 
@@ -131,6 +134,10 @@ export function GameScreen({ state }: Props) {
             transfer(cardId);
           }}
           onSlam={() => react(SLAM_EMOJI)}
+          onWipe={(i) => {
+            haptic('light');
+            wipe(i);
+          }}
           onGaze={onGaze}
           slam={slam}
           theme={theme}

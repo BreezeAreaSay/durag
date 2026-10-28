@@ -41,6 +41,8 @@ export interface SceneHandlers {
   onContextLost?(): void;
   /** the viewer double-tapped the empty table: a fist slam, to be sent to the room */
   onSlam?(): void;
+  /** a stain rubbed off the cloth */
+  onWipe?(index: number): void;
   /** a card wants an emoji to fly from a screen point (a Joker laughing) */
   /** the table glanced at a card (a beat worth a look), CSS px inside the host */
   onGaze?(x: number, y: number): void;
@@ -133,6 +135,10 @@ export class TableScene {
   private rub: { x: number; dist: number; turns: number; dir: number } | null = null;
   private rubbedAt = -Infinity;
   private blow: { x: number; y: number; at: number } | null = null;
+  /** the stains on the cloth, to rub at: index, centre, radius */
+  private stains: { i: number; x: number; y: number; r: number }[] = [];
+  private scrub: { i: number; x: number; dir: number; turns: number } | null = null;
+  private wipedLocal = new Set<number>();
   private tremble = 0;
   /** the lamp over the table: shadows, the light spot, the swing after a fist */
   private lamp = new Lamp();
@@ -411,7 +417,7 @@ export class TableScene {
       for (const [id, view] of this.views) {
         if (!wanted.has(id) && view.root.parent === this.layers.table && !view.isDissolved) leaving.push(view);
       }
-      if (leaving.length >= 10) this.burn(leaving);
+      if (leaving.length >= 5) this.burn(leaving);
     }
     // Cards that left the visible state fly away and are removed.
     for (const [id, view] of this.views) {
@@ -1018,7 +1024,56 @@ export class TableScene {
     const m = this.metrics;
     if (e.global.y < m.tableTop || e.global.y > m.handTop) return;
     this.blow = { x: e.global.x, y: e.global.y, at: performance.now() };
+    const g = this.world.toLocal(e.global);
+    const stain = this.stains.find((st) => Math.hypot(g.x - st.x, g.y - st.y) < st.r);
+    this.scrub = stain ? { i: stain.i, x: g.x, dir: 0, turns: 0 } : null;
   };
+
+  /** the finger goes back and forth over a stain: a few passes and it comes off, with a squeak */
+  private scrubMove(x: number, y: number): void {
+    const sc = this.scrub;
+    if (!sc) return;
+    const stain = this.stains.find((st) => st.i === sc.i);
+    if (!stain || Math.hypot(x - stain.x, y - stain.y) > stain.r * 1.8) {
+      this.scrub = null;
+      return;
+    }
+    const dx = x - sc.x;
+    if (Math.abs(dx) < 3) return;
+    const dir = Math.sign(dx);
+    if (sc.dir !== 0 && dir !== sc.dir) {
+      sc.turns++;
+      if (!this.lite) sound.squeak();
+    }
+    sc.dir = dir;
+    sc.x = x;
+    if (sc.turns >= 5) {
+      this.scrub = null;
+      this.blow = null;
+      this.wipedLocal.add(stain.i);
+      this.wearKey = '';
+      this.drawWear();
+      this.shine(stain.x, stain.y, stain.r);
+      this.handlers.onWipe?.(stain.i);
+    }
+  }
+
+  /** the clean spot gleams for a moment */
+  private shine(x: number, y: number, r: number): void {
+    const g = new Graphics();
+    this.layers.drag.addChild(g);
+    let t = 0;
+    this.effects.push((dt) => {
+      t += dt;
+      const u = t / 500;
+      if (u >= 1 || g.destroyed) {
+        if (!g.destroyed) g.destroy();
+        return false;
+      }
+      g.clear().circle(x, y, r * (0.6 + u * 0.8)).fill({ color: 0xffffff, alpha: 0.5 * (1 - u) });
+      return true;
+    });
+  }
 
   /** a quick swipe up across the table: the lamp swings and gutters, as if somebody blew on it */
   private endBlow(e: FederatedPointerEvent): void {
@@ -1219,11 +1274,13 @@ export class TableScene {
   private drawWear(): void {
     const m = this.model;
     if (!m) return;
-    const key = `${m.roomId}:${m.gamesPlayed}:${m.fliesDead}:${this.metrics.width}x${this.metrics.height}:${isDark()}`;
+    const wiped = new Set([...m.wiped, ...this.wipedLocal]);
+    const key = `${m.roomId}:${m.gamesPlayed}:${m.fliesDead}:${[...wiped].sort((a, b) => a - b).join(',')}:${this.metrics.width}x${this.metrics.height}:${isDark()}`;
     if (key === this.wearKey) return;
     this.wearKey = key;
     const g = this.wear;
     g.clear();
+    this.stains = [];
     const games = Math.min(12, m.gamesPlayed);
     if (games === 0 && m.fliesDead === 0) return;
     let seed = 2166136261;
@@ -1247,8 +1304,13 @@ export class TableScene {
       const x = cx + Math.cos(a) * r * (W / 2 - 20);
       const y = cy + Math.sin(a) * r * ((tableBottom - tableTop) / 2 + 40);
       const size = 6 + rnd() * 16;
-      g.ellipse(x, y, size, size * (0.5 + rnd() * 0.6)).fill({ color: stainColor, alpha: 0.08 + rnd() * 0.1 });
-      if (rnd() < 0.35) g.circle(x + size * 0.6, y - size * 0.3, size * 0.45).fill({ color: stainColor, alpha: 0.08 });
+      const squash = 0.5 + rnd() * 0.6;
+      const alpha = 0.08 + rnd() * 0.1;
+      const blot = rnd() < 0.35;
+      if (wiped.has(i)) continue; // rubbed off: the random numbers were still drawn, so the rest stays put
+      this.stains.push({ i, x, y, r: size + 6 });
+      g.ellipse(x, y, size, size * squash).fill({ color: stainColor, alpha });
+      if (blot) g.circle(x + size * 0.6, y - size * 0.3, size * 0.45).fill({ color: stainColor, alpha: 0.08 });
     }
     // ash: a scatter of grey specks that grows with the games
     for (let i = 0; i < games * 8; i++) {
@@ -1513,6 +1575,7 @@ export class TableScene {
   private onPointerMove = (e: FederatedPointerEvent): void => {
     const g = this.world.toLocal(e.global); // the head moves: pointer in world space
     if (this.rub) this.rubMove(e.global.x);
+    if (this.scrub) this.scrubMove(g.x, g.y);
     const d = this.drag;
     if (!d) return;
     if (!d.moved && Math.hypot(g.x - d.startX, g.y - d.startY) > 7) d.moved = true;
@@ -1522,6 +1585,7 @@ export class TableScene {
 
   private onPointerUp = (e: FederatedPointerEvent): void => {
     this.rub = null;
+    this.scrub = null;
     this.endBlow(e);
     const d = this.drag;
     if (!d) return;

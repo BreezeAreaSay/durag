@@ -273,3 +273,23 @@ func TestTheHostKicksAndSwapsBots(t *testing.T) {
 		t.Fatalf("the bot was not kicked: %d players", len(s.Players))
 	}
 }
+
+func TestAWipedStainIsSharedAndCountedOnce(t *testing.T) {
+	srv, _ := newTestServer(t, true)
+	a := dial(t, srv)
+	a.send(TypeJoinRoom, devJoin("WIPE", true, "A", "Alice"))
+	a.state()
+	b := dial(t, srv)
+	b.send(TypeJoinRoom, devJoin("WIPE", false, "B", "Bob"))
+	b.state()
+	a.state()
+	a.send(TypeWipe, WipePayload{Index: 4})
+	for _, c := range []*testClient{a, b} {
+		if s := c.state(); len(s.WipedStains) != 1 || s.WipedStains[0] != 4 {
+			t.Fatalf("wiped: %v", s.WipedStains)
+		}
+	}
+	a.send(TypeWipe, WipePayload{Index: 4}) // again: nothing to say
+	a.send(TypePing, nil)
+	a.expect(TypePong)
+}

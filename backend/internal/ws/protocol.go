@@ -33,6 +33,7 @@ const (
 	TypeSay          = "SAY"          // a quick phrase from the list (unlocked by wins)
 	TypeCatchFly     = "CATCH_FLY"    // the player slapped the fly
 	TypeKick         = "KICK"         // the host or an admin removes a player from the lobby
+	TypeWipe         = "WIPE"         // a stain rubbed off the cloth (index into the drawn set)
 	TypeSwapBot      = "SWAP_BOT"     // a tap on a bot's face in the lobby: the next free character takes the seat
 )
 
@@ -86,6 +87,11 @@ type AddBotPayload struct {
 // RemoveBotPayload is the payload of REMOVE_BOT.
 type RemoveBotPayload struct {
 	PlayerID string `json:"player_id"`
+}
+
+// WipePayload is the payload of WIPE.
+type WipePayload struct {
+	Index int `json:"index"`
 }
 
 // KickPayload is the payload of KICK and SWAP_BOT.

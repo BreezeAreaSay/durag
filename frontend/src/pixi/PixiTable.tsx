@@ -14,6 +14,7 @@ interface Props {
   onTransfer(cardId: string): void;
   onTakeStump(): void;
   onSlam(): void;
+  onWipe(index: number): void;
   onGaze(x: number, y: number): void;
   /** a fist slam to play, keyed by nonce */
   slam: number;
@@ -31,7 +32,7 @@ declare global {
 const DEBUG = typeof location !== 'undefined' && new URLSearchParams(location.search).has('debug');
 
 /** Mounts the PixiJS table once and streams model updates into it. */
-export function PixiTable({ model, reject, topInset, labels, connection, onPlay, onTransfer, onTakeStump, onSlam, onGaze, slam, theme }: Props) {
+export function PixiTable({ model, reject, topInset, labels, connection, onPlay, onTransfer, onTakeStump, onSlam, onWipe, onGaze, slam, theme }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<TableScene | null>(null);
   // bumped when the WebGL context is lost: the scene is torn down and rebuilt
@@ -42,8 +43,8 @@ export function PixiTable({ model, reject, topInset, labels, connection, onPlay,
   topRef.current = topInset;
   const labelsRef = useRef(labels);
   labelsRef.current = labels;
-  const handlersRef = useRef({ onPlay, onTransfer, onTakeStump, onSlam, onGaze });
-  handlersRef.current = { onPlay, onTransfer, onTakeStump, onSlam, onGaze };
+  const handlersRef = useRef({ onPlay, onTransfer, onTakeStump, onSlam, onWipe, onGaze });
+  handlersRef.current = { onPlay, onTransfer, onTakeStump, onSlam, onWipe, onGaze };
 
   useEffect(() => {
     const host = hostRef.current;
@@ -55,6 +56,7 @@ export function PixiTable({ model, reject, topInset, labels, connection, onPlay,
         onTransfer: (id) => handlersRef.current.onTransfer(id),
         onTakeStump: () => handlersRef.current.onTakeStump(),
         onSlam: () => handlersRef.current.onSlam(),
+        onWipe: (i) => handlersRef.current.onWipe(i),
         onGaze: (x, y) => handlersRef.current.onGaze(x, y),
         onContextLost: () => {
           console.warn('WebGL context lost: rebuilding the table');

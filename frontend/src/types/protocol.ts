@@ -78,6 +78,7 @@ export interface GameState {
   no_timer?: boolean; // the table plays without a turn timer
   games_played?: number; // games started at this table: the wear on the cloth
   flies_dead?: number; // flies slapped here: they stay on the cloth
+  wiped_stains?: number[]; // stains rubbed off the cloth
   turn_actors: string[]; // who has to act before turn_deadline
 }
 
@@ -139,6 +140,7 @@ export type ClientMessage =
   | { type: 'LEAVE_ROOM' }
   | { type: 'ADD_BOT'; payload?: { level: BotLevel } } // lobby: seat a server-driven opponent
   | { type: 'REMOVE_BOT'; payload: { player_id: string } }
+  | { type: 'WIPE'; payload: { index: number } } // a stain rubbed off the cloth
   | { type: 'KICK'; payload: { player_id: string } } // the host or an admin removes a player from the lobby
   | { type: 'SWAP_BOT'; payload: { player_id: string } } // the next free character takes the bot's seat
   | { type: 'SEND_EMOJI'; payload: { emoji: string } } // alias REACT on the server
