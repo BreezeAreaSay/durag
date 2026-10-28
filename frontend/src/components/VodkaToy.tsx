@@ -350,7 +350,9 @@ export function VodkaToy({ compact = false }: { compact?: boolean }) {
     const now = performance.now();
     const dt = Math.max(1, now - g.lastT) / 1000;
     const nx = Math.max(20, Math.min(W - 20, p.x + g.dx));
-    const ny = Math.max(g.body === w.bottle ? BOTTLE_H + 4 : GLASS_H + 4, Math.min(FLOOR, p.y + g.dy));
+    // the thing stays on the canvas: its top (the bottle's mouth, lower when it leans) may just touch the edge
+    const height = g.body === w.bottle ? Math.max(0.2, Math.cos(g.body.angle)) * BOTTLE_H : GLASS_H;
+    const ny = Math.max(height - 16, Math.min(FLOOR, p.y + g.dy));
     g.body.vx = (nx - g.body.x) / dt;
     g.body.vy = (ny - g.body.y) / dt;
     g.body.x = nx;
