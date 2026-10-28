@@ -443,7 +443,7 @@ func (h *Hub) wipe(c *Client, raw json.RawMessage) {
 		return
 	}
 	var p WipePayload
-	if err := json.Unmarshal(raw, &p); err != nil || p.Index < 0 || p.Index > 200 {
+	if err := json.Unmarshal(raw, &p); err != nil || p.Index < 0 || p.Index > 10000 {
 		c.sendError("BAD_PAYLOAD", "malformed WIPE payload", "")
 		return
 	}
@@ -453,7 +453,7 @@ func (h *Hub) wipe(c *Client, raw json.RawMessage) {
 				return errStale // already clean
 			}
 		}
-		if len(s.WipedStains) >= 200 {
+		if len(s.WipedStains) >= 2000 {
 			return errStale
 		}
 		s.WipedStains = append(s.WipedStains, p.Index)

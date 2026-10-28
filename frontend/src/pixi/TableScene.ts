@@ -136,7 +136,7 @@ export class TableScene {
   private rubbedAt = -Infinity;
   private blow: { x: number; y: number; at: number } | null = null;
   /** the stains on the cloth, to rub at: index, centre, radius */
-  private stains: { i: number; x: number; y: number; r: number }[] = [];
+  private stains: { i: number; x: number; y: number; r: number; effort: number }[] = [];
   private scrub: { i: number; x: number; y: number; dir: number; turns: number; dist: number } | null = null;
   private wipedLocal = new Set<number>();
   /** how far each stain has been rubbed (0..1): it fades as the finger works */
@@ -1039,7 +1039,11 @@ export class TableScene {
     if (e.global.y < m.tableTop || e.global.y > m.handTop) return;
     this.blow = { x: e.global.x, y: e.global.y, at: performance.now() };
     const g = this.world.toLocal(e.global);
-    const stain = this.stains.find((st) => Math.hypot(g.x - st.x, g.y - st.y) < st.r);
+    // the nearest piece of dirt under the finger (the small ones first: a speck under a stain is still a speck)
+    let stain: (typeof this.stains)[number] | undefined;
+    for (const st of this.stains) {
+      if (Math.hypot(g.x - st.x, g.y - st.y) < st.r && (!stain || st.r < stain.r)) stain = st;
+    }
     this.scrub = stain ? { i: stain.i, x: g.x, y: g.y, dir: 0, turns: 0, dist: 0 } : null;
   };
 
@@ -1064,7 +1068,7 @@ export class TableScene {
     sc.dir = dir;
     sc.x = x;
     // the stain fades as the finger works: turns or plain distance, whichever comes first
-    const progress = Math.min(1, Math.max(sc.turns / 4, sc.dist / 220));
+    const progress = Math.min(1, Math.max((sc.turns * 55) / stain.effort, sc.dist / stain.effort));
     if (progress > (this.scrubbed.get(stain.i) ?? 0) + 0.08) {
       this.scrubbed.set(stain.i, progress);
       this.wearKey = '';
@@ -1333,41 +1337,59 @@ export class TableScene {
       const alpha = 0.08 + rnd() * 0.1;
       const blot = rnd() < 0.35;
       if (wiped.has(i)) continue; // rubbed off: the random numbers were still drawn, so the rest stays put
-      this.stains.push({ i, x, y, r: size + 10 });
+      this.stains.push({ i, x, y, r: size + 10, effort: 220 });
       const left = 1 - (this.scrubbed.get(i) ?? 0); // the finger has taken some of it off already
       g.ellipse(x, y, size, size * squash).fill({ color: stainColor, alpha: alpha * left });
       if (blot) g.circle(x + size * 0.6, y - size * 0.3, size * 0.45).fill({ color: stainColor, alpha: 0.08 * left });
     }
-    // ash: a scatter of grey specks that grows with the games
+    // Every kind of dirt has its own index range so a wipe names one thing:
+    // stains 0.., ash 1000.., burns 2000.., scratches 3000.., flies 4000..
+    const left = (i: number) => 1 - (this.scrubbed.get(i) ?? 0);
+    // ash: a scatter of grey specks that grows with the games; a touch takes a speck away
     for (let i = 0; i < games * 8; i++) {
       const x = 16 + rnd() * (W - 32);
       const y = tableTop + rnd() * (tableBottom - tableTop + 60);
-      g.circle(x, y, 0.8 + rnd() * 1.4).fill({ color: dark ? 0xaaa59a : 0x55524b, alpha: 0.35 + rnd() * 0.3 });
+      const r = 0.8 + rnd() * 1.4;
+      const alpha = 0.35 + rnd() * 0.3;
+      const idx = 1000 + i;
+      if (wiped.has(idx)) continue;
+      this.stains.push({ i: idx, x, y, r: 12, effort: 40 });
+      g.circle(x, y, r).fill({ color: dark ? 0xaaa59a : 0x55524b, alpha: alpha * left(idx) });
     }
-    // cigarette burns from the third game, scratches from the second
+    // cigarette burns from the third game, scratches from the second: both take real scrubbing
     for (let i = 0; i < Math.max(0, games - 2); i++) {
       const x = 24 + rnd() * (W - 48);
       const y = tableTop + rnd() * (tableBottom - tableTop);
-      g.circle(x, y, 3.5).fill({ color: 0x2b2118, alpha: 0.75 });
-      g.circle(x, y, 2).fill({ color: 0x0d0d0d, alpha: 0.9 });
+      const idx = 2000 + i;
+      if (wiped.has(idx)) continue;
+      this.stains.push({ i: idx, x, y, r: 14, effort: 320 });
+      g.circle(x, y, 3.5).fill({ color: 0x2b2118, alpha: 0.75 * left(idx) });
+      g.circle(x, y, 2).fill({ color: 0x0d0d0d, alpha: 0.9 * left(idx) });
     }
     for (let i = 0; i < Math.max(0, games - 1) * 2; i++) {
       const x = 20 + rnd() * (W - 40);
       const y = tableTop + rnd() * (tableBottom - tableTop);
       const len = 14 + rnd() * 40;
       const a = rnd() * Math.PI;
-      g.moveTo(x, y).lineTo(x + Math.cos(a) * len, y + Math.sin(a) * len).stroke({ width: 1, color: dark ? 0xffffff : 0x000000, alpha: 0.12 });
+      const idx = 3000 + i;
+      if (wiped.has(idx)) continue;
+      this.stains.push({ i: idx, x: x + (Math.cos(a) * len) / 2, y: y + (Math.sin(a) * len) / 2, r: len / 2 + 10, effort: 280 });
+      g.moveTo(x, y).lineTo(x + Math.cos(a) * len, y + Math.sin(a) * len).stroke({ width: 1, color: dark ? 0xffffff : 0x000000, alpha: 0.12 * left(idx) });
     }
-    // the fly: slapped here, or just a casualty of the fifth game
+    // the fly: slapped here, or just a casualty of the fifth game; a couple of passes brush it off
     const flies = m.fliesDead + (games >= 5 ? 1 : 0);
     for (let i = 0; i < Math.min(3, flies); i++) {
       const x = 30 + rnd() * (W - 60);
       const y = tableTop + 20 + rnd() * (tableBottom - tableTop - 40);
-      g.ellipse(x, y, 3.2, 2).fill({ color: 0x1a1a1a, alpha: 0.9 });
-      g.circle(x + 3, y - 0.5, 1.4).fill({ color: 0x1a1a1a, alpha: 0.9 });
-      g.ellipse(x - 1, y - 2.5, 2.6, 1.2).fill({ color: 0xffffff, alpha: 0.35 });
-      g.ellipse(x - 1, y + 2.5, 2.6, 1.2).fill({ color: 0xffffff, alpha: 0.35 });
-      for (let k = 0; k < 3; k++) g.moveTo(x - 2 + k * 2, y + 1).lineTo(x - 3 + k * 2.5, y + 4).stroke({ width: 0.6, color: 0x1a1a1a, alpha: 0.9 });
+      const idx = 4000 + i;
+      if (wiped.has(idx)) continue;
+      this.stains.push({ i: idx, x, y, r: 16, effort: 120 });
+      const k = left(idx);
+      g.ellipse(x, y, 3.2, 2).fill({ color: 0x1a1a1a, alpha: 0.9 * k });
+      g.circle(x + 3, y - 0.5, 1.4).fill({ color: 0x1a1a1a, alpha: 0.9 * k });
+      g.ellipse(x - 1, y - 2.5, 2.6, 1.2).fill({ color: 0xffffff, alpha: 0.35 * k });
+      g.ellipse(x - 1, y + 2.5, 2.6, 1.2).fill({ color: 0xffffff, alpha: 0.35 * k });
+      for (let w = 0; w < 3; w++) g.moveTo(x - 2 + w * 2, y + 1).lineTo(x - 3 + w * 2.5, y + 4).stroke({ width: 0.6, color: 0x1a1a1a, alpha: 0.9 * k });
     }
   }
 
