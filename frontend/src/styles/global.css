@@ -2230,3 +2230,26 @@ body.fx-shake--firecracker {
   font-size: 11px;
   color: var(--grey);
 }
+
+/* the bottle at the table for a player who is already out */
+.vodka-seat {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 5;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+.vodka-seat .vodka {
+  pointer-events: auto;
+  width: 260px;
+  height: 170px;
+  margin: 0;
+}
+.vodka--table .vodka__table {
+  background: rgba(13, 13, 13, 0.35);
+}
+.vodka__bottle {
+  transition: transform 160ms ease-out;
+}

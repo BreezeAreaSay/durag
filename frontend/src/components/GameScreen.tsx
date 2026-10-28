@@ -5,6 +5,7 @@ import { EmojiPanel } from './EmojiPanel';
 import { EffectLayer } from './EffectLayer';
 import { ReactionLayer } from './ReactionLayer';
 import { FlyLayer } from './FlyLayer';
+import { VodkaToy } from './VodkaToy';
 import { SLAM_EMOJI } from '../util/emoji';
 import { sound } from '../util/audio';
 import { PixiTable } from '../pixi/PixiTable';
@@ -161,6 +162,11 @@ export function GameScreen({ state }: Props) {
           }}
           onClose={() => setPanelOpen(false)}
         />
+      ) : null}
+      {state.status === 'playing' && state.players.find((p) => p.id === selfId)?.out ? (
+        <div className="vodka-seat" style={{ top: metrics.handTop - 30 }}>
+          <VodkaToy compact />
+        </div>
       ) : null}
       {state.status === 'finished' ? <ResultOverlay state={state} /> : null}
     </div>
