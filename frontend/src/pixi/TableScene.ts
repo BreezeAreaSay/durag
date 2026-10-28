@@ -137,10 +137,12 @@ export class TableScene {
   private blow: { x: number; y: number; at: number } | null = null;
   /** the stains on the cloth, to rub at: index, centre, radius */
   private stains: { i: number; x: number; y: number; r: number; effort: number }[] = [];
-  private scrub: { i: number; x: number; y: number; dir: number; turns: number; dist: number } | null = null;
+  private scrub: { x: number; y: number; dir: number; lastSqueak: number } | null = null;
   private wipedLocal = new Set<number>();
   /** how far each stain has been rubbed (0..1): it fades as the finger works */
   private scrubbed = new Map<number, number>();
+  /** the progress the wear layer was last drawn with (redraws are throttled) */
+  private scrubDrawn = new Map<number, number>();
   private tremble = 0;
   /** the lamp over the table: shadows, the light spot, the swing after a fist */
   private lamp = new Lamp();
@@ -1049,56 +1051,57 @@ export class TableScene {
     if (e.global.y < m.tableTop || e.global.y > m.handTop) return;
     this.blow = { x: e.global.x, y: e.global.y, at: performance.now() };
     const g = this.world.toLocal(e.global);
-    // the piece of dirt the finger is most squarely on: distance against size, so a
-    // stain under the finger beats a speck at the finger's edge
-    let stain: (typeof this.stains)[number] | undefined;
-    let best = Infinity;
-    for (const st of this.stains) {
-      const d = Math.hypot(g.x - st.x, g.y - st.y);
-      if (d < st.r && d / st.r < best) {
-        best = d / st.r;
-        stain = st;
-      }
-    }
-    this.scrub = stain ? { i: stain.i, x: g.x, y: g.y, dir: 0, turns: 0, dist: 0 } : null;
+    // the finger is a rag: whatever dirt it passes over gets rubbed, all of it at once
+    this.scrub = this.stains.length ? { x: g.x, y: g.y, dir: 0, lastSqueak: 0 } : null;
   };
 
-  /** the finger goes back and forth over a stain: a few passes and it comes off, with a squeak */
+  /** how far from a piece of dirt the finger still rubs it */
+  static readonly FINGER = 22;
+
+  /** the finger goes back and forth: every stain, speck, scratch and burn under it fades, with a squeak on each turn */
   private scrubMove(x: number, y: number): void {
     const sc = this.scrub;
     if (!sc) return;
-    const stain = this.stains.find((st) => st.i === sc.i);
-    if (!stain || Math.hypot(x - stain.x, y - stain.y) > stain.r * 3) {
-      this.scrub = null;
-      return;
-    }
     const dx = x - sc.x;
-    sc.dist += Math.hypot(dx, y - sc.y);
-    sc.y = y;
-    if (Math.abs(dx) < 2) return;
-    const dir = Math.sign(dx);
+    const moved = Math.hypot(dx, y - sc.y);
+    if (moved < 1) return;
+    let work = moved;
+    const dir = Math.abs(dx) >= 2 ? Math.sign(dx) : sc.dir;
     if (sc.dir !== 0 && dir !== sc.dir) {
-      sc.turns++;
-      if (!this.lite) sound.squeak();
+      work += 55; // a turn of the wrist counts for a lot
+      const now = performance.now();
+      if (!this.lite && now - sc.lastSqueak > 140) {
+        sc.lastSqueak = now;
+        sound.squeak();
+      }
     }
     sc.dir = dir;
     sc.x = x;
-    // the stain fades as the finger works: turns or plain distance, whichever comes first
-    const progress = Math.min(1, Math.max((sc.turns * 55) / stain.effort, sc.dist / stain.effort));
-    if (progress > (this.scrubbed.get(stain.i) ?? 0) + 0.08) {
-      this.scrubbed.set(stain.i, progress);
-      this.wearKey = '';
-      this.drawWear();
+    sc.y = y;
+    let redraw = false;
+    const done: (typeof this.stains)[number][] = [];
+    for (const st of this.stains) {
+      if (Math.hypot(x - st.x, y - st.y) > Math.max(st.r, TableScene.FINGER)) continue;
+      const was = this.scrubbed.get(st.i) ?? 0;
+      const progress = Math.min(1, was + work / st.effort);
+      this.scrubbed.set(st.i, progress);
+      if (progress >= 1) done.push(st);
+      else if (progress - (this.scrubDrawn.get(st.i) ?? 0) >= 0.08) redraw = true;
     }
-    if (progress >= 1) {
-      this.scrub = null;
-      this.blow = null;
-      this.wipedLocal.add(stain.i);
-      this.scrubbed.delete(stain.i);
+    for (const st of done) {
+      this.wipedLocal.add(st.i);
+      this.scrubbed.delete(st.i);
+      this.shine(st.x, st.y, st.r);
+      this.handlers.onWipe?.(st.i);
+    }
+    if (done.length) {
+      this.blow = null; // the hand was wiping, not blowing on the lamp
+      redraw = true;
+    }
+    if (redraw) {
+      this.scrubDrawn = new Map(this.scrubbed);
       this.wearKey = '';
       this.drawWear();
-      this.shine(stain.x, stain.y, stain.r);
-      this.handlers.onWipe?.(stain.i);
     }
   }
 

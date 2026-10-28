@@ -17,6 +17,32 @@ type Dossier struct {
 	WorstTake int    // the biggest single take ever
 	FavSuit   string // the suit they open with most, "" for no habit
 	Scar      bool   // lost their last game
+	// the bright side: what to respect
+	Wins       int // games won (first out)
+	Streak     int // wins in a row right now
+	BestStreak int // the longest run of wins ever
+}
+
+// WinRate is the share of games won, 0..1 (0 for a stranger).
+func (d Dossier) WinRate() float64 {
+	if d.Games == 0 {
+		return 0
+	}
+	return float64(d.Wins) / float64(d.Games)
+}
+
+// LossRate is the share of games lost as the fool, 0..1.
+func (d Dossier) LossRate() float64 {
+	if d.Games == 0 {
+		return 0
+	}
+	return float64(d.Losses) / float64(d.Games)
+}
+
+// Respected tells whether the table owes this person respect: a run of
+// wins, or a record over enough games.
+func (d Dossier) Respected() bool {
+	return d.Streak >= 2 || (d.Games >= 5 && d.WinRate() >= 0.5) || (d.Games >= 5 && d.LossRate() <= 0.15)
 }
 
 // String renders the dossier for the model's prompt ("" for a stranger).
@@ -24,7 +50,19 @@ func (d Dossier) String() string {
 	if d.Games == 0 {
 		return ""
 	}
-	parts := []string{fmt.Sprintf("%d игр, %d проигрышей", d.Games, d.Losses)}
+	parts := []string{fmt.Sprintf("%d игр, %d побед, %d проигрышей", d.Games, d.Wins, d.Losses)}
+	if d.Streak >= 2 {
+		parts = append(parts, fmt.Sprintf("выиграл %d раз подряд, серия продолжается", d.Streak))
+	}
+	if d.BestStreak >= 3 && d.BestStreak > d.Streak {
+		parts = append(parts, fmt.Sprintf("рекорд — %d побед подряд", d.BestStreak))
+	}
+	if d.Games >= 5 {
+		parts = append(parts, fmt.Sprintf("проигрывает только в %d%% партий", int(d.LossRate()*100+0.5)))
+	}
+	if d.Respected() {
+		parts = append(parts, "сильный игрок, за столом его уважают: подколы с уважением, без снисходительности")
+	}
 	if d.WorstTake >= 5 {
 		parts = append(parts, fmt.Sprintf("рекорд позора — взял %d карт за раз", d.WorstTake))
 	}
@@ -55,6 +93,8 @@ func suitGenitive(suit string) string {
 // {s} the favourite suit, {g} games, {l} losses.
 var (
 	GreetStranger = []string{"{n}? Не видел тебя тут. Садись, сейчас увидим", "Новенький. {n}, правила знаешь? Сейчас узнаешь", "О, {n}. Свежая кровь"}
+	GreetStreak   = []string{"{n}! {k} раз подряд нас обыграл. Сегодня оставим его в дураках?", "О, {n}. {k} побед подряд. Крест, ты видел? Садись, {n}, с уважением", "{n} идёт на {k}-ю подряд. Кто-нибудь, остановите его", "{n}, серия {k}. Я сегодня против тебя лично"}
+	GreetRecord   = []string{"{n}. По статистике проигрывает только в {p}% партий. Садись, чемпион", "Это {n}: {w} побед из {g}. Я бы на вашем месте напрягся", "{n}, у тебя {w} из {g}. Уважение за столом есть, подарков не будет", "{n}, рекорд — {b} подряд. Сегодня не повторишь, я прослежу"}
 	GreetWorst    = []string{"О, {n}. Прошлый раз ты взял {c} карт, помнишь?", "{n}! Тот самый, который взял {c} карт за раз", "Садись, {n}. {c} карт в одну руку — я такое не забываю"}
 	GreetSuit     = []string{"{n}, опять с {s} зайдёшь? Я уже готов", "Ставлю пенёк, что {n} начнёт с {s}", "{n} и его {s}. Классика"}
 	GreetScar     = []string{"{n}, клеймо ещё не смыл? Ну давай, попробуй", "Дурак прошлой игры, {n}. Есть шанс исправиться", "{n}, с меткой. Я бы на твоём месте взял реванш"}
@@ -74,6 +114,10 @@ func GreetAs(ch *Character, rng *rand.Rand, d Dossier) string {
 		pool = ch.Greet
 	case d.Games == 0:
 		pool = GreetStranger
+	case d.Streak >= 2 && rng.Float64() < 0.8:
+		pool = GreetStreak
+	case d.Games >= 5 && (d.WinRate() >= 0.5 || d.LossRate() <= 0.15) && rng.Float64() < 0.7:
+		pool = GreetRecord
 	case d.WorstTake >= 7 && rng.Float64() < 0.6:
 		pool = GreetWorst
 	case d.Scar && rng.Float64() < 0.7:
@@ -89,7 +133,7 @@ func GreetAs(ch *Character, rng *rand.Rand, d Dossier) string {
 }
 
 func fillDossier(line string, d Dossier) string {
-	r := strings.NewReplacer("{n}", d.Name, "{c}", fmt.Sprint(d.WorstTake), "{s}", suitGenitive(d.FavSuit), "{g}", fmt.Sprint(d.Games), "{l}", fmt.Sprint(d.Losses))
+	r := strings.NewReplacer("{n}", d.Name, "{c}", fmt.Sprint(d.WorstTake), "{s}", suitGenitive(d.FavSuit), "{g}", fmt.Sprint(d.Games), "{l}", fmt.Sprint(d.Losses), "{k}", fmt.Sprint(d.Streak), "{w}", fmt.Sprint(d.Wins), "{b}", fmt.Sprint(d.BestStreak), "{p}", fmt.Sprint(int(d.LossRate()*100+0.5)))
 	return r.Replace(line)
 }
 
@@ -192,6 +236,72 @@ type Character struct {
 // The model gets it with the persona so that lines from different bots
 // refer to the same people, debts and grudges.
 const Lore = `Место: коммуналка в доме 7 по Коммунальной улице, квартира 12, восемь комнат, одна кухня, один туалет с очередью, одна лампочка над кухонным столом, за которым и играют в дурака. Стол клеёнчатый, в пятнах, с прожжёнными точками от сигарет; над ним вечно кружит муха, которую все обещают прихлопнуть. Жильцы: Вася (комната у входа, должен всем: Петровичу 500 рублей, Бабуле за свет, Кресту «по понятиям»), Бабуля (комната у кухни, ведёт тетрадку, кто сколько жжёт света, кормит Шарика, Гоша — её внук), Крест (самая большая комната, сдаёт угол Бутово, держит квартиру по понятиям), Гоша (внук Бабули, спит на раскладушке у неё, готовится к олимпиаде, мама в другом городе), Вика (дочь Петровича, с отцом не разговаривает, слушает музыку в наушниках), Бутово (снимает угол у Креста, должен ему за два месяца, читает рэп в ванной), Шарик (ничей, живёт в коридоре, любит Бабулю и ненавидит Васины носки), Петрович (сантехник из ЖЭКа, к нему от Васи ушла Светка, Вика его дочь). Общие темы: очередь в туалет, кто не выключил свет на кухне, Светка, долги Васи, муха, протекающий стояк, ночной рэп Бутово, лужа от Шарика в коридоре, пирожки Бабули, которые никто не ест.`
+
+// FinishLines: what the table says when a game ends, about the winner
+// ({n}, {k} the streak, {w} wins, {g} games) and the fool ({f}).
+var (
+	FinishWinStreak = []string{"{n}, {k} подряд. Снимаю шляпу, которой нет", "{k} подряд, {n}. Это уже не везение", "{n} — {k} побед подряд. Кто-нибудь запишите", "Опять {n}. {k}-й раз. Я начинаю что-то подозревать"}
+	FinishWinRecord = []string{"{n} выиграл. {w} из {g}, между прочим", "Чемпион стола — {n}. {w} побед. Уважаю, хоть и бесит", "{n}, {w} из {g}. Ты вообще проигрывать умеешь?"}
+	FinishWinFirst  = []string{"{n} выиграл. Первая победа, поздравляю. Не привыкай", "О, {n} вышел первым. Бывает и такое", "{n}, с победой. Завтра отыграемся"}
+	FinishFoolMe    = []string{"Дурак — я. Запомнили все, расходимся", "Ладно. Я дурак. Сегодня", "Беру клеймо. Временно"}
+	FinishFoolBreak = []string{"{f} в дураках. А серия-то была {k}. Была", "Ну что, {f}, {k} подряд — и приехали. Нормально", "{f}, серия из {k} кончилась. Я тебя предупреждал"}
+)
+
+// Finish picks a line about the end of a game: the winner's record first,
+// a broken streak of the fool, else a plain word. "" when there is nothing to say.
+func Finish(rng *rand.Rand, winner, fool Dossier, winnerBot, foolIsMe bool) string {
+	var pool []string
+	d := winner
+	switch {
+	case foolIsMe && rng.Float64() < 0.6:
+		pool = FinishFoolMe
+	case fool.Name != "" && fool.Streak >= 2: // the dossier is from before this game: the streak just broke
+		pool = FinishFoolBreak
+		d = fool
+	case winnerBot:
+		return ""
+	case winner.Streak+1 >= 3:
+		pool = FinishWinStreak
+		d.Streak = winner.Streak + 1 // counting the win just scored
+	case winner.Games >= 4 && (winner.Wins+1)*2 >= winner.Games+1:
+		pool = FinishWinRecord
+		d.Wins, d.Games = winner.Wins+1, winner.Games+1
+	case winner.Wins == 0:
+		pool = FinishWinFirst
+	default:
+		return ""
+	}
+	line := pool[rng.IntN(len(pool))]
+	r := strings.NewReplacer("{n}", d.Name, "{f}", fool.Name, "{k}", fmt.Sprint(d.Streak), "{w}", fmt.Sprint(d.Wins), "{g}", fmt.Sprint(d.Games))
+	return r.Replace(line)
+}
+
+// RespectLines: a strong player took the table ({n}, {c} cards, {k} the
+// streak, {p} loss percent) or is a card away from winning again.
+var (
+	RespectTook = []string{"О, даже {n} берёт. {c} карт. Запишите дату", "{n} взял {c}. Не привыкли мы к такому от тебя", "Ничего, {n}. С {p}% проигрышей одна взятка не считается", "{n}, {c} карт? Серия из {k} сегодня под вопросом"}
+	RespectLast = []string{"{n} с одной картой. Опять. Кто-нибудь, сделайте что-нибудь", "Так, {n} на последней. {k} подряд будет, если не остановим", "{n} снова уходит. По статистике мы его не ловим", "Всё, {n} на выходе. Как обычно. Напрягитесь"}
+)
+
+// Respect is a word for a respected player's take.
+func Respect(rng *rand.Rand, d Dossier, count int) string {
+	line := RespectTook[rng.IntN(len(RespectTook))]
+	if d.Streak < 2 && strings.Contains(line, "{k}") {
+		line = RespectTook[0]
+	}
+	d.WorstTake = count
+	return fillDossier(line, d)
+}
+
+// RespectLonely is a word for a respected player down to a card.
+func RespectLonely(rng *rand.Rand, d Dossier) string {
+	line := RespectLast[rng.IntN(len(RespectLast))]
+	if d.Streak < 2 && strings.Contains(line, "{k}") {
+		line = RespectLast[0]
+	}
+	d.Streak++ // the win about to happen
+	return fillDossier(line, d)
+}
 
 // Barks are what a dog has to say.
 var Barks = []string{"Гав!", "Гав-гав!", "Р-р-р… гав", "Гав?", "ГАВ!", "Гав. Гав. Гав", "Р-р-р-р", "Гав-гав-гав!", "*виляет хвостом* Гав", "*чешет ухо* Гав"}

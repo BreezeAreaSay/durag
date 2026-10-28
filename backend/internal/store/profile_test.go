@@ -45,3 +45,22 @@ func TestMemoryProfilesRoundTrip(t *testing.T) {
 		t.Fatalf("round trip: %+v", p)
 	}
 }
+
+func TestProfileCountsWinsAndStreaks(t *testing.T) {
+	var p Profile
+	for i := 0; i < 3; i++ {
+		p.Fold(game.Stats{}, false, true, int64(i))
+	}
+	if p.Wins != 3 || p.Streak != 3 || p.BestStreak != 3 || p.Scar {
+		t.Fatalf("three wins in a row: %+v", p)
+	}
+	p.Fold(game.Stats{}, true, false, 10)
+	if p.Streak != 0 || p.BestStreak != 3 || p.Losses != 1 || !p.Scar {
+		t.Fatalf("a loss breaks the streak but keeps the record: %+v", p)
+	}
+	p.Fold(game.Stats{}, false, true, 11)
+	p.Fold(game.Stats{}, false, false, 12)
+	if p.Wins != 4 || p.Streak != 0 || p.Escapes != 1 || p.Games != 6 {
+		t.Fatalf("an escape (neither won nor lost) ends the streak too: %+v", p)
+	}
+}

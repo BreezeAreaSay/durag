@@ -643,12 +643,75 @@ func (h *Hub) dossier(roomID string, p *game.Player) bot.Dossier {
 	if err != nil {
 		h.log.Warn("bot: profile lookup failed", "player", p.ID, "err", err)
 	}
-	d := bot.Dossier{Name: p.Name, Games: prof.Games, Losses: prof.Losses, WorstTake: prof.WorstTake, FavSuit: prof.FavouriteSuit(), Scar: prof.Scar}
+	d := dossierOf(p.Name, prof)
 	br := h.botRoomFor(roomID)
 	br.mu.Lock()
 	br.dossiers[p.ID] = d
 	br.mu.Unlock()
 	return d
+}
+
+// dossierOf is the bots' view of a profile.
+func dossierOf(name string, prof store.Profile) bot.Dossier {
+	return bot.Dossier{Name: name, Games: prof.Games, Losses: prof.Losses, WorstTake: prof.WorstTake, FavSuit: prof.FavouriteSuit(), Scar: prof.Scar, Wins: prof.Wins, Streak: prof.Streak, BestStreak: prof.BestStreak}
+}
+
+// botFinish has a bot sum up a finished game from what the table knew
+// before it counted: a streak, a record, a first win, a broken run. The
+// speaker is a bot other than the winner when there is one.
+func (h *Hub) botFinish(roomID string, state *game.GameState, before map[string]bot.Dossier) {
+	if h.bots.Disabled || state == nil || state.Status != game.StatusFinished {
+		return
+	}
+	winnerID := state.Winner()
+	var speakers []string
+	for _, p := range state.Players {
+		if p.IsBot && p.ID != winnerID {
+			speakers = append(speakers, p.ID)
+		}
+	}
+	if len(speakers) == 0 {
+		for _, p := range state.Players {
+			if p.IsBot {
+				speakers = append(speakers, p.ID)
+			}
+		}
+	}
+	if len(speakers) == 0 {
+		return
+	}
+	speaker := speakers[rand.IntN(len(speakers))]
+	winner := state.Player(winnerID)
+	fool := state.Player(state.LoserID)
+	var winnerD, foolD bot.Dossier
+	winnerBot := winner == nil || winner.IsBot
+	if winner != nil {
+		if d, ok := before[winner.ID]; ok {
+			winnerD = d
+		} else {
+			winnerD.Name = winner.Name
+		}
+	}
+	if fool != nil {
+		if d, ok := before[fool.ID]; ok {
+			foolD = d
+		} else {
+			foolD.Name = fool.Name
+		}
+	}
+	rng := rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64()))
+	line := bot.Finish(rng, winnerD, foolD, winnerBot, fool != nil && fool.ID == speaker)
+	if line == "" {
+		return
+	}
+	time.AfterFunc(1500*time.Millisecond+time.Duration(rand.Int64N(int64(700*time.Millisecond))), func() {
+		select {
+		case <-h.ctx.Done():
+			return
+		default:
+		}
+		h.botSay(roomID, speaker, line, "")
+	})
 }
 
 // botGreet has one bot greet a person who just sat down (or the people a

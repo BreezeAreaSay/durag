@@ -718,6 +718,7 @@ func (h *Hub) recordFinish(roomID string, state *game.GameState) {
 // nothing). The flag and the counter move together under the room lock, so
 // two backend instances cannot both count the same game.
 func (h *Hub) awardWin(roomID string, state *game.GameState) *game.GameState {
+	var before map[string]bot.Dossier
 	next, err := h.store.Update(h.ctx, roomID, false, func(s *game.GameState) error {
 		if s.Status != game.StatusFinished || s.WinAwarded {
 			return errStale
@@ -725,6 +726,7 @@ func (h *Hub) awardWin(roomID string, state *game.GameState) *game.GameState {
 		s.WinAwarded = true
 		now := time.Now().Unix()
 		winnerID := s.Winner()
+		before = map[string]bot.Dossier{} // what the table knew before this game counted
 		for i := range s.Players {
 			p := &s.Players[i]
 			if p.IsBot {
@@ -742,6 +744,7 @@ func (h *Hub) awardWin(roomID string, state *game.GameState) *game.GameState {
 			if err != nil {
 				return err
 			}
+			before[p.ID] = dossierOf(p.Name, prof)
 			prof.Fold(p.Stats, p.ID == s.LoserID, p.ID == winnerID, now)
 			if err := h.store.SaveProfile(h.ctx, p.ID, prof); err != nil {
 				return err
@@ -766,6 +769,7 @@ func (h *Hub) awardWin(roomID string, state *game.GameState) *game.GameState {
 		}
 		return state
 	}
+	h.botFinish(roomID, next, before)
 	return next
 }
 

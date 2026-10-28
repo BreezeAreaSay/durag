@@ -96,6 +96,11 @@ type Profile struct {
 	Leads     map[string]int `json:"leads"`      // opening attacks by suit, lifetime
 	Scar      bool           `json:"scar"`       // lost the last game they finished
 	LastSeen  int64          `json:"last_seen"`  // unix seconds
+	// the bright side, for the respect at the table
+	Wins       int `json:"wins"`        // games won (first out)
+	Streak     int `json:"streak"`      // wins in a row right now
+	BestStreak int `json:"best_streak"` // the longest run of wins ever
+	Escapes    int `json:"escapes"`     // games finished not the fool and not first either
 }
 
 // Fold adds one finished game to the profile.
@@ -104,9 +109,19 @@ func (p *Profile) Fold(stats game.Stats, lost, won bool, now int64) {
 	if lost {
 		p.Losses++
 		p.Scar = true
+		p.Streak = 0
 	}
 	if won {
 		p.Scar = false
+		p.Wins++
+		p.Streak++
+		if p.Streak > p.BestStreak {
+			p.BestStreak = p.Streak
+		}
+	}
+	if !won && !lost {
+		p.Escapes++
+		p.Streak = 0
 	}
 	p.Took += stats.Took
 	if stats.WorstTake > p.WorstTake {

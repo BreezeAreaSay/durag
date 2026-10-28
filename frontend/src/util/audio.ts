@@ -224,38 +224,96 @@ class Sound {
   }
 
   /** the toilet: a rush of water going down, then the cistern */
+  /** a toilet flush: the handle clunks, the water roars down with a vortex wobble, gurgles out, the cistern hisses full */
   flush(): void {
     const ctx = this.ready();
     if (!ctx) return;
     const t = ctx.currentTime;
-    const src = ctx.createBufferSource();
-    src.buffer = this.noiseBuffer(ctx);
-    src.loop = true;
-    const f = ctx.createBiquadFilter();
-    f.type = 'bandpass';
-    f.Q.value = 0.8;
-    f.frequency.setValueAtTime(1800, t);
-    f.frequency.exponentialRampToValueAtTime(250, t + 1.4);
-    const g = ctx.createGain();
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(0.5, t + 0.15);
-    g.gain.setValueAtTime(0.5, t + 0.9);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 1.6);
-    src.connect(f).connect(g).connect(this.master!);
-    src.start(t);
-    src.stop(t + 1.7);
-    // the gurgle at the end
-    const osc = ctx.createOscillator();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(140, t + 1.1);
-    osc.frequency.exponentialRampToValueAtTime(60, t + 1.6);
-    const og = ctx.createGain();
-    og.gain.setValueAtTime(0.0001, t + 1.1);
-    og.gain.exponentialRampToValueAtTime(0.2, t + 1.2);
-    og.gain.exponentialRampToValueAtTime(0.0001, t + 1.65);
-    osc.connect(og).connect(this.master!);
-    osc.start(t + 1.1);
-    osc.stop(t + 1.7);
+    const out = this.master!;
+    // the handle and the flap
+    this.burst(ctx, 0.04, 160, 1.2, 0.45);
+    this.burst(ctx, 0.03, 90, 1.5, 0.3, 0.08);
+    // the rush: broadband noise, dark at first, opening up as the water tears through, then closing
+    const rush = ctx.createBufferSource();
+    rush.buffer = this.noiseBuffer(ctx);
+    rush.loop = true;
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.Q.value = 0.9;
+    lp.frequency.setValueAtTime(500, t);
+    lp.frequency.exponentialRampToValueAtTime(3600, t + 0.6);
+    lp.frequency.setValueAtTime(3600, t + 1.4);
+    lp.frequency.exponentialRampToValueAtTime(700, t + 2.8);
+    const hp = ctx.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.value = 120;
+    const rg = ctx.createGain();
+    rg.gain.setValueAtTime(0.0001, t + 0.1);
+    rg.gain.exponentialRampToValueAtTime(0.7, t + 0.55);
+    rg.gain.setValueAtTime(0.7, t + 1.5);
+    rg.gain.exponentialRampToValueAtTime(0.25, t + 2.4);
+    rg.gain.exponentialRampToValueAtTime(0.0001, t + 3.1);
+    rush.connect(hp).connect(lp).connect(rg).connect(out);
+    rush.start(t + 0.1);
+    rush.stop(t + 3.2);
+    // the vortex: a mid band whose level wobbles, slower as the bowl empties
+    const swirl = ctx.createBufferSource();
+    swirl.buffer = this.noiseBuffer(ctx);
+    swirl.loop = true;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.Q.value = 2.5;
+    bp.frequency.setValueAtTime(1100, t);
+    bp.frequency.exponentialRampToValueAtTime(380, t + 2.8);
+    const sg = ctx.createGain();
+    sg.gain.setValueAtTime(0.0001, t + 0.3);
+    sg.gain.exponentialRampToValueAtTime(0.35, t + 0.9);
+    sg.gain.exponentialRampToValueAtTime(0.0001, t + 2.9);
+    const wob = ctx.createOscillator();
+    wob.type = 'sine';
+    wob.frequency.setValueAtTime(7, t);
+    wob.frequency.exponentialRampToValueAtTime(2.5, t + 2.8);
+    const wg = ctx.createGain();
+    wg.gain.value = 0.2;
+    wob.connect(wg).connect(sg.gain);
+    swirl.connect(bp).connect(sg).connect(out);
+    wob.start(t);
+    wob.stop(t + 3);
+    swirl.start(t + 0.3);
+    swirl.stop(t + 3);
+    // the gurgle: bubbles of falling pitch as the last of it goes down
+    for (let i = 0; i < 9; i++) {
+      const at = t + 1.7 + i * 0.16 + Math.random() * 0.08;
+      const osc = ctx.createOscillator();
+      osc.type = 'triangle';
+      const f0 = 260 - i * 14 + Math.random() * 60;
+      osc.frequency.setValueAtTime(f0, at);
+      osc.frequency.exponentialRampToValueAtTime(f0 * 0.45, at + 0.14);
+      const og = ctx.createGain();
+      og.gain.setValueAtTime(0.0001, at);
+      og.gain.exponentialRampToValueAtTime(0.16 - i * 0.012, at + 0.02);
+      og.gain.exponentialRampToValueAtTime(0.0001, at + 0.15);
+      osc.connect(og).connect(out);
+      osc.start(at);
+      osc.stop(at + 0.16);
+    }
+    // the cistern fills: a thin hiss that rises a little and fades
+    const fill = ctx.createBufferSource();
+    fill.buffer = this.noiseBuffer(ctx);
+    fill.loop = true;
+    const fb = ctx.createBiquadFilter();
+    fb.type = 'bandpass';
+    fb.Q.value = 4;
+    fb.frequency.setValueAtTime(2200, t + 2.6);
+    fb.frequency.exponentialRampToValueAtTime(3400, t + 5);
+    const fg = ctx.createGain();
+    fg.gain.setValueAtTime(0.0001, t + 2.6);
+    fg.gain.exponentialRampToValueAtTime(0.09, t + 3.2);
+    fg.gain.setValueAtTime(0.09, t + 4.2);
+    fg.gain.exponentialRampToValueAtTime(0.0001, t + 5.2);
+    fill.connect(fb).connect(fg).connect(out);
+    fill.start(t + 2.6);
+    fill.stop(t + 5.3);
   }
 
   /** glass on the floor */

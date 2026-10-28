@@ -276,6 +276,10 @@ func (h *Heuristic) Decide(_ context.Context, in Context) (Decision, error) {
 		d.Say = ch.Say(h.rng, "press", defender, 0)
 	case planChanged && in.Plan == PlanHunt && h.rng.Float64() < 0.4:
 		d.Say = ch.Say(h.rng, "hunt", defender, 0)
+	case in.Event.Kind == "took" && !in.Event.Bot && in.Dossiers[in.Event.PlayerID].Respected() && h.rng.Float64() < 0.5:
+		d.Say = Respect(h.rng, in.Dossiers[in.Event.PlayerID], in.Event.Count) // even the champion takes
+	case in.Event.Kind == "lonely" && !in.Event.Bot && in.Dossiers[in.Event.PlayerID].Respected() && h.rng.Float64() < 0.5:
+		d.Say = RespectLonely(h.rng, in.Dossiers[in.Event.PlayerID])
 	case in.Event.Kind == "took" && in.Event.PlayerID != "" && Callback(h.rng, in.Story, in.Event.PlayerID, in.Event.Name) != "" && h.rng.Float64() < 0.7:
 		d.Say = Callback(h.rng, in.Story, in.Event.PlayerID, in.Event.Name) // the story so far: "that is your third take"
 	case in.SpeakDue() && in.Event.Notable():

@@ -86,3 +86,75 @@ func TestDossierStringMentionsWhatMatters(t *testing.T) {
 		}
 	}
 }
+
+func TestTheTableRespectsWinners(t *testing.T) {
+	rng := rand.New(rand.NewPCG(3, 3))
+	streak := Dossier{Name: "Вика", Games: 6, Wins: 4, Losses: 1, Streak: 3, BestStreak: 3}
+	if !streak.Respected() {
+		t.Fatal("three in a row deserves respect")
+	}
+	s := streak.String()
+	for _, want := range []string{"4 побед", "3 раз подряд", "17%", "уважают"} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("dossier %q lacks %q", s, want)
+		}
+	}
+	mentioned := 0
+	for i := 0; i < 40; i++ {
+		line := GreetAs(nil, rng, streak)
+		if strings.Contains(line, "3") {
+			mentioned++
+		}
+	}
+	if mentioned < 20 {
+		t.Fatalf("a streak of 3 was mentioned only %d times in 40 greetings", mentioned)
+	}
+	record := Dossier{Name: "Гоша", Games: 10, Wins: 7, Losses: 1}
+	if !record.Respected() {
+		t.Fatal("seven of ten deserves respect")
+	}
+	stats := 0
+	for i := 0; i < 40; i++ {
+		line := GreetAs(nil, rng, record)
+		if strings.Contains(line, "10%") || strings.Contains(line, "7 ") {
+			stats++
+		}
+	}
+	if stats < 15 {
+		t.Fatalf("a record was mentioned only %d times in 40 greetings", stats)
+	}
+	if (Dossier{Name: "x", Games: 6, Wins: 1, Losses: 3}).Respected() {
+		t.Fatal("one of six is nothing to respect")
+	}
+}
+
+func TestFinishLinesCountTheWinJustScored(t *testing.T) {
+	rng := rand.New(rand.NewPCG(4, 4))
+	// two wins on record, this one makes three: the streak line counts it
+	line := Finish(rng, Dossier{Name: "Вика", Games: 4, Wins: 2, Streak: 2}, Dossier{Name: "Вася", Games: 4, Losses: 2}, false, false)
+	if !strings.Contains(line, "Вика") || !strings.Contains(line, "3") {
+		t.Fatalf("streak line: %q", line)
+	}
+	// the fool had a run going: that is the story
+	line = Finish(rng, Dossier{Name: "Вася"}, Dossier{Name: "Вика", Games: 5, Wins: 4, Streak: 4}, false, false)
+	if !strings.Contains(line, "Вика") || !strings.Contains(line, "4") {
+		t.Fatalf("broken streak line: %q", line)
+	}
+	// a first win gets a word, a bot's win none
+	if line = Finish(rng, Dossier{Name: "Гоша"}, Dossier{Name: "Вася"}, false, false); !strings.Contains(line, "Гоша") {
+		t.Fatalf("first win: %q", line)
+	}
+	if line = Finish(rng, Dossier{Name: "Крест"}, Dossier{Name: "Вася"}, true, false); line != "" {
+		t.Fatalf("a bot's own win is not an occasion: %q", line)
+	}
+	// the speaker is the fool: it owns up sometimes
+	owned := 0
+	for i := 0; i < 30; i++ {
+		if l := Finish(rng, Dossier{Name: "Гоша", Wins: 2, Games: 3}, Dossier{Name: "Крест"}, false, true); strings.Contains(l, "Я дурак") || strings.Contains(l, "Дурак — я") || strings.Contains(l, "клеймо") {
+			owned++
+		}
+	}
+	if owned == 0 {
+		t.Fatal("the fool never owned up in 30 games")
+	}
+}
