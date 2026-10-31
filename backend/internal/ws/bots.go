@@ -268,7 +268,7 @@ func (h *Hub) scheduleBots(roomID string, state *game.GameState) {
 		return
 	}
 	// the storyline: one line every three bouts, by the character whose turn it is to speak
-	if br.plot != nil && br.plotStep < len(br.plot.Steps) && state.BoutNumber-br.plotBout >= 3 {
+	if br.plot != nil && br.plotStep < len(br.plot.Steps) && state.BoutNumber-br.plotBout >= 6 {
 		step := br.plot.Steps[br.plotStep]
 		for _, p := range state.Players {
 			if p.IsBot && !p.Out && p.Name == step.Who {

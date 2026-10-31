@@ -915,3 +915,56 @@ func TestTheChronicleTellsTheStoryAndCallsBack(t *testing.T) {
 		t.Fatal("a storyline needs both characters")
 	}
 }
+
+func TestNoKingsOrJokersOnAThreeInTheFirstBouts(t *testing.T) {
+	// a bot defending a three with nothing but a king of the suit, a big
+	// trump or the joker takes the single card while the deck is alive
+	for _, tc := range []struct {
+		hand []string
+		name string
+	}{
+		{[]string{"C_13", "D_9", "H_8", "D_6", "H_10", "D_4"}, "a king on a three"},
+		{[]string{"S_13", "D_9", "H_8", "D_6", "H_10", "D_4"}, "a king of trumps on a three"},
+		{[]string{"BJ", "D_9", "H_8", "D_6", "H_10", "D_4"}, "a joker on a three"},
+	} {
+		s := game.NewGameState("EARLY")
+		s.Status = game.StatusPlaying
+		s.MaxPlayers = 4
+		s.Players = []game.Player{{ID: "a", Name: "Вася", Connected: true}, {ID: "b", Name: "Крест", IsBot: true, Connected: true}}
+		for _, id := range tc.hand {
+			c, ok := game.CardByID(id)
+			if !ok {
+				t.Fatalf("no card %s", id)
+			}
+			s.Players[1].Hand = append(s.Players[1].Hand, c)
+		}
+		s.Players[0].Hand = []game.Card{{ID: "H_2", Suit: game.SuitHearts, Rank: 2}, {ID: "H_5", Suit: game.SuitHearts, Rank: 5}, {ID: "D_7", Suit: game.SuitDiamonds, Rank: 7}, {ID: "C_8", Suit: game.SuitClubs, Rank: 8}, {ID: "S_9", Suit: game.SuitSpades, Rank: 9}}
+		s.CurrentTurn, s.DefenderID = "a", "b"
+		s.TableOrder = []string{"C_3"}
+		s.TableCards = map[string][]game.Card{"C_3": {}}
+		s.Deck = game.NewDeck()[:20]
+		s.DeckCount = 20
+		s.TrumpSuit = game.SuitSpades
+		s.TrumpRevealed = true
+		view := s.Sanitized("b")
+		in := Context{State: view, BotID: "b", Moves: s.LegalMoves("b"), Level: LevelHard, Plan: PlanSave}
+		h := NewHeuristic(rand.New(rand.NewPCG(5, 6)))
+		d, _ := h.Decide(context.Background(), in)
+		if d.Move.Type != game.MoveTake {
+			t.Fatalf("%s with the deck alive: %s", tc.name, d.Move)
+		}
+	}
+}
+
+func TestCleanSayDropsPromptEchoes(t *testing.T) {
+	for _, bad := range []string{"Respond with JSON only", `{"say": "Вася, бери"}`, "Крест: think step by step", "<think>ну</think>", "Вася, you took five"} {
+		if got := trimSay(bad); got != "" {
+			t.Fatalf("kept %q as %q", bad, got)
+		}
+	}
+	for _, good := range []string{"Вася, ок, бери", "«Бабуля, 5 карт. Запишу»", "Крест, за базар ответишь"} {
+		if got := trimSay(good); got == "" {
+			t.Fatalf("dropped a fine line %q", good)
+		}
+	}
+}

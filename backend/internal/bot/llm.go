@@ -990,9 +990,6 @@ func Prompt(in Context) string {
 			}
 		}
 	}
-	if in.Story.Topic != "" {
-		fmt.Fprintf(&b, "\nТема вечера в квартире: %s. Возвращайся к ней, когда к слову.", in.Story.Topic)
-	}
 	if len(in.Story.Notes) > 0 {
 		b.WriteString("\nЧто уже было в этой партии: " + strings.Join(in.Story.Notes, "; ") + ". Ссылайся на это, подкалывай за старое.")
 	}
@@ -1067,7 +1064,7 @@ func TalkPrompt(in Context, move game.Move) string {
 	ch := CharacterOf(nameOf(s, in.BotID))
 	fmt.Fprintf(&b, "Ты — %s. %s\n", ch.Name, ch.Persona)
 	b.WriteString(Lore + "\n")
-	b.WriteString("Держи характер жёстко и смешно, это игра для своих: едко, без сглаживания и вежливости. Говори про игру: кто как зашёл, кто взял и сколько, кто тонет, кто переводит; обращайся к людям по имени. Ссылайся на соседей и общие темы квартиры, когда к слову: кто кому должен, кто не выключил свет, кто занял туалет. Другие боты за столом — твои соседи, цепляй их по-соседски.\n")
+	b.WriteString("Держи характер жёстко и смешно, это игра для своих: едко, без сглаживания и вежливости. Главное — игра: кто как зашёл, кто взял и сколько, кто тонет, кто переводит, кто жмёт козыри; обращайся к людям по имени. Квартира и соседи — только фон: не чаще одной реплики из пяти, одной деталью, без новых событий, людей и историй. Не выдумывай, чего не было за столом. Пиши только по-русски, без английских слов, без служебных слов и пояснений.\n")
 	switch in.Mood {
 	case MoodAggressive:
 		b.WriteString("Тебя провоцируют эмодзи: отвечай дерзко.\n")
@@ -1193,7 +1190,7 @@ func findAnswer(content string) (answer, bool) {
 // past the limit is cut at the last sentence end before it, or at the last
 // space, never in the middle of a word.
 func trimSay(s string) string {
-	s = strings.TrimSpace(s)
+	s = cleanSay(strings.TrimSpace(s))
 	r := []rune(s)
 	const limit = 140
 	if len(r) <= limit {
@@ -1207,6 +1204,30 @@ func trimSay(s string) string {
 		return strings.TrimSpace(string(head)[:i]) + "…"
 	}
 	return string(head) + "…"
+}
+
+// cleanSay drops a line that is not a line: English words, JSON fragments
+// or markup in it mean the model echoed the prompt or thought aloud. The
+// characters speak Russian; a stray Latin abbreviation of three letters is fine.
+func cleanSay(s string) string {
+	run, longest := 0, 0
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+			run++
+			if run > longest {
+				longest = run
+			}
+		} else {
+			run = 0
+		}
+	}
+	if longest >= 4 {
+		return ""
+	}
+	if strings.ContainsAny(s, "{}<>[]") {
+		return ""
+	}
+	return strings.Trim(s, "\"«»")
 }
 
 func mentionsAdmin(s string) bool {

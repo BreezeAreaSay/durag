@@ -42,7 +42,6 @@ export interface SceneHandlers {
   /** the viewer double-tapped the empty table: a fist slam, to be sent to the room */
   onSlam?(): void;
   /** a stain rubbed off the cloth */
-  onWipe?(index: number): void;
   /** a card wants an emoji to fly from a screen point (a Joker laughing) */
   /** the table glanced at a card (a beat worth a look), CSS px inside the host */
   onGaze?(x: number, y: number): void;
@@ -135,14 +134,7 @@ export class TableScene {
   private rub: { x: number; dist: number; turns: number; dir: number } | null = null;
   private rubbedAt = -Infinity;
   private blow: { x: number; y: number; at: number } | null = null;
-  /** the stains on the cloth, to rub at: index, centre, radius */
-  private stains: { i: number; x: number; y: number; r: number; effort: number }[] = [];
-  private scrub: { x: number; y: number; dir: number; lastSqueak: number } | null = null;
-  private wipedLocal = new Set<number>();
   /** how far each stain has been rubbed (0..1): it fades as the finger works */
-  private scrubbed = new Map<number, number>();
-  /** the progress the wear layer was last drawn with (redraws are throttled) */
-  private scrubDrawn = new Map<number, number>();
   private tremble = 0;
   /** the lamp over the table: shadows, the light spot, the swing after a fist */
   private lamp = new Lamp();
@@ -164,11 +156,6 @@ export class TableScene {
   private cone = new Sprite();
   private dip = new Graphics();
   private emberGlow = new Sprite();
-  /** the window: a soft slanted patch of shade that creeps across the table */
-  private windowShade = new Graphics();
-  /** the cloth's wear: stains, ash, scratches, a dead fly; redrawn when the games count changes */
-  private wear = new Graphics();
-  private wearKey = '';
   /** how many bouts went up in flames (diagnostics) */
   private burns = 0;
   /** cards that burn away instead of flying to the discard */
@@ -176,7 +163,6 @@ export class TableScene {
   /** the room warms up a touch with every "bito" and flares on a win; a cloud dims the lamp now and then */
   private warmth = 0;
   private warmFlash = 0;
-  private cloudAt = 60000 + Math.random() * 180000;
   private prevResolving = false;
   private prevFinished = false;
 
@@ -390,8 +376,6 @@ export class TableScene {
       }),
       table: m?.table.length ?? 0,
       burns: this.burns,
-      stains: this.stains.map((st) => ({ i: st.i, x: Math.round(st.x), y: Math.round(st.y), r: Math.round(st.r) })),
-      wiped: [...(m?.wiped ?? []), ...this.wipedLocal],
       pending: [...this.pending.keys()],
       drag: this.drag?.id ?? null,
       revealHidden: this.revealHidden,
@@ -552,7 +536,6 @@ export class TableScene {
 
     if (m.table.length === 0 && !m.resolving) this.lastOutcome = '';
     this.updatePiles();
-    this.drawWear();
   }
 
   /** Blows a card apart into coarse squares and crosses (stop-motion). */
@@ -938,8 +921,7 @@ export class TableScene {
     this.emberGlow.blendMode = 'add';
     this.emberGlow.eventMode = 'none';
     this.emberGlow.visible = false;
-    this.windowShade.eventMode = 'none';
-    this.layers.light.addChild(this.windowShade, this.cone, this.dip, this.emberGlow);
+    this.layers.light.addChild(this.cone, this.dip, this.emberGlow);
     this.layers.light.eventMode = 'none';
   }
 
@@ -960,15 +942,7 @@ export class TableScene {
     const late = hour >= 23 || hour < 6 ? 0.35 : 0; // late evening: the lamp is yellower, the room cosier
     const warm = Math.min(1, late + this.warmth * 0.3 + this.warmFlash);
     this.cone.tint = dark ? TableScene.mix(0x000000, 0x2a1400, warm * 0.6) : TableScene.mix(0x2a1c0c, 0x4a2a06, warm);
-    // a cloud over the window now and then: the lamp seems to matter a little more for ten seconds
-    let cloud = 0;
-    if (this.time >= this.cloudAt) {
-      const u = (this.time - this.cloudAt) / 10000;
-      if (u >= 1) this.cloudAt = this.time + 60000 + Math.random() * 180000;
-      else cloud = Math.sin(Math.PI * u);
-    }
-    this.cone.alpha = (dark ? 0.62 : 0.3) * (0.7 + 0.3 * k) * (1 + 0.08 * cloud);
-    this.windowFrame(m, dark, cloud);
+    this.cone.alpha = (dark ? 0.62 : 0.3) * (0.7 + 0.3 * k);
     const dipAlpha = Math.max((1 - k) * (dark ? 0.75 : 0.45), this.blackout * (dark ? 0.92 : 0.82));
     this.dip.clear().rect(-m.width, -m.height, m.width * 3, m.height * 3).fill({ color: 0x000000, alpha: dipAlpha });
     const e = this.ember();
@@ -992,24 +966,6 @@ export class TableScene {
     const u = Math.max(0, Math.min(1, t));
     const ch = (shift: number) => Math.round(((a >> shift) & 0xff) * (1 - u) + ((b >> shift) & 0xff) * u);
     return (ch(16) << 16) | (ch(8) << 8) | ch(0);
-  }
-
-  /**
-   * The shade of the window frame: a slanted band that takes 2–3 minutes to
-   * cross the table (the sun moves, or a curtain does), fainter when a
-   * cloud takes the light away. Drawn under the lamp's cone.
-   */
-  private windowFrame(m: Metrics, dark: boolean, cloud: number): void {
-    const g = this.windowShade;
-    g.clear();
-    const u = 0.5 + 0.5 * Math.sin(this.time / 150000 * Math.PI * 2 + 1);
-    const x = m.width * (0.05 + 0.75 * u);
-    const w = m.width * 0.22;
-    const slant = m.height * 0.12;
-    const alpha = (dark ? 0.12 : 0.07) * (1 - 0.6 * cloud);
-    g.poly([x, -m.height, x + w, -m.height, x + w + slant, m.height * 2, x + slant, m.height * 2]).fill({ color: 0x000000, alpha });
-    // the bar of the frame: a thin darker line through the middle of the band
-    g.poly([x + w * 0.46, -m.height, x + w * 0.54, -m.height, x + w * 0.54 + slant, m.height * 2, x + w * 0.46 + slant, m.height * 2]).fill({ color: 0x000000, alpha: alpha * 0.8 });
   }
 
   /** the lamp's colour by the hour on the phone: the cone's tint warms up at night */
@@ -1050,77 +1006,7 @@ export class TableScene {
     const m = this.metrics;
     if (e.global.y < m.tableTop || e.global.y > m.handTop) return;
     this.blow = { x: e.global.x, y: e.global.y, at: performance.now() };
-    const g = this.world.toLocal(e.global);
-    // the finger is a rag: whatever dirt it passes over gets rubbed, all of it at once
-    this.scrub = this.stains.length ? { x: g.x, y: g.y, dir: 0, lastSqueak: 0 } : null;
   };
-
-  /** how far from a piece of dirt the finger still rubs it */
-  static readonly FINGER = 22;
-
-  /** the finger goes back and forth: every stain, speck, scratch and burn under it fades, with a squeak on each turn */
-  private scrubMove(x: number, y: number): void {
-    const sc = this.scrub;
-    if (!sc) return;
-    const dx = x - sc.x;
-    const moved = Math.hypot(dx, y - sc.y);
-    if (moved < 1) return;
-    let work = moved;
-    const dir = Math.abs(dx) >= 2 ? Math.sign(dx) : sc.dir;
-    if (sc.dir !== 0 && dir !== sc.dir) {
-      work += 55; // a turn of the wrist counts for a lot
-      const now = performance.now();
-      if (!this.lite && now - sc.lastSqueak > 140) {
-        sc.lastSqueak = now;
-        sound.squeak();
-      }
-    }
-    sc.dir = dir;
-    sc.x = x;
-    sc.y = y;
-    let redraw = false;
-    const done: (typeof this.stains)[number][] = [];
-    for (const st of this.stains) {
-      if (Math.hypot(x - st.x, y - st.y) > Math.max(st.r, TableScene.FINGER)) continue;
-      const was = this.scrubbed.get(st.i) ?? 0;
-      const progress = Math.min(1, was + work / st.effort);
-      this.scrubbed.set(st.i, progress);
-      if (progress >= 1) done.push(st);
-      else if (progress - (this.scrubDrawn.get(st.i) ?? 0) >= 0.08) redraw = true;
-    }
-    for (const st of done) {
-      this.wipedLocal.add(st.i);
-      this.scrubbed.delete(st.i);
-      this.shine(st.x, st.y, st.r);
-      this.handlers.onWipe?.(st.i);
-    }
-    if (done.length) {
-      this.blow = null; // the hand was wiping, not blowing on the lamp
-      redraw = true;
-    }
-    if (redraw) {
-      this.scrubDrawn = new Map(this.scrubbed);
-      this.wearKey = '';
-      this.drawWear();
-    }
-  }
-
-  /** the clean spot gleams for a moment */
-  private shine(x: number, y: number, r: number): void {
-    const g = new Graphics();
-    this.layers.drag.addChild(g);
-    let t = 0;
-    this.effects.push((dt) => {
-      t += dt;
-      const u = t / 500;
-      if (u >= 1 || g.destroyed) {
-        if (!g.destroyed) g.destroy();
-        return false;
-      }
-      g.clear().circle(x, y, r * (0.6 + u * 0.8)).fill({ color: 0xffffff, alpha: 0.5 * (1 - u) });
-      return true;
-    });
-  }
 
   /** a quick swipe up across the table: the lamp swings and gutters, as if somebody blew on it */
   private endBlow(e: FederatedPointerEvent): void {
@@ -1305,121 +1191,8 @@ export class TableScene {
     this.deckPile.eventMode = 'static';
     this.deckPile.cursor = 'pointer';
     this.deckPile.on('pointertap', () => this.riffle());
-    this.wear.eventMode = 'none';
-    this.layers.piles.addChildAt(this.wear, 0);
     this.layers.piles.addChild(this.deckPile, this.discardPile, this.trumpPlate, this.stumpPile, this.deckLabel, this.discardLabel, this.stumpLabel);
     this.rebuildPiles();
-  }
-
-  /**
-   * The cloth of a table that has seen games: a stain or two by the edges
-   * after the first, more and nearer the middle with every game, ash dots,
-   * cigarette burns, scratches, and from the fifth game (or a slapped fly)
-   * a dead fly. Drawn from the room id and the count, so everybody at the
-   * table and every reload sees the same dirt.
-   */
-  private drawWear(): void {
-    const m = this.model;
-    if (!m) return;
-    const wiped = new Set([...m.wiped, ...this.wipedLocal]);
-    const progress = [...this.scrubbed].map(([i, p]) => `${i}=${p.toFixed(2)}`).join(',');
-    const key = `${m.roomId}:${m.gamesPlayed}:${m.fliesDead}:${[...wiped].sort((a, b) => a - b).join(',')}:${progress}:${this.metrics.width}x${this.metrics.height}:${isDark()}:${this.lite}`;
-    if (key === this.wearKey) return;
-    this.wearKey = key;
-    const g = this.wear;
-    g.clear();
-    this.stains = [];
-    if (this.lite) {
-      // no lamp in lite effects: a still shade of the window frame gives the cloth some depth anyway
-      const { width: w, height: h } = this.metrics;
-      const x0 = w * 0.55;
-      const bw = w * 0.22;
-      const slant = h * 0.12;
-      const a = isDark() ? 0.1 : 0.06;
-      g.poly([x0, 0, x0 + bw, 0, x0 + bw + slant, h, x0 + slant, h]).fill({ color: 0x000000, alpha: a });
-      g.poly([x0 + bw * 0.46, 0, x0 + bw * 0.54, 0, x0 + bw * 0.54 + slant, h, x0 + bw * 0.46 + slant, h]).fill({ color: 0x000000, alpha: a * 0.8 });
-    }
-    const games = Math.min(12, m.gamesPlayed);
-    if (games === 0 && m.fliesDead === 0) return;
-    let seed = 2166136261;
-    for (const ch of m.roomId) seed = Math.imul(seed ^ ch.charCodeAt(0), 16777619) >>> 0;
-    const rnd = () => {
-      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
-      return seed / 4294967296;
-    };
-    const { width: W, tableTop, tableBottom } = this.metrics;
-    const cx = W / 2;
-    const cy = (tableTop + tableBottom) / 2;
-    const dark = isDark();
-    const stainColor = dark ? 0x6b5a3a : 0x8a6a3c;
-    // stains: each game adds three; early ones keep to the edges, later ones wander to the middle
-    const stains = games * 3;
-    for (let i = 0; i < stains; i++) {
-      const game = Math.floor(i / 3);
-      const edge = Math.max(0.15, 1 - game / 7); // how far from the centre, 1 = the very edge
-      const a = rnd() * Math.PI * 2;
-      const r = edge * (0.55 + rnd() * 0.45);
-      const x = cx + Math.cos(a) * r * (W / 2 - 20);
-      const y = cy + Math.sin(a) * r * ((tableBottom - tableTop) / 2 + 40);
-      const size = 6 + rnd() * 16;
-      const squash = 0.5 + rnd() * 0.6;
-      const alpha = 0.08 + rnd() * 0.1;
-      const blot = rnd() < 0.35;
-      if (wiped.has(i)) continue; // rubbed off: the random numbers were still drawn, so the rest stays put
-      this.stains.push({ i, x, y, r: size + 10, effort: 220 });
-      const left = 1 - (this.scrubbed.get(i) ?? 0); // the finger has taken some of it off already
-      g.ellipse(x, y, size, size * squash).fill({ color: stainColor, alpha: alpha * left });
-      if (blot) g.circle(x + size * 0.6, y - size * 0.3, size * 0.45).fill({ color: stainColor, alpha: 0.08 * left });
-    }
-    // Every kind of dirt has its own index range so a wipe names one thing:
-    // stains 0.., ash 1000.., burns 2000.., scratches 3000.., flies 4000..
-    const left = (i: number) => 1 - (this.scrubbed.get(i) ?? 0);
-    // ash: a scatter of grey specks that grows with the games; a touch takes a speck away
-    for (let i = 0; i < games * 8; i++) {
-      const x = 16 + rnd() * (W - 32);
-      const y = tableTop + rnd() * (tableBottom - tableTop + 60);
-      const r = 0.8 + rnd() * 1.4;
-      const alpha = 0.35 + rnd() * 0.3;
-      const idx = 1000 + i;
-      if (wiped.has(idx)) continue;
-      this.stains.push({ i: idx, x, y, r: 16, effort: 40 });
-      g.circle(x, y, r).fill({ color: dark ? 0xaaa59a : 0x55524b, alpha: alpha * left(idx) });
-    }
-    // cigarette burns from the third game, scratches from the second: both take real scrubbing
-    for (let i = 0; i < Math.max(0, games - 2); i++) {
-      const x = 24 + rnd() * (W - 48);
-      const y = tableTop + rnd() * (tableBottom - tableTop);
-      const idx = 2000 + i;
-      if (wiped.has(idx)) continue;
-      this.stains.push({ i: idx, x, y, r: 24, effort: 320 });
-      g.circle(x, y, 3.5).fill({ color: 0x2b2118, alpha: 0.75 * left(idx) });
-      g.circle(x, y, 2).fill({ color: 0x0d0d0d, alpha: 0.9 * left(idx) });
-    }
-    for (let i = 0; i < Math.max(0, games - 1) * 2; i++) {
-      const x = 20 + rnd() * (W - 40);
-      const y = tableTop + rnd() * (tableBottom - tableTop);
-      const len = 14 + rnd() * 40;
-      const a = rnd() * Math.PI;
-      const idx = 3000 + i;
-      if (wiped.has(idx)) continue;
-      this.stains.push({ i: idx, x: x + (Math.cos(a) * len) / 2, y: y + (Math.sin(a) * len) / 2, r: len / 2 + 18, effort: 280 });
-      g.moveTo(x, y).lineTo(x + Math.cos(a) * len, y + Math.sin(a) * len).stroke({ width: 1, color: dark ? 0xffffff : 0x000000, alpha: 0.12 * left(idx) });
-    }
-    // the fly: slapped here, or just a casualty of the fifth game; a couple of passes brush it off
-    const flies = m.fliesDead + (games >= 5 ? 1 : 0);
-    for (let i = 0; i < Math.min(3, flies); i++) {
-      const x = 30 + rnd() * (W - 60);
-      const y = tableTop + 20 + rnd() * (tableBottom - tableTop - 40);
-      const idx = 4000 + i;
-      if (wiped.has(idx)) continue;
-      this.stains.push({ i: idx, x, y, r: 26, effort: 120 });
-      const k = left(idx);
-      g.ellipse(x, y, 3.2, 2).fill({ color: 0x1a1a1a, alpha: 0.9 * k });
-      g.circle(x + 3, y - 0.5, 1.4).fill({ color: 0x1a1a1a, alpha: 0.9 * k });
-      g.ellipse(x - 1, y - 2.5, 2.6, 1.2).fill({ color: 0xffffff, alpha: 0.35 * k });
-      g.ellipse(x - 1, y + 2.5, 2.6, 1.2).fill({ color: 0xffffff, alpha: 0.35 * k });
-      for (let w = 0; w < 3; w++) g.moveTo(x - 2 + w * 2, y + 1).lineTo(x - 3 + w * 2.5, y + 4).stroke({ width: 0.6, color: 0x1a1a1a, alpha: 0.9 * k });
-    }
   }
 
   /** a big bito goes up in flames: embers rise from every card before the pile flies off */
@@ -1655,7 +1428,6 @@ export class TableScene {
   private onPointerMove = (e: FederatedPointerEvent): void => {
     const g = this.world.toLocal(e.global); // the head moves: pointer in world space
     if (this.rub) this.rubMove(e.global.x);
-    if (this.scrub) this.scrubMove(g.x, g.y);
     const d = this.drag;
     if (!d) return;
     if (!d.moved && Math.hypot(g.x - d.startX, g.y - d.startY) > 7) d.moved = true;
@@ -1665,7 +1437,6 @@ export class TableScene {
 
   private onPointerUp = (e: FederatedPointerEvent): void => {
     this.rub = null;
-    this.scrub = null;
     this.endBlow(e);
     const d = this.drag;
     if (!d) return;

@@ -194,8 +194,6 @@ func (h *Hub) handle(c *Client, env Envelope) {
 		h.intent(c, env)
 	case TypeKick:
 		h.kick(c, env.Payload)
-	case TypeWipe:
-		h.wipe(c, env.Payload)
 	default:
 		c.sendError("UNKNOWN_TYPE", "unknown message type: "+env.Type, "")
 	}
@@ -433,38 +431,6 @@ func (h *Hub) react(c *Client, raw json.RawMessage) {
 		h.log.Error("ws: publish reaction", "err", err)
 	}
 	h.botHearEmoji(roomID, playerID, p.Emoji)
-}
-
-// wipe records a stain rubbed off the cloth, for everybody at the table.
-func (h *Hub) wipe(c *Client, raw json.RawMessage) {
-	roomID, _ := c.room()
-	if roomID == "" {
-		c.sendError("NOT_IN_ROOM", "join a room first", "")
-		return
-	}
-	var p WipePayload
-	if err := json.Unmarshal(raw, &p); err != nil || p.Index < 0 || p.Index > 10000 {
-		c.sendError("BAD_PAYLOAD", "malformed WIPE payload", "")
-		return
-	}
-	state, err := h.store.Update(h.ctx, roomID, false, func(s *game.GameState) error {
-		for _, i := range s.WipedStains {
-			if i == p.Index {
-				return errStale // already clean
-			}
-		}
-		if len(s.WipedStains) >= 2000 {
-			return errStale
-		}
-		s.WipedStains = append(s.WipedStains, p.Index)
-		s.Touch()
-		return nil
-	})
-	if err != nil {
-		return
-	}
-	// the version moved: a bot timer armed for the old one would find its move stale, so re-arm
-	h.afterUpdate(roomID, state)
 }
 
 // kick removes a player from the lobby: the host's and the admins' right.

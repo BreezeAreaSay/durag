@@ -123,7 +123,6 @@ type GameState struct {
 	NoTimer        bool       `json:"no_timer,omitempty"`     // the table was created without a turn timer
 	GamesPlayed    int        `json:"games_played,omitempty"` // games started at this table: the wear on the cloth
 	FliesDead      int        `json:"flies_dead,omitempty"`   // flies slapped at this table: they stay on the cloth
-	WipedStains    []int      `json:"wiped_stains,omitempty"` // stains somebody rubbed off the cloth (indices into the drawn set)
 	TurnActors     []string   `json:"turn_actors"`            // who has to act before TurnDeadline
 }
 
@@ -440,7 +439,6 @@ func (s *GameState) Clone() *GameState {
 	}
 	out.TableOrder = append([]string{}, s.TableOrder...)
 	out.FinishedOrder = append([]string{}, s.FinishedOrder...)
-	out.WipedStains = append([]int{}, s.WipedStains...)
 	out.StumpPending = append([]string{}, s.StumpPending...)
 	out.TurnActors = append([]string{}, s.TurnActors...)
 	out.Log = append([]LogEntry{}, s.Log...)

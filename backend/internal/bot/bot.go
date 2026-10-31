@@ -485,6 +485,29 @@ func (h *Heuristic) defend(in Context, byType map[game.MoveType][]scored, hand m
 	// worth more than a small pile of cards: take instead. With the deck
 	// gone every card in hand is a liability, so cover whenever possible,
 	// keeping the Super card for the finishing attack when the pile is small.
+	// The first bouts: while the deck tops the hand up, a counting bot never
+	// beats a seven with a king, a joker or the Super card. A single low card
+	// taken now costs nothing; the big card wins a bout later.
+	if canTake && in.Plan != PlanDump && in.Plan != PlanStump && in.level().Counts() && s.DeckCount >= 8 {
+		if dearest.IsSpecial() && pile <= 3 {
+			return take
+		}
+		if in.level() == LevelHard && pile <= 2 {
+			for _, p := range plan {
+				cover := hand[p.move.CardID]
+				target, ok := game.CardByID(p.move.TargetID)
+				if !ok || target.IsSpecial() {
+					continue
+				}
+				if !isTrump(cover, trump) && cover.Rank >= 12 && cover.Rank-target.Rank >= 5 {
+					return take // a queen or better on a card five ranks below: not this early
+				}
+				if isTrump(cover, trump) && cover.Rank >= 11 && !isTrump(target, trump) {
+					return take // a big trump on a plain card: not this early
+				}
+			}
+		}
+	}
 	if canTake && in.Plan != PlanDump && in.Plan != PlanStump {
 		switch {
 		case in.Plan == PlanHoard && dearest.Rank >= 13 && !dearest.IsSpecial() && pile <= 1 && handN <= 6 && s.DeckCount >= 6:
@@ -555,8 +578,8 @@ func (h *Heuristic) attack(in Context, attacks []scored, hand map[string]game.Ca
 	best, bestScore := plain[0], math.MaxFloat64
 	for _, a := range plain {
 		c := hand[a.move.CardID]
-		if deckLeft && c.Rank >= 13 && lowest <= 10 {
-			continue
+		if deckLeft && c.Rank >= 12 && lowest <= 10 {
+			continue // no queens, kings or aces led while something small is in hand
 		}
 		// while the deck lasts a lead stays near the cheapest card: no jacks
 		// and queens over sevens, a pair of them aside
