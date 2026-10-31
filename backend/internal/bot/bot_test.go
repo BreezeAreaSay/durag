@@ -968,3 +968,74 @@ func TestCleanSayDropsPromptEchoes(t *testing.T) {
 		}
 	}
 }
+
+func TestFreeAnswersNeverSpendThePaidBudget(t *testing.T) {
+	in := sampleContext(t)
+	var served []string
+	limited := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req chatRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		served = append(served, req.Model)
+		if strings.HasSuffix(req.Model, ":free") && limited {
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"error":{"message":"Rate limit exceeded: free-models-per-day"}}`))
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"model":   req.Model,
+			"choices": []map[string]any{{"message": map[string]any{"role": "assistant", "content": `{"say": "сказал"}`}}},
+		})
+	}))
+	defer srv.Close()
+	l := NewLLM(srv.URL, "k", "qwen/qwen3:free", 2*time.Second)
+	l.Paid = []string{"deepseek/deepseek-chat"}
+	l.PaidDaily = 1
+	for i := 0; i < 5; i++ { // five free answers: the one paid call of the day is still there
+		if line, err := l.Talk(context.Background(), in, in.Moves[0]); err != nil || line.Model != "qwen/qwen3:free" {
+			t.Fatalf("free call %d: %+v %v", i, line, err)
+		}
+	}
+	if st := l.Status(); st.PaidToday != 0 {
+		t.Fatalf("free answers spent the paid budget: %+v", st)
+	}
+	limited = true
+	line, err := l.Talk(context.Background(), in, in.Moves[0])
+	if err != nil || line.Model != "deepseek/deepseek-chat" {
+		t.Fatalf("the paid fallback after the free cap: %+v %v", line, err)
+	}
+	if st := l.Status(); st.PaidToday != 1 {
+		t.Fatalf("one paid call booked: %+v", st)
+	}
+}
+
+func TestAProviderLimitRestsOneModelNotTheBrain(t *testing.T) {
+	in := sampleContext(t)
+	var served []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req chatRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		served = append(served, req.Model)
+		if req.Model == "a:free" {
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"error":{"message":"a:free is temporarily rate-limited upstream"}}`))
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"model":   req.Model,
+			"choices": []map[string]any{{"message": map[string]any{"role": "assistant", "content": `{"say": "сказал"}`}}},
+		})
+	}))
+	defer srv.Close()
+	l := NewLLM(srv.URL, "k", "a:free,b:free", 2*time.Second)
+	line, err := l.Talk(context.Background(), in, in.Moves[0])
+	if err != nil || line.Model != "b:free" {
+		t.Fatalf("the next free model answers: %+v %v", line, err)
+	}
+	if paused, _ := l.Paused(time.Now()); paused {
+		t.Fatal("one provider's limit must not pause the brain")
+	}
+	if _, err := l.Talk(context.Background(), in, in.Moves[0]); err != nil || served[len(served)-1] != "b:free" || len(served) != 3 {
+		t.Fatalf("the limited model rests, the other answers directly: %v %v", served, err)
+	}
+}

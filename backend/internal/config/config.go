@@ -156,7 +156,7 @@ func FromEnv() (Config, error) {
 		return c, fmt.Errorf("config: LLM_DAILY_CALLS must be a whole number")
 	}
 	c.LLMPaidFallback = getenv("LLM_PAID_FALLBACK", "deepseek/deepseek-chat")
-	if c.LLMPaidDailyCalls, err = strconv.Atoi(getenv("LLM_PAID_DAILY_CALLS", "400")); err != nil || c.LLMPaidDailyCalls < 0 {
+	if c.LLMPaidDailyCalls, err = strconv.Atoi(getenv("LLM_PAID_DAILY_CALLS", "1000")); err != nil || c.LLMPaidDailyCalls < 0 {
 		return c, fmt.Errorf("config: LLM_PAID_DAILY_CALLS must be a whole number")
 	}
 	if c.FlyChance, err = strconv.ParseFloat(getenv("FLY_CHANCE", "0.35"), 64); err != nil || c.FlyChance < 0 || c.FlyChance > 1 {

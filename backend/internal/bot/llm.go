@@ -124,7 +124,8 @@ func (l *LLM) paidTodayLocked(now time.Time) int {
 }
 
 // paidReady lists the paid fallback models when the day's budget allows
-// one more call, and books that call.
+// one more call. Nothing is booked here: a call is counted when it is
+// actually made (bookPaid), so free answers never eat the paid budget.
 func (l *LLM) paidReady(now time.Time) []string {
 	if len(l.Paid) == 0 || l.PaidDaily <= 0 {
 		return nil
@@ -137,9 +138,22 @@ func (l *LLM) paidReady(now time.Time) []string {
 	if l.paidUsed >= l.PaidDaily {
 		return nil
 	}
+	return l.readyLocked(l.Paid, now)
+}
+
+// bookPaid counts one paid call against the day; false when the budget is spent.
+func (l *LLM) bookPaid(now time.Time) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.paidDay != dayKey(now) {
+		l.paidDay, l.paidUsed = dayKey(now), 0
+	}
+	if l.paidUsed >= l.PaidDaily {
+		return false
+	}
 	l.paidUsed++
 	l.paidCalls++
-	return l.readyLocked(l.Paid, now)
+	return true
 }
 
 // paidOff spends the rest of the day's paid budget: the balance is empty.
@@ -258,12 +272,16 @@ const (
 	modelCooldownLong = 10 * time.Minute
 )
 
-// isUpstreamLimit tells an OpenRouter 429 that concerns one model's provider
-// ("temporarily rate-limited upstream", limit_source upstream_provider_shared_pool)
-// from the account-wide free-tier caps: the former means "try another model".
-func isUpstreamLimit(body string) bool {
+// isAccountLimit tells the account-wide free-tier caps of OpenRouter
+// ("free-models-per-day", "per-min") from a 429 that concerns one model's
+// provider ("temporarily rate-limited upstream"): only the former takes
+// every free model out at once; anything else means "try another model".
+func isAccountLimit(body string) bool {
 	b := strings.ToLower(body)
-	return strings.Contains(b, "upstream") || strings.Contains(b, "provider returned error") || strings.Contains(b, "temporarily rate-limited")
+	if strings.Contains(b, "upstream") || strings.Contains(b, "provider returned error") {
+		return false
+	}
+	return strings.Contains(b, "free-models") || strings.Contains(b, "per-day") || strings.Contains(b, "per day") || strings.Contains(b, "daily") || strings.Contains(b, "per-min") || strings.Contains(b, "per minute")
 }
 
 // coolDown skips a model for d.
@@ -472,6 +490,9 @@ func (l *LLM) query(ctx context.Context, in Context, talk *game.Move) (Decision,
 func (l *LLM) run(ctx context.Context, models []string, in Context, talk *game.Move, paid bool) (Decision, error) {
 	var lastErr error
 	for _, model := range models {
+		if paid && !l.bookPaid(time.Now()) {
+			return Decision{}, fmt.Errorf("%w: the day's paid budget is spent", ErrPaused)
+		}
 		opts := askOptions{jsonMode: true, noThink: true, talk: talk}
 		d, err := l.ask(ctx, model, in, opts)
 		for retry := 0; retry < 2; retry++ {
@@ -497,12 +518,13 @@ func (l *LLM) run(ctx context.Context, models []string, in Context, talk *game.M
 			case he.status == http.StatusPaymentRequired:
 				l.pause(pauseAfterNoCredits, "no credits (HTTP 402)")
 				return Decision{}, err
-			case he.status == http.StatusTooManyRequests && (paid || isUpstreamLimit(he.body)):
-				// one model's provider is saturated: rest it, the next model may answer
-				l.coolDown(model, modelCooldown)
-			case he.status == http.StatusTooManyRequests:
+			case he.status == http.StatusTooManyRequests && !paid && isAccountLimit(he.body):
+				// the account-wide free-tier cap: every free model is out until it clears; the paid fallback follows
 				l.pause(pauseForRateLimit(he.body, time.Now()), "rate limited (HTTP 429)")
 				return Decision{}, err
+			case he.status == http.StatusTooManyRequests:
+				// one model's provider is saturated (or a 429 we cannot read): rest it, the next model may answer
+				l.coolDown(model, modelCooldown)
 			case he.status == http.StatusNotFound || he.status == http.StatusBadRequest:
 				l.coolDown(model, modelCooldownLong) // the id is gone or this model rejects our request
 			case he.status >= 500:
