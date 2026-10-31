@@ -488,11 +488,13 @@ func (h *Heuristic) defend(in Context, byType map[game.MoveType][]scored, hand m
 	// The first bouts: while the deck tops the hand up, a counting bot never
 	// beats a seven with a king, a joker or the Super card. A single low card
 	// taken now costs nothing; the big card wins a bout later.
-	if canTake && in.Plan != PlanDump && in.Plan != PlanStump && in.level().Counts() && s.DeckCount >= 8 {
+	// Dumping a big hand is no excuse: the kings and aces are the cards that
+	// win bouts later, the small ones go first. Only the stump chase covers at any price.
+	if canTake && in.Plan != PlanStump && in.level().Counts() && s.DeckCount >= 8 {
 		if dearest.IsSpecial() && pile <= 3 {
 			return take
 		}
-		if in.level() == LevelHard && pile <= 2 {
+		if in.level() == LevelHard && pile <= 3 {
 			for _, p := range plan {
 				cover := hand[p.move.CardID]
 				target, ok := game.CardByID(p.move.TargetID)

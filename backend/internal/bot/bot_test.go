@@ -926,6 +926,7 @@ func TestNoKingsOrJokersOnAThreeInTheFirstBouts(t *testing.T) {
 		{[]string{"C_13", "D_9", "H_8", "D_6", "H_10", "D_4"}, "a king on a three"},
 		{[]string{"S_13", "D_9", "H_8", "D_6", "H_10", "D_4"}, "a king of trumps on a three"},
 		{[]string{"BJ", "D_9", "H_8", "D_6", "H_10", "D_4"}, "a joker on a three"},
+		{[]string{"C_13", "C_14", "D_9", "H_8", "D_6", "H_10", "D_4", "D_2", "H_5", "S_4"}, "a king on a three with a big hand to dump"},
 	} {
 		s := game.NewGameState("EARLY")
 		s.Status = game.StatusPlaying
@@ -947,12 +948,35 @@ func TestNoKingsOrJokersOnAThreeInTheFirstBouts(t *testing.T) {
 		s.TrumpSuit = game.SuitSpades
 		s.TrumpRevealed = true
 		view := s.Sanitized("b")
-		in := Context{State: view, BotID: "b", Moves: s.LegalMoves("b"), Level: LevelHard, Plan: PlanSave}
+		in := Context{State: view, BotID: "b", Moves: s.LegalMoves("b"), Level: LevelHard, Plan: ChoosePlan(view, "b")}
 		h := NewHeuristic(rand.New(rand.NewPCG(5, 6)))
 		d, _ := h.Decide(context.Background(), in)
 		if d.Move.Type != game.MoveTake {
-			t.Fatalf("%s with the deck alive: %s", tc.name, d.Move)
+			t.Fatalf("%s with the deck alive (plan %s): %s", tc.name, in.Plan, d.Move)
 		}
+	}
+	// a pair of sevens against a king and an ace of the suit: taken, not covered
+	s := game.NewGameState("PAIR")
+	s.Status = game.StatusPlaying
+	s.MaxPlayers = 4
+	s.Players = []game.Player{{ID: "a", Name: "Вася", Connected: true}, {ID: "b", Name: "Крест", IsBot: true, Connected: true}}
+	for _, id := range []string{"C_13", "C_14", "D_9", "H_8", "D_6", "H_10"} {
+		c, _ := game.CardByID(id)
+		s.Players[1].Hand = append(s.Players[1].Hand, c)
+	}
+	s.Players[0].Hand = []game.Card{{ID: "H_2", Suit: game.SuitHearts, Rank: 2}, {ID: "H_5", Suit: game.SuitHearts, Rank: 5}, {ID: "D_8", Suit: game.SuitDiamonds, Rank: 8}}
+	s.CurrentTurn, s.DefenderID = "a", "b"
+	s.TableOrder = []string{"C_7", "D_7"}
+	s.TableCards = map[string][]game.Card{"C_7": {}, "D_7": {}}
+	s.Deck = game.NewDeck()[:15]
+	s.DeckCount = 15
+	s.TrumpSuit = game.SuitSpades
+	s.TrumpRevealed = true
+	view := s.Sanitized("b")
+	in := Context{State: view, BotID: "b", Moves: s.LegalMoves("b"), Level: LevelHard, Plan: PlanSave}
+	d, _ := NewHeuristic(rand.New(rand.NewPCG(7, 8))).Decide(context.Background(), in)
+	if d.Move.Type != game.MoveTake {
+		t.Fatalf("two sevens against a king and an ace with 15 in the deck: %s", d.Move)
 	}
 }
 
