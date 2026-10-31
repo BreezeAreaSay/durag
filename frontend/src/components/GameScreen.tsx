@@ -167,8 +167,9 @@ export function GameScreen({ state }: Props) {
         />
       ) : null}
       {state.status === 'playing' && state.players.find((p) => p.id === selfId)?.out ? (
-        <div className="vodka-seat">
-          <VodkaToy compact width={size.w} height={metrics.handTop + 40} floor={metrics.handTop + 16} />
+        <div className="vodka-seat" style={{ top: hudTop + 36 }}>
+          {/* below the header and the opponents' stickers: a lifted bottle never covers the names */}
+          <VodkaToy compact width={size.w} height={metrics.handTop + 40 - hudTop - 36} floor={metrics.handTop + 16 - hudTop - 36} />
         </div>
       ) : null}
       {state.status === 'finished' ? <ResultOverlay state={state} /> : null}
